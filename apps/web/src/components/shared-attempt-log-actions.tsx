@@ -56,6 +56,7 @@ export function SharedAttemptLogActions({
       {terminal && canRetryRuns ? (
         <AttemptRerunAction
           attemptId={attempt.id}
+          environmentMode="page"
           onOpenLiveLogs={setOpenAttempt}
           onRerunAttemptAvailable={refreshExecutionHistory}
         />
@@ -75,5 +76,5 @@ export function SharedAttemptLogActions({
 
 const sharedAttemptLogActionsStyles = {
   "shared-attempt-log-actions":
-    "flex flex-wrap items-center gap-2 mb-4.5 [&_.attempt-rerun-action]:mb-0",
+    "flex min-w-0 max-w-full flex-wrap items-start gap-2 mb-4.5 [&_.attempt-rerun-action]:mb-0",
 } as const;

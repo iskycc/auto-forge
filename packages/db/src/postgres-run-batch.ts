@@ -1,3 +1,8 @@
+import {
+  attemptRerunEnvironmentQuery,
+  mapAttemptRerunEnvironment,
+  type AttemptRerunEnvironmentRow,
+} from "./attempt-rerun-environment";
 import { discoverableExecutionWorkSql, recoverableRoundTailSql } from "./round-dispatch-probe";
 import { advancePostgresSchedulingRound } from "./postgres-round-dispatch";
 import {
@@ -743,6 +748,14 @@ export class PostgresRunBatchRepository
       [attemptId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async readAttemptRerunEnvironment(attemptId: string) {
+    await this.ready();
+    const result = await this.handle.db.execute<AttemptRerunEnvironmentRow>(
+      attemptRerunEnvironmentQuery("postgres", attemptId),
+    );
+    return result.rows[0] ? mapAttemptRerunEnvironment(result.rows[0]) : null;
   }
 
   async readSingleCaseExecutionEntries(

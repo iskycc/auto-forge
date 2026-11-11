@@ -90,7 +90,6 @@ export function PublicSuiteExecution({
       setProgressPath(result.progressPath);
       requestKey.current = null;
       setUnconfirmedRequest(false);
-      setEnvironmentOverride(undefined);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "执行失败。");

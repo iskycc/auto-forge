@@ -161,6 +161,68 @@ async function seedSnapshot(fixture: SnapshotFixture): Promise<void> {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} attempt log snapshot`, () => {
+    it("reads the viewed attempt IP instead of a later round and falls back to its own attempt number", async () => {
+      const fixture = await createFixture(mode);
+      try {
+        await seedSnapshot(fixture);
+        await fixture.execute("UPDATE run_batches SET adapter_runtime_json=? WHERE id='batch'", [
+          JSON.stringify({
+            suiteName: "Suite",
+            testName: "Test",
+            environmentAddresses: ["10.0.0.21", "10.0.0.22"],
+            environmentAddressByRunId: { "run-ddt": "10.0.0.21" },
+          }),
+        ]);
+        await fixture.execute(
+          `INSERT INTO runners(id,credential_hash,name,os,architecture,agent_version,protocol_version,labels_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at) VALUES ('runner','hash','Runner','linux','amd64','1.22.9',1,'[]',4,0,?,?,?)`,
+          [timestamp, timestamp, timestamp],
+        );
+        for (const [id, number, address] of [
+          ["first-attempt", 1, "10.0.0.21"],
+          ["second-attempt", 2, "10.0.0.22"],
+        ] as const) {
+          await fixture.execute(
+            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,outcome,scheduling_score,created_at) VALUES (?,'run-ddt','runner',?,'failed','failed',1,?)`,
+            [id, number, timestamp],
+          );
+          await fixture.execute(
+            `INSERT INTO assignments(id,attempt_id,execution_run_id,batch_id,runner_id,status,execution_spec_json,available_at,claim_deadline_at,created_at,updated_at) VALUES (?,?,'run-ddt','batch','runner','completed',?,?,?,?,?)`,
+            [
+              id,
+              id,
+              JSON.stringify({ adapter: { environmentAddress: address } }),
+              timestamp,
+              timestamp,
+              timestamp,
+              timestamp,
+            ],
+          );
+        }
+        for (const removeAssignment of [false, true]) {
+          if (removeAssignment)
+            await fixture.execute("DELETE FROM assignments WHERE attempt_id='first-attempt'");
+          const before = fixture.statements().length;
+          expect(await fixture.batches.readAttemptRerunEnvironment("first-attempt")).toMatchObject({
+            adapterEnabled: true,
+            environmentIp: "10.0.0.21",
+          });
+          const reads = fixture.statements().slice(before);
+          expect(reads).toHaveLength(1);
+          expect(reads[0]).not.toMatch(/parameters_json|testng_result_json|SELECT\s+\*/u);
+          if (fixture.sqliteQueryPlan) {
+            const plan = fixture.sqliteQueryPlan(reads[0]!, ["first-attempt"]);
+            expect(plan.join("\n")).not.toMatch(/SCAN (?:attempt|run|batch|assignment)\b/u);
+          }
+          expect(await fixture.batches.readAttemptRerunEnvironment("second-attempt")).toMatchObject(
+            { adapterEnabled: true, environmentIp: "10.0.0.22" },
+          );
+        }
+        expect(await fixture.batches.readAttemptRerunEnvironment("missing")).toBeNull();
+      } finally {
+        await fixture.close();
+      }
+    });
+
     it("separates task and single executions before cursor pagination and reads only page entries", async () => {
       const fixture = await createFixture(mode);
       try {

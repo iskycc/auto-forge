@@ -20,7 +20,7 @@ describe("derived run batches", () => {
     ["testng", "10.0.0.13"],
     ["ddt", "10.0.0.13"],
   ] as const)(
-    "uses IP %s / %s only for this log rerun and resets the next one",
+    "uses IP %s / %s for the diagnostic batch without changing the original log default",
     async (caseType, environmentIp) => {
       const snapshot = rerunSnapshot();
       snapshot.runs[1]!.caseType = caseType;
@@ -37,21 +37,62 @@ describe("derived run batches", () => {
       });
       expect(created[0]?.adapter?.environmentAddresses).toEqual([environmentIp]);
       expect(snapshot).toEqual(original);
-      vi.spyOn(batches, "getMetadata").mockResolvedValue({
-        ...snapshot.batch,
-        id: "manual",
-        kind: "case_log_rerun",
-        parentBatchId: snapshot.batch.id,
-        sourceExecutionRunId: "run-failed",
-        totalRuns: 1,
-      });
-      await expect(service.getCaseLogRerunConfiguration("manual-attempt")).resolves.toEqual({
+      await expect(service.getCaseLogRerunConfiguration("attempt-failed")).resolves.toEqual({
         adapterEnabled: true,
         environmentIp: "10.0.0.12",
       });
-      await service.rerunCaseFromAttempt("manual-attempt", initiator);
+      await service.rerunCaseFromAttempt("attempt-failed", initiator);
       expect(created[1]?.adapter?.environmentAddresses).toEqual(["10.0.0.12"]);
       expect(snapshot).toEqual(original);
+    },
+  );
+
+  it.each(["testng", "ddt"] as const)(
+    "inherits the viewed %s diagnostic batch IP while retaining the original case lineage",
+    async (caseType) => {
+      const original = rerunSnapshot();
+      original.runs[1]!.caseType = caseType;
+      const manual = structuredClone(original);
+      manual.batch = {
+        ...manual.batch,
+        id: "manual",
+        kind: "case_log_rerun",
+        parentBatchId: original.batch.id,
+        sourceExecutionRunId: "run-failed",
+      };
+      manual.adapterRuntime!.environmentAddresses = ["2001:db8::99"];
+      manual.sourceAdapterEnvironmentAddress = "2001:db8::99";
+      manual.runs = [{ ...manual.runs[1]!, id: "manual-run" }];
+      const { batches, created } = rerunRepository(original, {
+        batchId: "manual",
+        executionRunId: "manual-run",
+        attemptStatus: "failed",
+      });
+      vi.spyOn(batches, "getMetadata").mockResolvedValue(manual.batch);
+      vi.spyOn(batches, "readAttemptRerunEnvironment").mockResolvedValue({
+        attemptStatus: "failed",
+        adapterEnabled: true,
+        environmentIp: "2001:db8::99",
+      });
+      vi.spyOn(batches, "getRerunSnapshot").mockImplementation(async (batchId) =>
+        batchId === "manual" ? manual : { ...original, runs: [original.runs[1]!] },
+      );
+      const before = structuredClone({ original, manual });
+      const service = schedulingService(batches);
+      await expect(service.getCaseLogRerunConfiguration("manual-attempt")).resolves.toEqual({
+        adapterEnabled: true,
+        environmentIp: "2001:db8::99",
+      });
+      await service.rerunCaseFromAttempt("manual-attempt", {
+        username: "operator",
+        source: "local",
+      });
+      expect(created[0]).toMatchObject({
+        parentBatchId: original.batch.id,
+        sourceExecutionRunId: "run-failed",
+        adapter: { environmentAddresses: ["2001:db8::99"] },
+      });
+      expect({ original, manual }).toEqual(before);
     },
   );
 
@@ -84,6 +125,7 @@ describe("derived run batches", () => {
     await expect(
       schedulingService(batches).getCaseLogRerunConfiguration("attempt-failed"),
     ).resolves.toEqual({ adapterEnabled: true, environmentIp: "10.0.0.12" });
+    expect(batches.getRerunSnapshot).not.toHaveBeenCalled();
     expect(created).toEqual([]);
   });
 
@@ -435,6 +477,15 @@ function rerunRepository(
   });
   const batches = {
     resolveAttemptRerunSource: vi.fn().mockResolvedValue(attemptSource ?? null),
+    readAttemptRerunEnvironment: vi.fn(async () => ({
+      attemptStatus: attemptSource?.attemptStatus ?? "failed",
+      adapterEnabled: Boolean(snapshot.adapterRuntime),
+      environmentIp: snapshot.adapterRuntime
+        ? (snapshot.sourceAdapterEnvironmentAddress ??
+          snapshot.adapterRuntime.environmentAddresses[0] ??
+          null)
+        : null,
+    })),
     getMetadata: vi.fn(async (batchId: string) =>
       batchId === snapshot.batch.id ? snapshot.batch : derivedSummary(),
     ),

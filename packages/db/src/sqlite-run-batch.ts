@@ -1,4 +1,9 @@
 import { discoverableExecutionWorkSql, recoverableRoundTailSql } from "./round-dispatch-probe";
+import {
+  attemptRerunEnvironmentQuery,
+  mapAttemptRerunEnvironment,
+  type AttemptRerunEnvironmentRow,
+} from "./attempt-rerun-environment";
 import { advanceSqliteSchedulingRound } from "./sqlite-round-dispatch";
 import {
   batchConcurrencyLimitSql,
@@ -762,6 +767,13 @@ export class SqliteRunBatchRepository
         }
       | undefined;
     return row ?? null;
+  }
+
+  async readAttemptRerunEnvironment(attemptId: string) {
+    const row = this.handle.db.all<AttemptRerunEnvironmentRow>(
+      attemptRerunEnvironmentQuery("sqlite", attemptId),
+    )[0];
+    return row ? mapAttemptRerunEnvironment(row) : null;
   }
 
   async readSingleCaseExecutionEntries(

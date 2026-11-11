@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.22.10 - 2026-11-11
+
+### Fixed
+
+- 公开日志页重跑默认继承当前日志对应的实际执行 IP，包含手动重跑与早期轮次；新增独立环境设置按钮和“下一次手动执行 IP”展示，执行按钮直接提交，当前页面内持续复用选择，刷新后恢复该执行的默认值。环境读取改为单次有界数据库投影，保留原任务配置和权限。
+- 任务公开执行页在提交成功后保留本页自定义 IP，明确展示下一次执行地址；刷新或恢复任务配置后才使用任务默认地址。
+
+### Compatibility
+
+- 从 v1.22.9 升级不新增数据库迁移、生产依赖、配置项或 Runner 协议。Lite／Full 共用相同行为；IP 选择仅保存在当前页面，不修改任务配置，后台日志浮窗继续保留逐次确认。
+
+### Verification
+
+- 139 项定向回归通过，包含真实 SQLite／PostgreSQL 的当前 attempt 环境读取、索引查询计划、公开执行及 UI 约束；Lite／Full 各三个生产 Playwright 场景通过，Full 使用双 Web、Worker 和真实 PostgreSQL／NATS／Redis／MinIO。普通 501 用例批次和中文 DDT 均验证实际下发 IP、同页连续执行、失败重试及任务配置不变，详见[日志重跑环境验证](./docs/architecture/log-rerun-environment.md#当前默认环境与页面设置验证2026-11-11)。
+- 实际审查 1024×768／1536×960 深浅色页面及设置弹框，无按钮溢出或布局变形。变更范围的格式、Lint、类型检查和 Web／Worker 生产构建通过。
+- 本次按用户要求采用最快路径，仅启动 Release，复用以上验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；Release 保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查。未重跑十万规模压力、真实业务 JVM、外部 Jenkins 或完整离线验收。
+
 ## 1.22.9 - 2026-11-11
 
 ### Fixed

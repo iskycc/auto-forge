@@ -882,8 +882,11 @@ export class RunBatchSchedulingService {
   }
 
   async getCaseLogRerunConfiguration(attemptId: string): Promise<CaseLogRerunConfiguration> {
-    const { snapshot } = await this.resolveCaseLogRerunSource(attemptId);
-    return caseLogRerunConfiguration(snapshot);
+    const environment = await this.batches.readAttemptRerunEnvironment(attemptId);
+    if (!environment) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
+    if (environment.attemptStatus === "assigned" || environment.attemptStatus === "running")
+      throw new DomainError("RUN_ATTEMPT_NOT_TERMINAL", "用例执行完成后才能重新执行。");
+    return { adapterEnabled: environment.adapterEnabled, environmentIp: environment.environmentIp };
   }
 
   async rerunCaseFromAttempt(
@@ -892,9 +895,8 @@ export class RunBatchSchedulingService {
     input: RerunCaseFromAttemptInput = {},
   ): Promise<RunBatch> {
     const overrides = rerunCaseFromAttemptInputSchema.parse(input);
-    const { snapshot, run, runIndex, rootBatchId, rootExecutionRunId, policy } =
+    const { snapshot, run, runIndex, rootBatchId, rootExecutionRunId, policy, configuration } =
       await this.resolveCaseLogRerunSource(attemptId);
-    const configuration = caseLogRerunConfiguration(snapshot);
     if (overrides.environmentIp && !configuration.adapterEnabled) {
       throw new DomainError(
         "RUN_RERUN_ENVIRONMENT_UNAVAILABLE",
@@ -964,6 +966,8 @@ export class RunBatchSchedulingService {
       rootBatchId,
       rootExecutionRunId,
       policy: snapshot.batch.policy,
+      // Keep case lineage while inheriting the viewed attempt's actual environment.
+      configuration: await this.getCaseLogRerunConfiguration(attemptId),
     };
   }
 
@@ -1957,18 +1961,6 @@ export class RunBatchSchedulingService {
       return [];
     }
   }
-}
-
-function caseLogRerunConfiguration(
-  snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>,
-): CaseLogRerunConfiguration {
-  const runtime = snapshot.adapterRuntime;
-  return {
-    adapterEnabled: Boolean(runtime),
-    environmentIp: runtime
-      ? (snapshot.sourceAdapterEnvironmentAddress ?? runtime.environmentAddresses[0] ?? null)
-      : null,
-  };
 }
 
 function ddtExecutionRun(

@@ -1828,7 +1828,7 @@ export type RunBatchRerunSnapshot = {
   /** Rerun configuration does not need aggregate counters from the source batch. */
   batch: RunBatchMetadata;
   adapterRuntime?: RunBatchAdapterRuntimeSnapshot;
-  /** Original case's assigned environment, never an address from a manual rerun. */
+  /** Selected case's latest assigned environment within this snapshot. */
   sourceAdapterEnvironmentAddress?: string;
   roundRecoveries: NonNullable<CreateRunBatchRecord["roundRecoveries"]>;
   runs: CreateRunBatchRecord["runs"];
@@ -1837,6 +1837,10 @@ export type RunBatchRerunSnapshot = {
 export type AttemptRerunSource = {
   batchId: string;
   executionRunId: string;
+  attemptStatus: RunAttempt["status"];
+};
+
+export type AttemptRerunEnvironment = import("@autoforge/contracts").CaseLogRerunConfiguration & {
   attemptStatus: RunAttempt["status"];
 };
 
@@ -2292,6 +2296,8 @@ export interface RunBatchRepository {
   getMetadata(batchId: string, projectIds?: readonly string[]): Promise<RunBatchMetadata | null>;
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
   resolveAttemptRerunSource(attemptId: string): Promise<AttemptRerunSource | null>;
+  /** Projects only one attempt's environment; excludes case payloads and whole-batch snapshots. */
+  readAttemptRerunEnvironment(attemptId: string): Promise<AttemptRerunEnvironment | null>;
   /** Only manual batch state and its latest attempt; excludes snapshots and report bodies. */
   getCaseLogRerunLogTarget(batchId: string): Promise<CaseLogRerunLogTarget | null>;
   readSingleCaseExecutionEntries(batchIds: readonly string[]): Promise<SingleCaseExecutionEntry[]>;

@@ -222,7 +222,7 @@ test("public task links execute with login only, share live status, record actor
     for (const address of originalAddresses) await expect(environment).toContainText(address);
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
     const environmentDialog = visitor.getByRole("dialog", {
-      name: "修改本次执行环境 IP",
+      name: "修改执行环境 IP",
       exact: true,
     });
     await environmentDialog
@@ -252,7 +252,7 @@ test("public task links execute with login only, share live status, record actor
         .fill(overrideAddresses.join("\n"));
     }
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
-    await expect(environment).toContainText("仅本次执行");
+    await expect(environment).toContainText("本页自定义");
     await visitor.evaluate(() => {
       const original = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
       globalThis.crypto.getRandomValues = () => {
@@ -273,6 +273,7 @@ test("public task links execute with login only, share live status, record actor
     const created = await startResponse;
     expect(created.status()).toBe(201);
     const first = (await created.json()) as { batchId: string; progressPath: string };
+    for (const address of overrideAddresses) await expect(environment).toContainText(address);
     const originalRequest = created.request().postDataJSON() as {
       requestKey: string;
       delaySeconds: number;
@@ -310,8 +311,8 @@ test("public task links execute with login only, share live status, record actor
     await popup.close();
     // Resume foreground animations after opening the public progress tab.
     await visitor.bringToFront();
-    // A second run can use a disjoint environment while the first one remains active.
-    await expect(execute).toBeEnabled();
+    // The selected environment persists, so it conflicts until explicitly changed.
+    await expect(execute).toBeDisabled();
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
     await environmentDialog
       .getByRole("textbox", { name: "本次执行环境 IP" })
@@ -388,6 +389,14 @@ test("public task links execute with login only, share live status, record actor
     expect(overrideAddresses).toContain(claim.assignment.executionSpec.adapter?.environmentAddress);
     await uploadDeletionLog(page, runner, claim, "Public task execution functional test\n");
     await completeDeletionAttempt(page, runner, claim, "succeeded");
+    const rerunEnvironment = await browserJson<{ environmentIp: string }>(
+      page,
+      `/api/v1/run-attempts/${claim.assignment.attemptId}/rerun`,
+    );
+    expect(rerunEnvironment.status).toBe(200);
+    expect(rerunEnvironment.body.environmentIp).toBe(
+      claim.assignment.executionSpec.adapter?.environmentAddress,
+    );
     await expect(execute).toBeEnabled({ timeout: 15000 });
     await expect(execute).toHaveAttribute("aria-busy", "false");
     await expect(execute.locator(".ant-btn-loading-icon")).toHaveCount(1);
@@ -424,6 +433,10 @@ test("public task links execute with login only, share live status, record actor
       await captureUi(page, `execution-environment-dark-${width}`);
       await page.getByRole("button", { name: "切换到浅色模式" }).click();
     }
+    await visitor.bringToFront();
+    await expect(environment).toContainText("10.88.0.1");
+    await expect(environment).toContainText("本页自定义");
+    await environment.getByRole("button", { name: "恢复任务配置", exact: true }).click();
     for (const address of originalAddresses) await expect(environment).toContainText(address);
     const savedSuite = await browserJson<{
       policy: { adapter: { environmentAddresses: string[] } };
@@ -468,6 +481,8 @@ test("public task links execute with login only, share live status, record actor
     ).toEqual(overrideAddresses);
     // Closing the initiating document does not cancel the persisted countdown.
     await visitor.reload();
+    for (const address of originalAddresses) await expect(environment).toContainText(address);
+    await expect(environment).toContainText("任务默认");
     const runningClaim = await claimDeletionAttempt(page, runner);
     expect(overrideAddresses).toContain(
       runningClaim.assignment.executionSpec.adapter?.environmentAddress,

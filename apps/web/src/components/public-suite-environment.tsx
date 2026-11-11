@@ -43,9 +43,9 @@ export function PublicSuiteEnvironment({
     <section className="mt-5 grid min-w-0 gap-3 border-t border-border pt-4" aria-label="执行环境">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium">
-          环境 IP{" "}
+          下一次执行环境 IP{" "}
           <span className="ml-2 font-normal text-muted-foreground">
-            {overridden ? "仅本次执行" : "任务默认"}
+            {overridden ? "本页自定义" : "任务默认"}
           </span>
         </span>
         {enabled ? (
@@ -80,13 +80,13 @@ export function PublicSuiteEnvironment({
       <ExecutionEnvironmentAddresses addresses={addresses} />
       <p className="m-0 text-xs leading-5 text-muted-foreground">
         {enabled
-          ? "修改只用于本次立即或倒计时执行，不改变任务配置。"
+          ? "本页后续立即或倒计时执行均使用这些 IP；刷新页面后恢复任务默认，不改变任务配置。"
           : "任务未启用 Adapter，无需下发环境 IP。"}
       </p>
       {editing ? (
         <ActionDialog
           open
-          title="修改本次执行环境 IP"
+          title="修改执行环境 IP"
           description="多个环境按任务原有规则分配给用例；其他执行配置保持不变。"
           className="w-[min(560px,calc(100dvw-3rem))]"
           onClose={() => setEditing(false)}
@@ -117,7 +117,8 @@ export function PublicSuiteEnvironment({
               />
             </label>
             <p className="m-0 text-xs leading-5 text-muted-foreground">
-              最多 128 个地址，顺序与填写顺序一致。本次提交成功后，执行表单恢复任务默认环境。
+              最多 128
+              个地址，顺序与填写顺序一致。保存后本页后续执行持续使用，刷新页面后恢复任务默认。
             </p>
             {error ? <Alert type="error" showIcon title={error} /> : null}
           </div>

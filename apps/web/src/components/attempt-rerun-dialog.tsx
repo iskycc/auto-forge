@@ -18,23 +18,30 @@ export function AttemptRerunDialog({
   pending,
   onClose,
   onConfirm,
+  settings,
 }: {
   attemptId: string;
   pending: boolean;
   onClose: () => void;
   onConfirm: (input: RerunCaseFromAttemptInput) => Promise<void>;
+  settings?: { configuration: CaseLogRerunConfiguration; environmentIp?: string };
 }) {
   const formId = useId();
   const inputRef = useRef<InputRef>(null);
   const inFlight = useRef(false);
-  const [configuration, setConfiguration] = useState<CaseLogRerunConfiguration>();
-  const [loading, setLoading] = useState(true);
+  const [configuration, setConfiguration] = useState<CaseLogRerunConfiguration | undefined>(
+    settings?.configuration,
+  );
+  const [loading, setLoading] = useState(!settings);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [editing, setEditing] = useState(false);
-  const [environmentIp, setEnvironmentIp] = useState("");
+  const [editing, setEditing] = useState(settings?.environmentIp !== undefined);
+  const [environmentIp, setEnvironmentIp] = useState(
+    settings?.environmentIp ?? settings?.configuration.environmentIp ?? "",
+  );
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (settings) return;
     const controller = new AbortController();
     async function loadConfiguration() {
       setLoading(true);
@@ -62,7 +69,7 @@ export function AttemptRerunDialog({
     }
     void loadConfiguration();
     return () => controller.abort();
-  }, [attemptId, loadAttempt]);
+  }, [attemptId, loadAttempt, settings]);
 
   async function submit() {
     if (inFlight.current || loading || !configuration) return;
@@ -86,8 +93,12 @@ export function AttemptRerunDialog({
   return (
     <ActionDialog
       open
-      title="执行此用例"
-      description="确认本次重跑的环境 IP，其他设置沿用原执行任务。"
+      title={settings ? "设置重跑环境 IP" : "执行此用例"}
+      description={
+        settings
+          ? "保存后，本页后续手动执行持续使用所选 IP；刷新页面后重新读取当前执行环境。"
+          : "确认本次重跑的环境 IP，其他设置沿用原执行任务。"
+      }
       className="w-[min(520px,calc(100dvw-3rem))]"
       closeDisabled={pending}
       onClose={onClose}
@@ -107,7 +118,7 @@ export function AttemptRerunDialog({
               (!editing && configuration.adapterEnabled && !configuration.environmentIp)
             }
           >
-            {pending ? "正在提交…" : "确认执行"}
+            {pending ? "正在提交…" : settings ? "保存设置" : "确认执行"}
           </Button>
         </>
       }
@@ -168,7 +179,9 @@ export function AttemptRerunDialog({
             <p className="m-0 text-sm leading-6 text-muted-foreground">
               {configuration.adapterEnabled
                 ? configuration.environmentIp
-                  ? "修改仅对本次重跑生效，不改变任务配置；下次重跑仍使用原环境 IP。"
+                  ? settings
+                    ? "修改仅保存在当前页面，不改变任务配置或已有批次。"
+                    : "修改仅对本次重跑生效，不改变原任务或已有批次的环境 IP。"
                   : "原执行未记录环境 IP，请点击修改并填写本次重跑地址。"
                 : "原执行未启用 Adapter，本次按原配置执行。"}
             </p>

@@ -86,7 +86,7 @@ export function SharedAttemptLogLayout({
                   {sharedOutcomeLabel(view.outcome)}
                 </Tag>
               </div>
-              <div className="mb-4.5 flex flex-wrap items-center gap-2 [&_.shared-attempt-log-actions]:mb-0 [&_.share-log-rerun-login]:mb-0">
+              <div className="mb-4.5 flex flex-wrap items-start gap-2 [&_.shared-attempt-log-actions]:mb-0 [&_.share-log-rerun-login]:mb-0">
                 <SharedLogRerunAction
                   access={rerunAccess}
                   attempt={{ id: view.attemptId, status: view.outcome }}

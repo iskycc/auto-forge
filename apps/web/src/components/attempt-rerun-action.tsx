@@ -9,6 +9,7 @@ import type { RunAttempt } from "@autoforge/domain";
 import type { RerunCaseFromAttemptInput } from "@autoforge/contracts";
 
 import { AttemptRerunDialog } from "@/components/attempt-rerun-dialog";
+import { AttemptRerunEnvironment } from "./attempt-rerun-environment";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { Button } from "./ui";
 import { useToast } from "./ui-feedback";
@@ -18,12 +19,14 @@ export function AttemptRerunAction({
   compact = false,
   onOpenLiveLogs,
   onRerunAttemptAvailable,
+  environmentMode = "confirm_each_run",
 }: {
   attemptId: string;
   compact?: boolean;
   onOpenLiveLogs?: (attempt: LiveLogAttempt) => void;
   /** 新 attempt 持久化后通知宿主刷新其执行历史快照。 */
   onRerunAttemptAvailable?: (attempt: LiveLogAttempt) => void;
+  environmentMode?: "confirm_each_run" | "page";
 }) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
@@ -102,20 +105,29 @@ export function AttemptRerunAction({
         `attempt-rerun-action${compact ? " compact" : ""}`,
       )}
     >
-      <Button
-        className={cn(
-          uiPatterns["button"],
-          uiPatterns["button-primary"],
-          "button button-primary",
-          compact && cn("compact-button", uiPatterns["compact-button"]),
-        )}
-        disabled={pending}
-        onClick={() => setDialogOpen(true)}
-        type="button"
-      >
-        <RotateCcw size={15} />
-        {pending ? "正在提交…" : "执行此用例"}
-      </Button>
+      {environmentMode === "page" ? (
+        <AttemptRerunEnvironment
+          key={attemptId}
+          attemptId={attemptId}
+          pending={pending}
+          onRerun={rerunCase}
+        />
+      ) : (
+        <Button
+          className={cn(
+            uiPatterns["button"],
+            uiPatterns["button-primary"],
+            "button button-primary",
+            compact && cn("compact-button", uiPatterns["compact-button"]),
+          )}
+          disabled={pending}
+          onClick={() => setDialogOpen(true)}
+          type="button"
+        >
+          <RotateCcw size={15} />
+          {pending ? "正在提交…" : "执行此用例"}
+        </Button>
+      )}
       {dialogOpen ? (
         <AttemptRerunDialog
           key={attemptId}
@@ -154,5 +166,5 @@ type CaseLogRerunTargetResponse = {
 
 const attemptRerunActionStyles = {
   "attempt-rerun-action":
-    "grid justify-items-start gap-2 mb-4.5 [&.compact]:inline-flex [&.compact]:items-center [&.compact]:gap-2.5 [&.compact]:m-0 [&_p]:m-0 [&.compact_p]:max-w-[360px] [&.compact_p]:text-xs",
+    "grid min-w-0 max-w-full justify-items-start gap-2 mb-4.5 [&.compact]:inline-flex [&.compact]:items-center [&.compact]:gap-2.5 [&.compact]:m-0 [&_p]:m-0 [&.compact_p]:max-w-[360px] [&.compact_p]:text-xs",
 } as const;

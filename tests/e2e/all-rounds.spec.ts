@@ -1775,7 +1775,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       /^\/api\/v1\/run-attempts\/[^/]+\/rerun$/u.test(new URL(response.url()).pathname),
   );
   await publicLogPage.getByRole("button", { name: "执行此用例", exact: true }).click();
-  await confirmLogRerun(publicLogPage);
+  await expect(publicLogPage.getByRole("dialog", { name: "执行此用例", exact: true })).toHaveCount(
+    0,
+  );
   const publicPageRerunResponse = await publicPageRerunResponsePromise;
   expect(publicPageRerunResponse.status()).toBe(201);
   // Reproduce the first-upload boundary deterministically on the local Lite fixture.
@@ -1887,7 +1889,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
         new URL(response.url()).pathname.endsWith("/rerun"),
     );
     await publicLogPage.getByRole("button", { name: "执行此用例", exact: true }).click();
-    await confirmLogRerun(publicLogPage);
+    await expect(
+      publicLogPage.getByRole("dialog", { name: "执行此用例", exact: true }),
+    ).toHaveCount(0);
     expect((await rerunResponsePromise).status()).toBe(201);
     expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
     const stopClaim = await claimAssignment(page, identity);

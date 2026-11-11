@@ -67,7 +67,10 @@ export function parseProjectAdapterRuntime(
 }
 
 export function adapterEnvironmentAddress(
-  runtime: ProjectAdapterRuntime,
+  runtime: Pick<
+    ProjectAdapterRuntime,
+    "environmentAddresses" | "environmentAddressByRunId" | "fallbackEnvironmentAddress"
+  >,
   executionRunId: string,
   attemptNumber = 1,
 ): string {
