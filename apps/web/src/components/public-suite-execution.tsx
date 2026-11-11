@@ -54,6 +54,7 @@ export function PublicSuiteExecution({
   const requestKey = useRef<string | null>(null);
   const submitting = useRef(false);
   const authenticated = session.status === "authenticated";
+  const startActionLabel = mode === "delay" ? "开始倒计时" : "执行任务";
   const endpoint = `/api/v1/public/case-suites/${encodeURIComponent(view.suiteId)}`;
   const query = new URLSearchParams({ PublisherId: view.publisher.id });
   const requestedAddresses = view.adapterEnabled
@@ -346,6 +347,8 @@ export function PublicSuiteExecution({
                 <Button
                   type="button"
                   variant="default"
+                  aria-label={startActionLabel}
+                  aria-busy={pending && !stop}
                   loading={pending && !stop}
                   disabled={
                     pending ||
@@ -357,7 +360,7 @@ export function PublicSuiteExecution({
                   onClick={() => void start()}
                 >
                   <Play size={16} />
-                  {mode === "delay" ? "开始倒计时" : "执行任务"}
+                  {startActionLabel}
                 </Button>
               ) : (
                 <SessionLoginButton label="登录后执行任务" />

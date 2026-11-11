@@ -332,6 +332,12 @@ test("public task links execute with login only, share live status, record actor
     await visitor.getByLabel("启动方式", { exact: true }).click();
     await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
     await visitor.getByRole("spinbutton", { name: "倒计时秒数" }).fill("600");
+    // Cancel only the real loading icon's exit transition. Its missing end
+    // event models the retained decorative node seen in CI without delaying
+    // unrelated UI transitions or the actual submission.
+    const interruptedLoadingExit = await visitor.addStyleTag({
+      content: ".ant-btn-loading-icon-motion-leave-active { transition: none !important; }",
+    });
     const concurrentResponse = visitor.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -383,6 +389,11 @@ test("public task links execute with login only, share live status, record actor
     await uploadDeletionLog(page, runner, claim, "Public task execution functional test\n");
     await completeDeletionAttempt(page, runner, claim, "succeeded");
     await expect(execute).toBeEnabled({ timeout: 15000 });
+    await expect(execute).toHaveAttribute("aria-busy", "false");
+    await expect(execute.locator(".ant-btn-loading-icon")).toHaveCount(1);
+    await interruptedLoadingExit.evaluate((style) => {
+      style.parentNode?.removeChild(style);
+    });
     const firstSummary = await browserJson(
       page,
       `/api/v1/run-batches/${first.batchId}?view=summary`,
