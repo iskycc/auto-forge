@@ -67,6 +67,7 @@ export function LogArchives({
   const [page, setPage] = useState(initial);
   const [cursors, setCursors] = useState([""]);
   const [pending, setPending] = useState("");
+  const actionsDisabled = !clientReady || Boolean(pending);
   const [error, setError] = useState("");
   const [cleanup, setCleanup] = useState<LogArchiveJob>();
   const [removal, setRemoval] = useState<LogArchiveJob>();
@@ -170,7 +171,12 @@ export function LogArchives({
               label="执行结束月份"
               rules={[{ required: true, message: "请选择月份。" }]}
             >
-              <DatePicker picker="month" allowClear aria-label="执行结束月份" />
+              <DatePicker
+                picker="month"
+                allowClear
+                aria-label="执行结束月份"
+                disabled={!clientReady}
+              />
             </Form.Item>
             <Form.Item>
               <Button
@@ -178,7 +184,7 @@ export function LogArchives({
                 aria-label="生成并校验归档包"
                 icon={<FileZipOutlined />}
                 htmlType="submit"
-                disabled={!canManage || Boolean(pending)}
+                disabled={!canManage || actionsDisabled}
                 loading={pending === "create"}
               >
                 生成并校验归档包
@@ -187,6 +193,7 @@ export function LogArchives({
             <Form.Item>
               <Button
                 aria-label="归档选项"
+                disabled={!clientReady}
                 icon={<SettingOutlined />}
                 onClick={() => setOptionsOpen(true)}
               >
@@ -197,7 +204,7 @@ export function LogArchives({
           <Button
             aria-label="刷新状态"
             icon={<ReloadOutlined />}
-            disabled={Boolean(pending)}
+            disabled={actionsDisabled}
             onClick={() => void refresh().catch((cause) => setError(String(cause)))}
           >
             刷新状态
@@ -395,7 +402,7 @@ export function LogArchives({
                   ) : null}
                   {canManage &&
                   (job.status === "ready" || (job.status === "failed" && job.sha256)) ? (
-                    <Button danger disabled={Boolean(pending)} onClick={() => setCleanup(job)}>
+                    <Button danger disabled={actionsDisabled} onClick={() => setCleanup(job)}>
                       {job.status === "failed" ? "重试清理" : "清理原日志"}
                     </Button>
                   ) : null}
@@ -415,7 +422,7 @@ export function LogArchives({
                             job.copyState === "delete_failed" ? "重试删除副本" : "删除平台副本"
                           }
                           icon={<DeleteOutlined />}
-                          disabled={Boolean(pending) || Boolean(archiveCopyRemovalBlocker(job))}
+                          disabled={actionsDisabled || Boolean(archiveCopyRemovalBlocker(job))}
                           onClick={() => {
                             setRemoval(job);
                             setDownloadVerified(false);
@@ -436,7 +443,7 @@ export function LogArchives({
                   ) : null}
                   {canManage && job.status === "failed" && !job.sha256 && !job.cancelRequested ? (
                     <Button
-                      disabled={Boolean(pending)}
+                      disabled={actionsDisabled}
                       onClick={() =>
                         void act(`retry:${job.id}`, `/api/v1/settings/log-archives/${job.id}/retry`)
                       }
@@ -448,7 +455,7 @@ export function LogArchives({
                   ["queued", "building", "verifying", "failed"].includes(job.status) &&
                   !job.sha256 ? (
                     <Button
-                      disabled={Boolean(pending) || job.cancelRequested}
+                      disabled={actionsDisabled || job.cancelRequested}
                       onClick={() =>
                         void act(
                           `cancel:${job.id}`,
@@ -468,13 +475,13 @@ export function LogArchives({
           <Typography.Text type="secondary">第 {cursors.length} 页 · 每页 20 条</Typography.Text>
           <Space>
             <Button
-              disabled={cursors.length === 1}
+              disabled={!clientReady || cursors.length === 1}
               onClick={() => void changePage(cursors.slice(0, -1))}
             >
               上一页
             </Button>
             <Button
-              disabled={!page.nextCursor}
+              disabled={!clientReady || !page.nextCursor}
               onClick={() => void changePage([...cursors, page.nextCursor!])}
             >
               下一页

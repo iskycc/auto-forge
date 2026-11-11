@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 import { randomUUID, createHash } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join, sep } from "node:path";
@@ -15,6 +15,46 @@ import { createAttemptLogStore } from "@autoforge/db/sqlite";
 import { ensureAdministrator, browserJson } from "./support/session";
 import { openHistoryFixtureConnection } from "./support/history-fixture-connection";
 import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
+
+test("archive actions wait for hydration and open options on the first interaction", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  let releaseScripts!: () => void;
+  const hydrationReleased = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  const clientScripts = /\/_next\/static\/.*\.js(?:\?|$)/;
+  const holdClientScripts = async (route: Route) => {
+    await hydrationReleased;
+    await route.continue();
+  };
+  await page.route(clientScripts, holdClientScripts);
+  const optionsButton = page.getByRole("button", { name: "归档选项", exact: true });
+  try {
+    // Inspect real server HTML before its client handlers can attach.
+    await page.goto("/logs?section=archives", { waitUntil: "commit" });
+    await expect(optionsButton).toBeVisible();
+    for (const name of ["归档选项", "生成并校验归档包", "刷新状态"])
+      await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+    await expect(page.getByRole("dialog", { name: "归档选项", exact: true })).toHaveCount(0);
+  } finally {
+    releaseScripts();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  await page.waitForLoadState("load", { timeout: 30_000 });
+  await expect(optionsButton).toBeEnabled();
+  await optionsButton.click();
+  const options = page.getByRole("dialog", { name: "归档选项", exact: true });
+  await expect(options.getByLabel("项目范围", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: testInfo.outputPath(`archive-first-open-${width}.png`) });
+  }
+  await options.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(options).not.toBeVisible();
+});
 
 test("monthly log archive downloads an offline viewer and keeps public logs after verified cleanup", async ({
   page,
@@ -150,6 +190,9 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
   }).formatToParts(new Date());
   const month = `${parts.find((p) => p.type === "year")!.value}-${parts.find((p) => p.type === "month")!.value}`;
   await page.goto("/settings/platform?section=archives");
+  // Next's streamed legacy redirect can complete after the initial load event.
+  // Interact only with the canonical page, whose dialog state will be retained.
+  await expect(page).toHaveURL(/\/logs\?section=archives$/, { timeout: 30_000 });
   await page.getByRole("button", { name: /归档选项$/ }).click();
   const optionsDialog = page.getByRole("dialog", { name: "归档选项", exact: true });
   const projectScope = optionsDialog.getByLabel("项目范围", { exact: true });
