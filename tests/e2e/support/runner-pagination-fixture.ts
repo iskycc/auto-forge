@@ -28,7 +28,7 @@ export function insertRunnerPaginationFixture(directory: string, prefix: string)
         `fixture-${id}`,
         `${prefix}-${String(index).padStart(2, "0")}`,
         JSON.stringify(labels),
-        now,
+        new Date(Date.parse(now) + offset).toISOString(),
         now,
         now,
       );

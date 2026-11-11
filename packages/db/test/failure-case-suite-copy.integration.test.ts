@@ -261,6 +261,49 @@ async function seedFailedTestNgBatch(context: Fixture, caseCount: number) {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} failure task copy contract`, () => {
+    it("copies AI-enabled execution snapshots without reusing the original analysis identity", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service } = await seed(context);
+        const batchPolicyJson = serializeBatchPolicy(
+          {
+            aiAnalysisAfterCompletion: true,
+            aiAnalysisExecutionId: "batch-1",
+            executor: "testng",
+            concurrency: 17,
+            projectVersionId: "version-1",
+            runnerLabels: ["java"],
+            artifactPatterns: ["reports/**"],
+          },
+          ["10.20.0.21"],
+        )!;
+        await context.execute("UPDATE run_batches SET policy_json=? WHERE id='batch-1'", [
+          batchPolicyJson,
+        ]);
+        const original = await context.suites.getSummary("suite-1");
+        expect((await service.suggestFinalFailureName("batch-1")).name).toContain("Rerun-");
+        const copy = await service.createFromFinalFailures("batch-1", {});
+        expect(copy).toMatchObject({
+          caseCount: 4,
+          policy: {
+            aiAnalysisAfterCompletion: true,
+            concurrency: 17,
+            adapter: { environmentAddresses: ["10.20.0.21"] },
+          },
+        });
+        expect(copy.policy).not.toHaveProperty("aiAnalysisExecutionId");
+        const stored = await context.suites.getSummary(copy.id);
+        expect(stored?.policy).toMatchObject({ aiAnalysisAfterCompletion: true });
+        expect(stored?.policy).not.toHaveProperty("aiAnalysisExecutionId");
+        expect(await context.suites.getSummary("suite-1")).toEqual(original);
+        expect(
+          await context.rows("SELECT policy_json FROM run_batches WHERE id='batch-1'"),
+        ).toEqual([{ policy_json: batchPolicyJson }]);
+      } finally {
+        await context.close();
+      }
+    });
+
     it("copies new batch address projections without changing the original task or losing exceptions", async () => {
       const context = await fixture(mode);
       try {

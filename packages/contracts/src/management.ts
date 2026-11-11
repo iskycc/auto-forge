@@ -380,6 +380,14 @@ export const caseSuiteExecutionPolicySchema = z
     }
   });
 
+// Stored execution snapshots contain batch-only metadata, unlike task mutation inputs.
+export const caseSuiteCopyBatchPolicySchema = caseSuiteExecutionPolicySchema.safeExtend({
+  aiAnalysisExecutionId: z.string().min(1).max(128).optional(),
+  environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses
+    .removeDefault()
+    .optional(),
+});
+
 export const archiveRerunSuitesInputSchema = z
   .object({
     projectId: z.string().min(1).max(128),

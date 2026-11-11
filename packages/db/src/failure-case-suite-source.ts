@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import type { FailureCaseSuiteSource } from "@autoforge/application";
 import {
   caseSuiteExecutionPolicySchema,
-  caseSuiteAdapterConfigurationSchema,
+  caseSuiteCopyBatchPolicySchema,
 } from "@autoforge/contracts";
 import {
   DomainError,
@@ -12,19 +12,13 @@ import {
   type RunBatch,
 } from "@autoforge/domain";
 
-// Stored batch metadata has an address projection; it is not a new task policy input.
-const batchCopyPolicySchema = caseSuiteExecutionPolicySchema.safeExtend({
-  environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses
-    .removeDefault()
-    .optional(),
-});
-
 type SnapshotIssue = {
   code: string;
   message: string;
   path: readonly PropertyKey[];
   minimum?: number | bigint;
   maximum?: number | bigint;
+  keys?: readonly string[];
 };
 
 function readCopyPolicy<Policy>(
@@ -68,10 +62,19 @@ function readCopyPolicy<Policy>(
       cause: parsed.error,
       details: {
         source,
-        issues: parsed.error.issues.slice(0, 10).map((issue) => ({
-          field: issue.path.map(String).join(".") || "configuration",
-          message: snapshotIssueMessage(issue),
-        })),
+        issues: parsed.error.issues
+          .slice(0, 10)
+          .flatMap((issue) => {
+            const paths =
+              issue.code === "unrecognized_keys" && issue.keys?.length
+                ? issue.keys.slice(0, 10).map((key) => [...issue.path, key])
+                : [issue.path];
+            return paths.map((path) => ({
+              field: path.map(String).join(".") || "configuration",
+              message: snapshotIssueMessage(issue),
+            }));
+          })
+          .slice(0, 10),
       },
     },
   );
@@ -136,9 +139,11 @@ export function toFailureCaseSuiteSource(
   );
   const { environmentAddresses, ...executionPolicy } = readCopyPolicy(
     row.batchPolicyJson,
-    batchCopyPolicySchema,
+    caseSuiteCopyBatchPolicySchema,
     "batch_snapshot",
   );
+  // Scheduling the copied task assigns its own batch identity for automatic analysis.
+  delete executionPolicy.aiAnalysisExecutionId;
   source.policy = mergeCaseSuiteExecutionPolicy(
     mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, {
       ...suitePolicy,

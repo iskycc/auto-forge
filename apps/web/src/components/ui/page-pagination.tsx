@@ -2,6 +2,7 @@
 
 import { Pagination } from "antd";
 import { useRouter } from "next/navigation";
+import { useClientReadiness } from "./use-client-readiness";
 
 /** Numbered navigation for lists with a known total; URL filters remain intact. */
 export function PagePagination({
@@ -20,9 +21,12 @@ export function PagePagination({
   label: string;
 }) {
   const router = useRouter();
+  const clientReady = useClientReadiness();
   return (
     <Pagination
       aria-label={label}
+      aria-disabled={!clientReady}
+      disabled={!clientReady}
       current={current}
       total={total}
       pageSize={pageSize}

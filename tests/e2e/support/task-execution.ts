@@ -4,6 +4,7 @@ import { closeExecutionCaseDetails } from "./execution-details";
 import { browserJson } from "./session";
 
 type SuitePolicyOverrides = {
+  aiAnalysisAfterCompletion?: boolean;
   concurrency?: number;
   retryLimit?: number;
   retryMode?: "immediate" | "round";

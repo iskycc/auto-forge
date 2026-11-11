@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+## 1.22.9 - 2026-11-11
+
+### Fixed
+
+- 修复开启“执行后 AI 初析”的批次无法以未通过用例创建新任务：复制时识别批次专属分析标记并排除，保留 AI 开关、执行配置及用例范围，新执行使用自己的分析身份；未知配置错误显示具体字段路径，Lite／Full 共用且无需迁移。
+
+- 执行节点列表固定每页 10 条，默认按节点名称自然升序、同名按 ID 稳定排列；刷新和心跳更新不再使节点换位，分页控件在客户端就绪后开放，保留筛选与分页布局。
+
+### Compatibility
+
+- 从 v1.22.8 升级不新增数据库迁移、生产依赖、配置项或 Runner 协议；已有执行批次可直接使用修复后的任务复制流程，无需清缓存或改写数据。
+
+### Verification
+
+- 任务复制相关 121 项定向回归通过，包含真实 SQLite／PostgreSQL；Lite／Full 各两个生产 Playwright 场景验证默认名称、创建、立即执行、重试、权限、错误明细和新批次分析身份。Full 使用双 Web、Worker 及真实 PostgreSQL／NATS／Redis／MinIO，详见[任务复制验证记录](./docs/architecture/failure-case-suite-naming.md)。
+- 执行节点排序与 UI 约束 21 项检查通过，生产 Lite Playwright 验证固定 10 条分页、数字名称排序、刷新稳定性、筛选、末页和跨页磁盘警告；实际查看 1024×768／1536×960 深浅色截图，无按钮或分页溢出。
+- 变更范围的格式、Lint、类型检查及 Web／Worker 生产构建通过。本次按用户要求采用最快路径，仅启动 Release，复用以上定向验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；Release 保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查。未重跑十万规模相关检查、真实业务 JVM、外部大模型或完整离线验收。
+
 ## 1.22.8 - 2026-11-11
 
 ### Fixed

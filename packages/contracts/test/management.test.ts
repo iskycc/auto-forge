@@ -11,6 +11,7 @@ import {
   probeRunnerHostRequestSchema,
   updateRunnerAgentInputSchema,
   caseSuiteExecutionPolicySchema,
+  caseSuiteCopyBatchPolicySchema,
   updateCaseSuiteItemsInputSchema,
   createWebhookConfigurationInputSchema,
   copyCaseSuiteInputSchema,
@@ -19,6 +20,18 @@ import {
 } from "../src/management";
 
 describe("case suite copy scope", () => {
+  it("accepts batch-only metadata exclusively at the stored snapshot boundary", () => {
+    const batchPolicy = {
+      aiAnalysisAfterCompletion: true,
+      aiAnalysisExecutionId: "batch-1",
+      environmentAddresses: ["10.20.0.21"],
+    };
+    expect(caseSuiteCopyBatchPolicySchema.parse(batchPolicy)).toEqual(batchPolicy);
+    expect(caseSuiteExecutionPolicySchema.safeParse(batchPolicy).success).toBe(false);
+    expect(
+      caseSuiteCopyBatchPolicySchema.safeParse({ ...batchPolicy, unknown: true }).success,
+    ).toBe(false);
+  });
   it("accepts an optional custom name; the server owns automatic naming, scope and configuration", () => {
     expect(createFailureCaseSuiteInputSchema.parse({})).toEqual({});
     expect(createFailureCaseSuiteInputSchema.parse({ name: "  Failures  " })).toEqual({

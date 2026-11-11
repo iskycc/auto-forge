@@ -18,6 +18,7 @@ test("Runner disk warnings cover all pages, respect the 20% boundary and refresh
     resolve(process.env.AUTOFORGE_E2E_DATA_DIR!, "db/autoforge.sqlite"),
   );
   const now = new Date().toISOString();
+  const offPageRunnerName = `${prefix}-offline-tail`;
   let registeredRunnerId: string | undefined;
   try {
     const registration = await page.request.post("/api/v1/runner-agents/register", {
@@ -87,8 +88,13 @@ test("Runner disk warnings cover all pages, respect the 20% boundary and refresh
         fixture.runnerIds[0]!,
       );
     database
-      .prepare("UPDATE runners SET last_seen_at=?, metrics_observed_at=? WHERE id=?")
-      .run("2000-01-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z", fixture.runnerIds[4]!);
+      .prepare("UPDATE runners SET name=?, last_seen_at=?, metrics_observed_at=? WHERE id=?")
+      .run(
+        offPageRunnerName,
+        "2000-01-01T00:00:00.000Z",
+        "2000-01-01T00:00:00.000Z",
+        fixture.runnerIds[4]!,
+      );
     await heartbeat(20 * 1024 ** 3);
     const anonymous = await browser.newContext({ baseURL: "http://127.0.0.1:3100" });
     try {
@@ -114,6 +120,9 @@ test("Runner disk warnings cover all pages, respect the 20% boundary and refresh
         const warning = page.getByRole("button", { name: "磁盘空间不足：6 台节点" });
         const pagination = page.getByLabel("执行机分页", { exact: true });
         await expect(pagination).toBeVisible();
+        await expect(
+          page.locator(".runner-list-item").filter({ hasText: offPageRunnerName }),
+        ).toHaveCount(0);
         await expect(warning).toBeVisible();
         await page.evaluate(() =>
           window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" }),
@@ -208,17 +217,23 @@ test("Runner pagination stays aligned with more than one page and preserves the 
   await ensureAdministrator(page);
   const prefix = uniqueName("runner-pages");
   const fixture = insertRunnerPaginationFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, prefix);
+  const visibleNames = page.locator(".runner-list-identity strong");
+  const expectedNames = (first: number, last: number) =>
+    Array.from(
+      { length: last - first + 1 },
+      (_, index) => `${prefix}-${String(first + index).padStart(2, "0")}`,
+    );
   try {
-    for (const [suffix, count] of [
-      ["ten", 10],
-      ["twelve", 12],
-    ] as const) {
-      await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-${suffix}`)}`);
-      await expect(page.locator(".runner-list-item")).toHaveCount(count);
-      await expect(page.getByLabel("执行机分页", { exact: true })).toHaveCount(0);
-    }
+    await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-ten`)}`);
+    await expect(page.locator(".runner-list-item")).toHaveCount(10);
+    await expect(visibleNames).toHaveText(expectedNames(1, 10));
+    await expect(page.getByLabel("执行机分页", { exact: true })).toHaveCount(0);
+    await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-twelve`)}`);
+    await expect(page.locator(".runner-list-item")).toHaveCount(10);
+    await expect(page.getByLabel("执行机分页", { exact: true })).toContainText("共 12 条 · 1–10");
     await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-thirteen`)}`);
     await expect(page.getByLabel("执行机分页", { exact: true })).toContainText("共 13 条");
+    await expect(page.locator(".runner-list-item")).toHaveCount(10);
 
     for (const theme of ["light", "dark"] as const) {
       await page
@@ -230,8 +245,10 @@ test("Runner pagination stays aligned with more than one page and preserves the 
         await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
         await page.goto(`/runners?query=${encodeURIComponent(prefix)}`);
         const pagination = page.getByLabel("执行机分页", { exact: true });
-        await expect(page.locator(".runner-list-item")).toHaveCount(12);
-        await expect(pagination).toContainText("共 26 条 · 1–12");
+        await expect(page.locator(".runner-list-item")).toHaveCount(10);
+        await expect(visibleNames).toHaveText(expectedNames(1, 10));
+        await expect(pagination).toContainText("共 26 条 · 1–10");
+        await expect(pagination).toHaveAttribute("aria-disabled", "false");
         await expect(
           page.getByRole("button", { name: /^查看 .* 的资源监控$/ }).first(),
         ).toBeEnabled();
@@ -276,11 +293,29 @@ test("Runner pagination stays aligned with more than one page and preserves the 
         await expect(page).toHaveURL(
           (url) => url.searchParams.get("page") === "2" && url.searchParams.get("query") === prefix,
         );
-        await expect(pagination).toContainText("共 26 条 · 13–24");
-        await expect(page.locator(".runner-list-item")).toHaveCount(12);
+        await expect(pagination).toContainText("共 26 条 · 11–20");
+        await expect(page.locator(".runner-list-item")).toHaveCount(10);
+        await expect(visibleNames).toHaveText(expectedNames(11, 20));
+        // A new heartbeat must not move a node between inventory pages.
+        const database = new DatabaseSync(
+          resolve(process.env.AUTOFORGE_E2E_DATA_DIR!, "db", "autoforge.sqlite"),
+        );
+        try {
+          database.exec("PRAGMA busy_timeout=5000");
+          database
+            .prepare("UPDATE runners SET last_seen_at=? WHERE id=?")
+            .run(new Date().toISOString(), fixture.runnerIds[0]!);
+        } finally {
+          database.close();
+        }
+        await page.reload();
+        await expect(visibleNames).toHaveText(expectedNames(11, 20));
+        await expect(pagination).toContainText("共 26 条 · 11–20");
+        await expect(pagination).toHaveAttribute("aria-disabled", "false");
         await pagination.getByTitle("3", { exact: true }).click();
-        await expect(pagination).toContainText("共 26 条 · 25–26");
-        await expect(page.locator(".runner-list-item")).toHaveCount(2);
+        await expect(pagination).toContainText("共 26 条 · 21–26");
+        await expect(page.locator(".runner-list-item")).toHaveCount(6);
+        await expect(visibleNames).toHaveText(expectedNames(21, 26));
         await expect(
           page.getByRole("button", { name: /^查看 .* 的资源监控$/ }).first(),
         ).toBeEnabled();
@@ -291,10 +326,11 @@ test("Runner pagination stays aligned with more than one page and preserves the 
         });
         await expectUiIntegrity(page);
         await pagination.getByTitle("上一页", { exact: true }).click();
-        await expect(pagination).toContainText("共 26 条 · 13–24");
+        await expect(pagination).toContainText("共 26 条 · 11–20");
         await page.reload();
-        await expect(page.locator(".runner-list-item")).toHaveCount(12);
-        await expect(pagination).toContainText("共 26 条 · 13–24");
+        await expect(page.locator(".runner-list-item")).toHaveCount(10);
+        await expect(visibleNames).toHaveText(expectedNames(11, 20));
+        await expect(pagination).toContainText("共 26 条 · 11–20");
       }
     }
   } finally {

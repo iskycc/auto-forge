@@ -33,6 +33,7 @@ import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { Button, Input, Select } from "@/components/ui";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { runnerControlPlaneUrl } from "@/lib/platform-configuration";
+import { orderRunnersByName } from "@/lib/runner-name-order";
 
 export const dynamic = "force-dynamic";
 
@@ -112,10 +113,10 @@ export default async function RunnersPage({
           .toLocaleLowerCase("zh-CN")
           .includes(runnerQuery)),
   );
-  const pageSize = 12;
+  const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(filteredRunners.length / pageSize));
   const currentPage = Math.min(pageCount, positiveInteger(parameters.page));
-  const visibleRunners = filteredRunners.slice(
+  const visibleRunners = orderRunnersByName(filteredRunners).slice(
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );

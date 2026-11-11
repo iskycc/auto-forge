@@ -2127,6 +2127,7 @@ test("a terminal task with no failures copies its unexecuted members into a new 
   ).toBe(200);
   const runner = await registerRunner(page, suffix);
   await configureTaskExecution(page, suite.id, runner.id, {
+    aiAnalysisAfterCompletion: true,
     concurrency: 2,
     retryLimit: 0,
     adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
@@ -2247,6 +2248,7 @@ test("terminal execution failures create a reusable task with the execution conf
   ).toBe(200);
   const runner = await registerRunner(page, suffix);
   await configureTaskExecution(page, suite.id, runner.id, {
+    aiAnalysisAfterCompletion: true,
     concurrency: 2,
     retryLimit: 0,
     adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
@@ -2371,6 +2373,7 @@ test("terminal execution failures create a reusable task with the execution conf
               issues: [
                 { field: "concurrency", message: "不能小于 1。" },
                 { field: "adapter.environmentAddresses.0", message: "配置字段类型不正确。" },
+                { field: "unsupportedPolicy", message: "包含当前版本不支持的配置字段。" },
               ],
             },
           },
@@ -2383,6 +2386,7 @@ test("terminal execution failures create a reusable task with the execution conf
     "执行批次配置快照 · 并发上限：不能小于 1。",
   );
   await expect(errorDialog.getByRole("alert")).toContainText("环境 IP");
+  await expect(errorDialog.getByRole("alert")).toContainText("unsupportedPolicy");
   await expect(errorDialog.getByRole("alert")).toContainText("failure-copy-diagnostic-request");
   for (const theme of ["light", "dark"] as const) {
     for (const width of [1024, 1536]) {
@@ -2474,7 +2478,11 @@ test("terminal execution failures create a reusable task with the execution conf
     caseCount: number;
     policy: { concurrency: number };
   };
-  expect(copied).toMatchObject({ caseCount: 2, policy: { concurrency: 2 } });
+  expect(copied).toMatchObject({
+    caseCount: 2,
+    policy: { concurrency: 2, aiAnalysisAfterCompletion: true },
+  });
+  expect(copied.policy).not.toHaveProperty("aiAnalysisExecutionId");
   await expect(page).toHaveURL(new RegExp(`/case-suites/${copied.id}$`));
   const members = await browserJson<{ items: Array<{ caseDefinition: { id: string } }> }>(
     page,
@@ -2623,7 +2631,11 @@ test("terminal execution failures create a reusable task with the execution conf
   expect(immediateBatch).toMatchObject({
     suiteId: immediateSuite.id,
     totalRuns: 2,
-    policy: { concurrency: 2 },
+    policy: {
+      concurrency: 2,
+      aiAnalysisAfterCompletion: true,
+      aiAnalysisExecutionId: immediateBatch.id,
+    },
   });
   expect(creations).toBe(1);
   await expect(page).toHaveURL(new RegExp(`/run-batches/${immediateBatch.id}$`));

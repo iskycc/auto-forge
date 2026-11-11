@@ -31,6 +31,20 @@ describe("failure task actionable error feedback", () => {
       "执行批次配置快照 · Adapter / 环境 IP / 0：配置字段类型不正确。",
     ]);
   });
+  it("shows the unsupported snapshot field name returned by the repository", () => {
+    const error = new ApiClientError({
+      code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+      status: 422,
+      message: "执行配置快照校验失败",
+      details: {
+        source: "batch_snapshot",
+        issues: [{ field: "unsupportedPolicy", message: "包含当前版本不支持的配置字段。" }],
+      },
+    });
+    expect(failureCaseSuiteError(error, "失败").details).toEqual([
+      "执行批次配置快照 · unsupportedPolicy：包含当前版本不支持的配置字段。",
+    ]);
+  });
   it("keeps missing case identities and caps very large diagnostic lists", () => {
     const error = new ApiClientError({
       code: "CASE_SUITE_FAILURE_MEMBER_UNAVAILABLE",

@@ -74,3 +74,42 @@ v1.20.24 在批次策略 JSON 中增加 `environmentAddresses`，供状态读取
 验证记录：新增回归先在旧实现中复现了环境字段被拒绝的问题。修复后 91 项定向检查通过，包含真实 SQLite／PostgreSQL 的异常末轮、地址复制、旧批次兼容、797 个用例跨页复制、配置错误定位、任务删除历史及事务回滚；两个十万规模压测未在本机重跑。相关 Prettier／ESLint、测试／数据库／worker 类型检查和 Web／worker 生产构建通过。
 
 生产 Lite 的 `terminal execution failures create` Playwright 场景通过，使用真实 HTTP Runner 测试端完成 `PROCESS_INTERRUPTED`（退出码 143）与超时结果；验证真实新批次的默认名称、完整创建、立即执行与失败后重试、权限，以及注入输入／快照错误后的详细反馈。已审查 1024×768、1536×960 深浅色弹窗截图，无溢出或变形。证据目录：`/var/tmp/autoforge-failure-copy-20261028/`。未运行真实业务 JVM、完整 Full 浏览器闭环或发布流程；本变更不需要迁移、配置项或 Runner 升级。
+
+## AI 自动分析批次的配置复制（2026-11-11）
+
+开启“执行后 AI 初析”的批次在 `policy_json` 中另存 `aiAnalysisExecutionId`，用于将自动分析绑定到本次执行；它不是任务配置。此前复制流程没有识别这一内部字段，导致这类批次的名称建议和创建均报“包含当前版本不支持的配置字段”，与失败用例的结果无关。
+
+复制时专用批次快照 schema 校验该标记后将其排除，仅保留 `aiAnalysisAfterCompletion` 开关及原执行配置。新任务执行时由调度入口绑定自己的批次 ID，不复用原批次的自动分析身份；原任务、执行快照和分析记录保持不变。旧批次没有该标记也可正常复制。任务 HTTP 输入仍拒绝这一内部字段，真正不支持的字段仍会被拒绝，但错误明细现在逐项给出字段路径（最多 10 项），不返回字段值。
+
+Lite／Full 共用这一转换，无需迁移、修改配置、清缓存或升级 Runner。
+
+本次先用新增回归在旧实现中复现了 `aiAnalysisExecutionId` 被拒绝。修复后以下定向检查实际通过：
+
+```sh
+# 真实 PostgreSQL URL 从本地私密配置注入，不记录凭据。
+pnpm exec vitest run \
+  packages/db/test/failure-case-suite-source.test.ts \
+  packages/db/test/failure-case-suite-copy.integration.test.ts \
+  packages/contracts/test/management.test.ts \
+  packages/application/test/create-failure-case-suite.test.ts \
+  apps/web/src/lib/failure-case-suite-api.test.ts \
+  apps/web/src/lib/failure-case-suite-error.test.ts \
+  --testNamePattern '^(?!.*100,000).*' --maxWorkers=1 --no-file-parallelism
+
+pnpm --filter @autoforge/contracts typecheck
+pnpm --filter @autoforge/db typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm --filter @autoforge/web build
+pnpm --filter @autoforge/worker build
+
+# 分别连接准备好的 Lite／Full 生产服务，使用隔离测试库与单个浏览器工作进程。
+pnpm exec playwright test tests/e2e/case-suite-lifecycle.spec.ts \
+  --grep 'terminal.*(failures|no failures)' --workers=1
+pnpm exec playwright test --config playwright.full.config.ts \
+  tests/e2e/case-suite-lifecycle.spec.ts \
+  --grep 'terminal.*(failures|no failures)' --workers=1
+```
+
+Vitest 共 121 项通过，覆盖当前全部批次策略字段、AI 开关、旧快照、非 Pass 成员、源配置不变、权限、事务回滚及未知字段定位；三个十万规模相关检查本机未重跑。变更文件的 Prettier、ESLint 和 `git diff --check` 通过。
+
+Lite／Full 各两个生产 Playwright 场景通过，使用 Runner HTTP 测试端生成失败、超时及未执行结果；验证建议名称、创建任务、创建并立即执行、执行失败后重试、权限和配置错误展示，并确认新执行使用自己的 `aiAnalysisExecutionId`。Full 使用双 Web、独立 Worker 及真实 PostgreSQL／NATS／Redis／MinIO。实际查看 1024×768、1536×960 深浅色截图，弹框层级、换行和按钮边界正常；截图分别位于 `/var/tmp/autoforge-failure-copy-ai-ui`、`/var/tmp/autoforge-failure-copy-ai-full-ui`。未运行真实业务 JVM、外部大模型、完整标准 CI 或发布流程。

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
+import { defaultCaseSuiteExecutionPolicy, type RunBatchExecutionPolicy } from "@autoforge/domain";
+import { serializeBatchPolicy } from "../src/run-batch-environment-addresses";
 import {
   toFailureCaseSuiteSource,
   type FailureCaseSuiteSourceRow,
@@ -41,6 +42,72 @@ function sourceRow(batchPolicy: Record<string, unknown>): FailureCaseSuiteSource
 }
 
 describe("failure task execution snapshot compatibility", () => {
+  it("accepts every current batch policy field written by the repositories", () => {
+    // Keep this exhaustive: adding persisted policy fields must also audit task copying.
+    const batchPolicy: Required<RunBatchExecutionPolicy> = {
+      aiAnalysisAfterCompletion: true,
+      aiAnalysisExecutionId: "original-batch",
+      executor: "testng-container",
+      concurrency: 40,
+      projectVersionId: "version-1",
+      runnerLabels: ["java"],
+      artifactPatterns: ["reports/**"],
+      retryConcurrencyRules: [{ id: "rule-1", executionRound: 2, concurrency: 20 }],
+    };
+    const row = sourceRow({});
+    row.batchPolicyJson = serializeBatchPolicy(batchPolicy, ["10.20.0.21"]);
+    const copied = toFailureCaseSuiteSource(row, []).policy;
+    expect(copied).toMatchObject({
+      executor: "testng-container",
+      aiAnalysisAfterCompletion: true,
+      runnerLabels: ["java"],
+      artifactPatterns: ["reports/**"],
+      retryConcurrencyRules: [{ id: "rule-1", executionRound: 2, concurrency: 20 }],
+      adapter: { environmentAddresses: ["10.20.0.21"] },
+    });
+    expect(copied).not.toHaveProperty("aiAnalysisExecutionId");
+    expect(copied).not.toHaveProperty("environmentAddresses");
+  });
+  it.each([true, false])(
+    "copies AI configuration (%s) without carrying the original batch analysis identity",
+    (aiAnalysisAfterCompletion) => {
+      const row = sourceRow({
+        aiAnalysisAfterCompletion,
+        aiAnalysisExecutionId: "original-batch",
+      });
+      const policy = toFailureCaseSuiteSource(row, []).policy;
+      expect(policy).toMatchObject({ aiAnalysisAfterCompletion, concurrency: 40 });
+      expect(policy).not.toHaveProperty("aiAnalysisExecutionId");
+      expect(row.batchPolicyJson).toContain('"aiAnalysisExecutionId":"original-batch"');
+    },
+  );
+  it("rejects an invalid batch analysis identity at its exact field", () => {
+    expect(() => toFailureCaseSuiteSource(sourceRow({ aiAnalysisExecutionId: 42 }), [])).toThrow(
+      expect.objectContaining({
+        code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+        details: {
+          source: "batch_snapshot",
+          issues: [expect.objectContaining({ field: "aiAnalysisExecutionId" })],
+        },
+      }),
+    );
+  });
+  it("keeps batch-only AI metadata out of the task configuration schema", () => {
+    const row = sourceRow({});
+    row.suitePolicyJson = JSON.stringify({
+      ...JSON.parse(row.suitePolicyJson!),
+      aiAnalysisExecutionId: "original-batch",
+    });
+    expect(() => toFailureCaseSuiteSource(row, [])).toThrow(
+      expect.objectContaining({
+        code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+        details: {
+          source: "task_snapshot",
+          issues: [expect.objectContaining({ field: "aiAnalysisExecutionId" })],
+        },
+      }),
+    );
+  });
   it("accepts the address projection written since v1.20.24 and copies the executed environment", () => {
     const row = sourceRow({ environmentAddresses: ["10.20.0.21", "2001:db8::21"] });
     expect(toFailureCaseSuiteSource(row, []).policy).toMatchObject({
@@ -100,7 +167,40 @@ describe("failure task execution snapshot compatibility", () => {
       toFailureCaseSuiteSource(row, []);
       throw new Error("Expected snapshot validation failure");
     } catch (error) {
-      expect(error).toMatchObject({ code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID" });
+      expect(error).toMatchObject({
+        code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+        details: {
+          source: "batch_snapshot",
+          issues: [
+            {
+              field: "unsupported",
+              message: "包含当前版本不支持的配置字段。",
+            },
+          ],
+        },
+      });
+      expect(JSON.stringify(error)).not.toContain("private-value");
+    }
+  });
+  it("identifies nested unsupported fields and bounds the returned diagnostics", () => {
+    const row = sourceRow({
+      retryConcurrencyRules: [
+        { id: "rule-1", executionRound: 2, concurrency: 10, unsupported: "private-value" },
+      ],
+      ...Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`unknown${index}`, true])),
+    });
+    try {
+      toFailureCaseSuiteSource(row, []);
+      throw new Error("Expected snapshot validation failure");
+    } catch (error) {
+      expect(error).toMatchObject({
+        details: {
+          issues: expect.arrayContaining([
+            expect.objectContaining({ field: "retryConcurrencyRules.0.unsupported" }),
+          ]),
+        },
+      });
+      expect((error as { details: { issues: unknown[] } }).details.issues).toHaveLength(10);
       expect(JSON.stringify(error)).not.toContain("private-value");
     }
   });
