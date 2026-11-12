@@ -1,3 +1,4 @@
+import { fillEnvironmentAddressList } from "./support/environment-addresses";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { COTEST_ADAPTER_CAPABILITY } from "@autoforge/domain";
@@ -225,14 +226,10 @@ test("public task links execute with login only, share live status, record actor
       name: "修改执行环境 IP",
       exact: true,
     });
-    await environmentDialog
-      .getByRole("textbox", { name: "本次执行环境 IP" })
-      .fill("10.0.0.1\n10.0.0.1");
+    await fillEnvironmentAddressList(environmentDialog, ["10.0.0.1", "10.0.0.1"]);
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await expect(environmentDialog.getByRole("alert")).toContainText("不能为空或重复");
-    await environmentDialog
-      .getByRole("textbox", { name: "本次执行环境 IP" })
-      .fill(overrideAddresses.join("\n"));
+    await fillEnvironmentAddressList(environmentDialog, overrideAddresses);
     for (const width of [1024, 1536]) {
       await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await captureUi(visitor, `public-task-environment-dialog-${width}`);
@@ -240,16 +237,12 @@ test("public task links execute with login only, share live status, record actor
       await environmentDialog.getByRole("button", { name: "取消", exact: true }).click();
       await visitor.getByRole("button", { name: "切换到深色模式" }).click();
       await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
-      await environmentDialog
-        .getByRole("textbox", { name: "本次执行环境 IP" })
-        .fill(overrideAddresses.join("\n"));
+      await fillEnvironmentAddressList(environmentDialog, overrideAddresses);
       await captureUi(visitor, `public-task-environment-dialog-dark-${width}`);
       await environmentDialog.getByRole("button", { name: "取消", exact: true }).click();
       await visitor.getByRole("button", { name: "切换到浅色模式" }).click();
       await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
-      await environmentDialog
-        .getByRole("textbox", { name: "本次执行环境 IP" })
-        .fill(overrideAddresses.join("\n"));
+      await fillEnvironmentAddressList(environmentDialog, overrideAddresses);
     }
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await expect(environment).toContainText("本页自定义");
@@ -314,9 +307,7 @@ test("public task links execute with login only, share live status, record actor
     // The selected environment persists, so it conflicts until explicitly changed.
     await expect(execute).toBeDisabled();
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
-    await environmentDialog
-      .getByRole("textbox", { name: "本次执行环境 IP" })
-      .fill(`${overrideAddresses[0]}\n10.88.0.1`);
+    await fillEnvironmentAddressList(environmentDialog, [overrideAddresses[0]!, "10.88.0.1"]);
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await expect(execute).toBeDisabled();
     await expect(
@@ -328,7 +319,7 @@ test("public task links execute with login only, share live status, record actor
       await captureUi(visitor, `public-task-environment-conflict-${width}`);
     }
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
-    await environmentDialog.getByRole("textbox", { name: "本次执行环境 IP" }).fill("10.88.0.1");
+    await fillEnvironmentAddressList(environmentDialog, ["10.88.0.1"]);
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await visitor.getByLabel("启动方式", { exact: true }).click();
     await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
@@ -451,9 +442,7 @@ test("public task links execute with login only, share live status, record actor
       caseCount: 1,
     });
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
-    await environmentDialog
-      .getByRole("textbox", { name: "本次执行环境 IP" })
-      .fill(overrideAddresses.join("\n"));
+    await fillEnvironmentAddressList(environmentDialog, overrideAddresses);
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await visitor.getByLabel("启动方式", { exact: true }).click();
     await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
@@ -652,6 +641,338 @@ test("public task links execute with login only, share live status, record actor
   } finally {
     await context.close();
     await observerContext.close();
+  }
+});
+
+test("locked tasks allow one-execution environment editing from task pages and the run dialog", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("next-execution-ip");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const className = `example.NextEnvironment${Date.now()}Test`;
+  await importJar(page, project, `${suffix}.jar`, className, ["verify"]);
+  const definition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    className,
+  );
+  const name = `锁定任务的下一次执行环境 · ${suffix}`;
+  const suite = await createVersionSuite(page, project.id, project.versionId, name, definition.id);
+  const runner = await registerRunner(page, suffix);
+  const dependencyJar = zipSync({
+    "example/Dependency.class": buildClassFile({ className: "example.Dependency", methods: [] }),
+  });
+  const uploaded = await page.request.post(
+    `/api/v1/projects/${project.id}/runtime-assets/upload?kind=jar-bundle&archiveFormat=zip`,
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "content-type": "application/octet-stream",
+        "x-autoforge-file-name": "next-environment.zip",
+      },
+      data: Buffer.from(zipSync({ "dependency.jar": dependencyJar })),
+    },
+  );
+  expect(uploaded.status()).toBe(201);
+  const dependency = (await uploaded.json()) as { id: string };
+  expect(
+    (
+      await browserJson(
+        page,
+        `/api/v1/projects/${project.id}/versions/${project.versionId}/adapter-configuration`,
+        { method: "PUT", body: { jarBundleAssetId: dependency.id, expectedRevision: 0 } },
+      )
+    ).status,
+  ).toBe(200);
+  const defaults = ["10.0.0.21", "10.0.0.22", "2001:db8::22"];
+  await configureTaskExecution(page, suite.id, runner.id, {
+    concurrency: 1,
+    retryLimit: 0,
+    adapter: {
+      enabled: true,
+      suiteName: "Next IP suite",
+      testName: "Next IP test",
+      environmentAddresses: defaults.slice(0, 2),
+    },
+  });
+  await page.goto(`/case-suites/${suite.id}`);
+  await page
+    .getByLabel("任务默认环境 IP", { exact: true })
+    .getByRole("button", { name: "修改环境 IP", exact: true })
+    .click();
+  const defaultEditor = page.getByRole("dialog", { name: "修改任务默认环境 IP", exact: true });
+  await fillEnvironmentAddressList(defaultEditor, defaults);
+  await defaultEditor.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(defaultEditor).toBeHidden();
+  await expect(page.getByText("任务配置已保存", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("任务默认环境 IP", { exact: true })).not.toContainText(defaults[2]!);
+  await page
+    .getByLabel("任务默认环境 IP", { exact: true })
+    .getByRole("button", { name: "修改环境 IP", exact: true })
+    .click();
+  await fillEnvironmentAddressList(defaultEditor, defaults);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expectUiIntegrity(page);
+  await captureUi(page, "task-default-ip-editor-1024");
+  await defaultEditor.getByRole("button", { name: "保留到任务配置", exact: true }).click();
+  const savedDefaults = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      new URL(response.url()).pathname === `/api/v1/case-suites/${suite.id}`,
+  );
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  expect((await savedDefaults).status()).toBe(200);
+  const summary = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suite.id}?view=summary`,
+  );
+  const locked = await browserJson<{ revision: number; lockedBy: string }>(
+    page,
+    `/api/v1/case-suites/${suite.id}/lock`,
+    { method: "PUT", body: { locked: true, expectedRevision: summary.body.revision } },
+  );
+  expect(locked.status).toBe(200);
+  const username = uniqueName("next-ip-peer");
+  const password = "NextEnvironment!Password123";
+  const peer = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName: "其他执行操作人", password, forcePasswordChange: false },
+  });
+  expect(peer.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/users/${peer.body.id}/project-roles`, {
+        method: "POST",
+        body: { projectId: project.id, roleId: "00000000-0000-7000-8100-000000000002" },
+      })
+    ).status,
+  ).toBe(204);
+  const context = await browser.newContext();
+  try {
+    const other = await context.newPage();
+    await login(other, username, password);
+    await selectProjectContext(other, project.id, project.versionId, project.stageId);
+    await other.goto("/case-suites");
+    const card = other.getByRole("article", { name: `任务 ${name}`, exact: true });
+    await card.getByRole("button", { name: "环境 IP", exact: true }).click();
+    const edit = other.getByRole("dialog", { name: "修改下次执行环境 IP", exact: true });
+    await fillEnvironmentAddressList(edit, ["10.99.0.1", "10.99.0.1"]);
+    await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await expect(edit.getByRole("alert")).toContainText("不能为空或重复");
+    await fillEnvironmentAddressList(edit, ["bad-ip"]);
+    await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await expect(edit.getByRole("alert")).toBeVisible();
+    const temporary = ["10.99.0.1", "2001:db8:85a3:8d3:1319:8a2e:370:7348"];
+    await fillEnvironmentAddressList(edit, temporary);
+    for (const width of [1024, 1536]) {
+      await other.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(other);
+      await captureUi(other, `next-task-ip-editor-${width}`);
+    }
+    await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await expect(card).toContainText("下次使用自定义 IP");
+    await captureUi(other, "next-task-ip-list-1536");
+    await card.locator("a").first().click();
+    await expect(other).toHaveURL(new RegExp(`/case-suites/${suite.id}$`));
+    const environment = other
+      .getByRole("main")
+      .getByRole("region", { name: "下次执行环境", exact: true });
+    await expect(environment).toContainText(temporary[0]!);
+    await expect(other.getByRole("button", { name: "保存修改", exact: true })).toHaveCount(0);
+    const forbidden = await browserJson<{ error: { code: string } }>(
+      other,
+      `/api/v1/case-suites/${suite.id}`,
+      {
+        method: "PATCH",
+        body: {
+          expectedRevision: locked.body.revision,
+          policy: { adapter: { enabled: true, environmentAddresses: temporary } },
+        },
+      },
+    );
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body.error.code).toBe("CASE_SUITE_LOCKED");
+    for (const width of [1024, 1536]) {
+      await other.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await environment.scrollIntoViewIfNeeded();
+      await expectUiIntegrity(other);
+      await captureUi(other, `next-task-ip-detail-${width}`);
+    }
+    await other.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await expect(other.locator("html")).toHaveAttribute("data-color-mode", "dark");
+    for (const width of [1024, 1536]) {
+      await other.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await environment.scrollIntoViewIfNeeded();
+      await captureUi(other, `next-task-ip-detail-dark-${width}`);
+      await other
+        .locator(".page-hero")
+        .getByRole("button", { name: "立即执行", exact: true })
+        .click();
+      const darkRun = other.getByRole("dialog", { name: "开始执行", exact: true });
+      await expectUiIntegrity(other);
+      await captureUi(other, `next-task-ip-run-dark-${width}`);
+      await darkRun.getByRole("button", { name: "修改下次执行 IP", exact: true }).click();
+      await expect(edit.getByRole("textbox").first()).toBeEditable();
+      await expectUiIntegrity(other);
+      await captureUi(other, `next-task-ip-editor-dark-${width}`);
+      await other.keyboard.press("Escape");
+      await expect(edit).toBeHidden();
+      await expect(darkRun).toBeVisible();
+      await darkRun.getByRole("button", { name: "取消", exact: true }).click();
+      await expect(darkRun).toBeHidden();
+    }
+    await other.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+    await other
+      .locator(".page-hero")
+      .getByRole("button", { name: "立即执行", exact: true })
+      .click();
+    const run = other.getByRole("dialog", { name: "开始执行", exact: true });
+    await expect(run.getByRole("region", { name: "下次执行环境" })).toContainText(temporary[0]!);
+    await run.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(run).toBeHidden();
+    await expect(environment).toContainText(temporary[0]!);
+    await other
+      .locator(".page-hero")
+      .getByRole("button", { name: "立即执行", exact: true })
+      .click();
+    await other.route(
+      "**/api/v1/run-batches/preflight",
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ready: false, blockers: [{ message: "测试预检暂时失败" }] }),
+        }),
+      { times: 1 },
+    );
+    await run.getByRole("button", { name: "确认并开始执行", exact: true }).click();
+    await expect(run.getByRole("alert")).toContainText("测试预检暂时失败");
+    await expect(run.getByRole("region", { name: "下次执行环境" })).toContainText(temporary[0]!);
+    await other.route(
+      "**/api/v1/run-batches",
+      (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "测试提交失败" } }),
+        }),
+      { times: 1 },
+    );
+    await refreshRunnerHeartbeat(other, runner);
+    await run.getByRole("button", { name: "确认并开始执行", exact: true }).click();
+    await expect(run.getByRole("alert")).toContainText("测试提交失败");
+    await expect(run.getByRole("region", { name: "下次执行环境" })).toContainText(temporary[0]!);
+    for (let execution = 0; execution < 3; execution++) {
+      if (execution > 0)
+        await other
+          .locator(".page-hero")
+          .getByRole("button", { name: "立即执行", exact: true })
+          .click();
+      if (execution === 1) {
+        await run.getByRole("button", { name: "修改下次执行 IP", exact: true }).click();
+        await fillEnvironmentAddressList(edit, ["10.99.0.2"]);
+        await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+      }
+      const expected = execution === 0 ? temporary : execution === 1 ? ["10.99.0.2"] : defaults;
+      await expect(
+        run
+          .locator(".execution-config-summary")
+          .getByText(`${expected.length} 个`, { exact: true }),
+      ).toBeVisible();
+      if (execution === 0) {
+        await run.getByRole("region", { name: "下次执行环境" }).scrollIntoViewIfNeeded();
+        await captureUi(other, "next-task-ip-run-1536");
+      }
+      await refreshRunnerHeartbeat(other, runner);
+      if (execution === 1) {
+        await run.getByRole("radio", { name: "倒计时执行", exact: true }).locator("..").click();
+        await run.getByRole("spinbutton", { name: "倒计时分钟", exact: true }).fill("0");
+        await run.getByRole("spinbutton", { name: "倒计时秒", exact: true }).fill("3");
+      }
+      const response = other.waitForResponse(
+        (value) =>
+          value.request().method() === "POST" &&
+          new URL(value.url()).pathname === "/api/v1/run-batches",
+      );
+      await run
+        .getByRole("button", {
+          name: execution === 1 ? "确认倒计时执行" : "确认并开始执行",
+          exact: true,
+        })
+        .click();
+      const accepted = await response;
+      expect(accepted.status()).toBe(201);
+      expect(accepted.request().postDataJSON()).toEqual({
+        suiteId: suite.id,
+        delaySeconds: execution === 1 ? 3 : 0,
+        ...(execution < 2 ? { environmentAddresses: expected } : {}),
+      });
+      const batch = (await accepted.json()) as { id: string };
+      await expect(other).toHaveURL(new RegExp(`/run-batches/${batch.id}$`));
+      const claim = await claimDeletionAttempt(other, runner);
+      expect(claim.assignment.executionSpec.adapter?.environmentAddress).toBe(expected[0]);
+      await uploadDeletionLog(other, runner, claim, "Next environment verified.\n");
+      await completeDeletionAttempt(other, runner, claim, "succeeded");
+      await other.goBack();
+      await expect(other).toHaveURL(new RegExp(`/case-suites/${suite.id}$`));
+      await expect(environment).toContainText(defaults[0]!);
+      await expect(environment).not.toContainText("仅下次执行");
+    }
+    await environment.getByRole("button", { name: "修改下次执行 IP", exact: true }).click();
+    await fillEnvironmentAddressList(edit, ["10.99.0.3"]);
+    await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await other.reload();
+    await expect(environment).toContainText(defaults[0]!);
+    const unchanged = await browserJson<{
+      revision: number;
+      lockedBy: string;
+      policy: { adapter: { environmentAddresses: string[] } };
+    }>(page, `/api/v1/case-suites/${suite.id}?view=summary`);
+    expect(unchanged.body).toMatchObject({
+      revision: locked.body.revision,
+      lockedBy: locked.body.lockedBy,
+    });
+    expect(unchanged.body.policy.adapter.environmentAddresses).toEqual(defaults);
+    // A newly disabled Adapter must not submit an older in-page environment draft.
+    await environment.getByRole("button", { name: "修改下次执行 IP", exact: true }).click();
+    await fillEnvironmentAddressList(edit, ["10.99.0.4"]);
+    await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await configureTaskExecution(page, suite.id, runner.id, {
+      concurrency: 1,
+      retryLimit: 0,
+      adapter: {
+        enabled: false,
+        suiteName: "Next IP suite",
+        testName: "Next IP test",
+        environmentAddresses: defaults,
+      },
+    });
+    await other
+      .locator(".page-hero")
+      .getByRole("button", { name: "立即执行", exact: true })
+      .click();
+    await expect(run.getByRole("region", { name: "下次执行环境" })).toContainText("未启用 Adapter");
+    await refreshRunnerHeartbeat(other, runner);
+    const noAdapterResponse = other.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/run-batches",
+    );
+    await run.getByRole("button", { name: "确认并开始执行", exact: true }).click();
+    const noAdapter = await noAdapterResponse;
+    expect(noAdapter.status()).toBe(201);
+    expect(noAdapter.request().postDataJSON()).toEqual({ suiteId: suite.id, delaySeconds: 0 });
+    const noAdapterClaim = await claimDeletionAttempt(other, runner);
+    expect(noAdapterClaim.assignment.executionSpec.adapter).toBeUndefined();
+    await uploadDeletionLog(other, runner, noAdapterClaim, "Adapter disabled as configured.\n");
+    await completeDeletionAttempt(other, runner, noAdapterClaim, "succeeded");
+  } finally {
+    await context.close();
   }
 });
 

@@ -1,3 +1,4 @@
+import { editEnvironmentAddresses } from "./support/environment-addresses";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -423,7 +424,7 @@ async function createSharedSuite(page: Page): Promise<void> {
   await createSuiteDialog.getByLabel("TestNG Test Name").fill("JavaCasesConcurrent");
   // 三个 fixture 都断言注入地址为 environmentAddress，只填一个地址保证
   // 轮询分配对三个 run 都落在同一 mock 值上。
-  await createSuiteDialog.getByLabel("环境 IP / 地址（每行一个）").fill(environmentAddress);
+  await editEnvironmentAddresses(page, createSuiteDialog, [environmentAddress]);
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
   await expect(suiteLink).toBeVisible();

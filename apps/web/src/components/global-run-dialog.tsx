@@ -1,4 +1,10 @@
 "use client";
+import { EnvironmentAddressesField } from "./environment-addresses-dialog";
+import { SuiteExecutionEnvironment } from "./suite-execution-environment";
+import {
+  consumeSuiteExecutionEnvironment,
+  useSuiteExecutionEnvironment,
+} from "@/lib/suite-execution-environment";
 import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@/lib/case-suite-adapter-defaults";
 import { LoadingIcon } from "@/components/ui/loading-icon";
 
@@ -34,7 +40,7 @@ import {
 } from "react";
 import { Dialog } from "./ui/dialog";
 
-import { Button, Input, Select, Textarea } from "./ui";
+import { Button, Input, Select } from "./ui";
 import { LoadingState } from "./loading-state";
 import {
   executionSuitePreferenceKey,
@@ -147,7 +153,7 @@ export function GlobalRunDialog({
   const [adapterEnabled, setAdapterEnabled] = useState<boolean>(DEFAULT_EXECUTION_ADAPTER_ENABLED);
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");
-  const [environmentAddresses, setEnvironmentAddresses] = useState("");
+  const [environmentAddresses, setEnvironmentAddresses] = useState<string[]>([]);
   const [startMode, setStartMode] = useState<StartMode>("immediate");
   const [delayMinutes, setDelayMinutes] = useState(5);
   const [delaySecondsPart, setDelaySecondsPart] = useState(0);
@@ -165,6 +171,7 @@ export function GlobalRunDialog({
   const optionsPreferenceKey = activeOptions?.preferenceKey ?? preferenceKey;
 
   const selectedSuite = options?.suites.find((suite) => suite.id === suiteId);
+  const suiteEnvironment = useSuiteExecutionEnvironment(userId, suiteId);
   const selectedCase = options?.cases.find((definition) => definition.id === caseDefinitionId);
   const suiteExecutionResourceConfigured = selectedSuite
     ? suiteHasExecutionResource(selectedSuite, options)
@@ -354,7 +361,13 @@ export function GlobalRunDialog({
     try {
       let batch: RunBatch;
       if (runKind === "suite") {
-        const requestBody = { suiteId, delaySeconds: configuredDelaySeconds };
+        const requestBody = {
+          suiteId,
+          delaySeconds: configuredDelaySeconds,
+          ...(selectedSuite?.policy.adapter.enabled && suiteEnvironment.addresses
+            ? { environmentAddresses: [...suiteEnvironment.addresses] }
+            : {}),
+        };
         const preflight = await requestJson<{
           ready: boolean;
           blockers: Array<{ message: string }>;
@@ -366,6 +379,7 @@ export function GlobalRunDialog({
           method: "POST",
           body: requestBody,
         });
+        consumeSuiteExecutionEnvironment(suiteEnvironment.key, suiteEnvironment.addresses);
       } else {
         const endpoint = ddtCase
           ? `/api/v1/ddt/cases/${encodeURIComponent(ddtCase.caseId)}/execute?${new URLSearchParams({ projectId: ddtCase.projectId, projectVersionId: ddtCase.projectVersionId, testStageId: ddtCase.testStageId })}`
@@ -384,7 +398,7 @@ export function GlobalRunDialog({
               enabled: adapterEnabled,
               suiteName: adapterSuiteName,
               testName: adapterTestName,
-              environmentAddresses: parseLines(environmentAddresses),
+              environmentAddresses,
             },
           },
         });
@@ -576,7 +590,7 @@ export function GlobalRunDialog({
                       <span>✓</span>
                       <div>
                         <h3>使用任务配置直接执行</h3>
-                        <p>执行资源、重试策略和 Adapter 地址均读取任务当前版本。</p>
+                        <p>执行资源与重试策略读取任务当前版本，环境 IP 可仅对本次执行调整。</p>
                       </div>
                     </div>
                     {selectedSuite ? (
@@ -623,11 +637,16 @@ export function GlobalRunDialog({
                             <dt>Adapter 地址</dt>
                             <dd>
                               {selectedSuite.policy.adapter.enabled
-                                ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
+                                ? `${(suiteEnvironment.addresses ?? selectedSuite.policy.adapter.environmentAddresses).length} 个`
                                 : "未启用 Adapter"}
                             </dd>
                           </div>
                         </dl>
+                        <SuiteExecutionEnvironment
+                          suite={selectedSuite}
+                          userId={userId}
+                          canExecute={!submitting}
+                        />
                       </>
                     ) : (
                       <Notice
@@ -840,22 +859,14 @@ export function GlobalRunDialog({
                                 value={adapterTestName}
                               />
                             </label>
-                            <label
-                              className={cn(
-                                "field-stack adapter-address-field",
-                                uiPatterns["field-stack"],
-                                globalRunDialogStyles["adapter-address-field"],
-                              )}
-                            >
-                              <span>执行环境 IP / 地址（每行一个）</span>
-                              <Textarea
-                                aria-label="单用例执行环境 IP 地址"
-                                onChange={(event) => setEnvironmentAddresses(event.target.value)}
-                                placeholder="10.0.0.21"
-                                rows={2}
-                                value={environmentAddresses}
-                              />
-                            </label>
+                            <EnvironmentAddressesField
+                              purpose="execution"
+                              addresses={environmentAddresses}
+                              onChange={setEnvironmentAddresses}
+                              validation="address"
+                              allowEmpty={false}
+                              description="只用于本次单用例执行，不修改用例或任务配置。"
+                            />
                           </div>
                         ) : null}
                       </div>
@@ -1155,17 +1166,6 @@ async function requestJson<T>(
   };
   if (!response.ok) throw new Error(body.error?.message ?? `请求失败（HTTP ${response.status}）。`);
   return body as T;
-}
-
-function parseLines(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 function boundedInteger(value: string, minimum: number, maximum: number): number {

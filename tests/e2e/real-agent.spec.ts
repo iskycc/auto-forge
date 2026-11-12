@@ -1,3 +1,4 @@
+import { editEnvironmentAddresses } from "./support/environment-addresses";
 import { openExecutionCaseDetails, selectExecutionRound } from "./support/execution-details";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -481,11 +482,11 @@ async function createExecutableSuite(
   await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
   await createSuiteDialog.getByLabel("TestNG Test Name").fill(caseDisplayName);
   if (caseDisplayName === "RealAgentFixture") {
-    await createSuiteDialog.getByLabel("环境 IP / 地址（每行一个）").fill("10.0.0.11\n10.0.0.12");
+    await editEnvironmentAddresses(page, createSuiteDialog, ["10.0.0.11", "10.0.0.12"]);
   } else if (caseDisplayName === "RealAgentRestartFixture") {
-    await createSuiteDialog
-      .getByLabel("环境 IP / 地址（每行一个）")
-      .fill(requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER"));
+    await editEnvironmentAddresses(page, createSuiteDialog, [
+      requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER"),
+    ]);
   }
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });

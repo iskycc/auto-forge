@@ -1,3 +1,4 @@
+import { editEnvironmentAddresses } from "./support/environment-addresses";
 import { openExecutionCaseDetails, selectExecutionRound } from "./support/execution-details";
 import { associateDdtSr } from "./support/ddt-associations";
 import { expectUiIntegrity } from "./support/ui-guard";
@@ -531,9 +532,7 @@ async function createConfiguredSuite(
   await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
   await createSuiteDialog.getByLabel("TestNG Test Name").fill(testName);
   if (requiresEnvironmentAddress(testName)) {
-    await createSuiteDialog
-      .getByLabel("环境 IP / 地址（每行一个）")
-      .fill(adapterAddresses.join("\n"));
+    await editEnvironmentAddresses(page, createSuiteDialog, adapterAddresses);
   }
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
@@ -689,7 +688,7 @@ async function exerciseDdtQuickExecution(
   await captureDdtExecutionViews(page, "ddt-execution-selection");
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Adapter · DDT quick execution");
   await dialog.getByLabel("单用例 Adapter Test Name").fill("JavaCasesDdtFixture");
-  await dialog.getByLabel("单用例执行环境 IP 地址").fill(ddtPublicApiBase(page, hierarchy));
+  await editEnvironmentAddresses(page, dialog, [ddtPublicApiBase(page, hierarchy)]);
   await captureDdtExecutionViews(page, "ddt-execution-dialog");
   const submitted = page.waitForResponse(
     (response) => response.request().method() === "POST" && response.url().includes("/execute?"),

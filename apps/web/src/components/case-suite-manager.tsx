@@ -1,4 +1,5 @@
 "use client";
+import { EnvironmentAddressesField } from "./environment-addresses-dialog";
 import { Notice } from "@/components/ui/notice";
 
 import { LoadingIcon } from "@/components/ui/loading-icon";
@@ -98,7 +99,7 @@ export function CaseSuiteManager({
   const [adapterEnabled, setAdapterEnabled] = useState<boolean>(DEFAULT_EXECUTION_ADAPTER_ENABLED);
   const [adapterSuiteName, setAdapterSuiteName] = useState(adapterNameDefaults.suiteName);
   const [adapterTestName, setAdapterTestName] = useState(adapterNameDefaults.testName);
-  const [environmentAddresses, setEnvironmentAddresses] = useState("");
+  const [environmentAddresses, setEnvironmentAddresses] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -204,7 +205,7 @@ export function CaseSuiteManager({
             enabled: adapterEnabled,
             suiteName: adapterSuiteName,
             testName: adapterTestName,
-            environmentAddresses: parseEnvironmentAddresses(environmentAddresses),
+            environmentAddresses,
           },
         }),
       });
@@ -216,7 +217,7 @@ export function CaseSuiteManager({
       setAdapterEnabled(DEFAULT_EXECUTION_ADAPTER_ENABLED);
       setAdapterSuiteName(adapterNameDefaults.suiteName);
       setAdapterTestName(adapterNameDefaults.testName);
-      setEnvironmentAddresses("");
+      setEnvironmentAddresses([]);
       setCreateOpen(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建用例任务失败。");
@@ -515,15 +516,11 @@ export function CaseSuiteManager({
                       maxLength={512}
                     />
                   </label>
-                  <label className={caseSuiteManagerStyles["form-field"]}>
-                    <span>环境 IP / 地址（每行一个）</span>
-                    <Textarea
-                      value={environmentAddresses}
-                      onChange={(event) => setEnvironmentAddresses(event.target.value)}
-                      rows={3}
-                      placeholder={"10.0.0.11\n10.0.0.12"}
-                    />
-                  </label>
+                  <EnvironmentAddressesField
+                    addresses={environmentAddresses}
+                    onChange={setEnvironmentAddresses}
+                    description="随任务保存，首轮按用例、重试按环境池分配。"
+                  />
                 </>
               ) : null}
             </div>
@@ -585,6 +582,7 @@ export function CaseSuiteManager({
               suite={suite}
               statistics={statisticsBySuite.get(suite.id)}
               canReadExecutions={canReadExecutions}
+              currentUserId={currentUserId}
               canExecute={canExecute}
               canManage={canManage && (!suite.lockedBy || suite.lockedBy === currentUserId)}
               onLockChanged={(changed) =>
@@ -614,17 +612,6 @@ async function caseSuiteRequestError(response: Response, fallback: string): Prom
   return new Error(
     parsed.success ? parsed.data.error.message : `${fallback}（HTTP ${response.status}）`,
   );
-}
-
-function parseEnvironmentAddresses(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/[\n,，]/u)
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 const caseSuiteManagerStyles = {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { caseSuiteAdapterConfigurationSchema } from "./management";
+import { caseSuiteAdapterConfigurationSchema, executionEnvironmentIpsSchema } from "./management";
 
 const executionInputFields = {
   delaySeconds: z.number().int().min(0).max(604_800).default(0),
@@ -56,8 +56,9 @@ function validateOptionalRunnerSelection(
 export const createRunBatchInputSchema = z
   .object({
     suiteId: z.string().min(1).max(128),
-    // 延时只决定批次何时进入调度，不覆盖任务保存的任何执行策略。
+    // Overrides belong to this execution snapshot; task configuration remains authoritative.
     delaySeconds: z.number().int().min(0).max(604_800).default(0),
+    environmentAddresses: executionEnvironmentIpsSchema.optional(),
   })
   .strict();
 

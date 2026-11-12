@@ -146,6 +146,23 @@ export const setAuthoritativeSourceInputSchema = z.object({
   authoritative: z.literal(true),
 });
 
+/** Edited execution overrides are literal IPs; persisted legacy addresses remain compatible. */
+export const executionEnvironmentIpsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .max(45)
+      .pipe(z.union([z.ipv4(), z.ipv6()])),
+  )
+  .min(1)
+  .max(128)
+  .refine(
+    (addresses) =>
+      new Set(addresses.map((address) => address.toLowerCase())).size === addresses.length,
+    { message: "环境 IP 不能重复。" },
+  );
+
 export const caseSuiteAdapterConfigurationSchema = z.object({
   enabled: z.boolean().default(false),
   suiteName: z.string().trim().max(512).default(""),

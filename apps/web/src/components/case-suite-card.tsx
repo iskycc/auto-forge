@@ -1,4 +1,5 @@
 "use client";
+import { SuiteExecutionEnvironment } from "./suite-execution-environment";
 import { TaskExecutionAccessButton } from "./task-execution-access";
 import { Notice } from "@/components/ui/notice";
 
@@ -30,6 +31,7 @@ import { OpenRunDialogButton } from "./global-run-dialog";
 const statisticNumber = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 
 export function CaseSuiteCard({
+  currentUserId,
   suite,
   statistics,
   canReadExecutions,
@@ -46,6 +48,7 @@ export function CaseSuiteCard({
   onPinnedChange,
 }: {
   suite: CaseSuite;
+  currentUserId: string;
   statistics?: CaseSuiteExecutionStatistics | undefined;
   canReadExecutions: boolean;
   canExecute: boolean;
@@ -192,6 +195,14 @@ export function CaseSuiteCard({
           >
             立即执行
           </OpenRunDialogButton>
+        ) : null}
+        {canExecute && suite.policy.adapter.enabled && suite.status === "active" ? (
+          <SuiteExecutionEnvironment
+            suite={suite}
+            userId={currentUserId}
+            canExecute={canExecute}
+            compact
+          />
         ) : null}
         <Button
           aria-controls={historyId}

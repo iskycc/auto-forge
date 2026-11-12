@@ -6,6 +6,28 @@ and known limitations.
 
 ## Unreleased
 
+## 1.22.11 - 2026-11-12
+
+### Added
+
+- 任务列表、详情和执行弹窗支持仅下一次手动执行的环境 IP，任务被他人锁定时仍可按执行权限修改；提交成功后恢复默认，取消和失败保留，不修改任务配置。
+- 所有多环境地址输入统一为逐项增删的 Ant Design 弹窗，支持 IPv4／IPv6、重复／空值校验和 128 条上限；任务默认地址改为点击修改后编辑，保存任务时生效。
+
+### Fixed
+
+- 编辑任务默认 IP 后取消，不再误触发外层任务“未保存”提示；后续关闭 Adapter 时忽略旧临时 IP，执行弹窗地址数量与实际本次设置保持一致。
+
+### Compatibility
+
+- 从 v1.22.10 升级不新增数据库迁移、生产依赖、配置项或 Runner 协议。后台任务执行接口新增可选的 `environmentAddresses`，仅写入本次执行快照；其他任务策略仍读取任务配置，锁定保护保持有效。Full 同步升级 Web 与 Worker。
+- 任务临时 IP 仅保存在当前浏览器页面内，刷新或成功提交后恢复默认；公开任务和公开日志页继续保留已有的本页连续复用规则。历史任务、调试和单用例配置仍兼容原有主机名／URL 地址。
+
+### Verification
+
+- 222 项定向回归通过，包含真实 SQLite／PostgreSQL；生产 Lite 的调试、公开任务、锁定任务、列表／详情及单用例执行五个场景分次通过，最终构建再次通过锁定任务完整场景。Full 使用双 Web、Worker 和真实 PostgreSQL／NATS／Redis／MinIO，四个生产 Playwright 场景全部通过，详见[任务执行环境 IP 验证](./docs/architecture/task-execution-environment.md#验证记录2026-11-12)。
+- 实际审查 1024×768／1536×960 深浅色任务页面、默认 IP 与嵌套执行弹窗截图，无新增溢出或布局变形；格式、Lint、Web／测试类型、19 行 E2E 覆盖矩阵及 Web／Worker 生产构建通过。
+- 本次按用户要求采用最快路径，仅启动 Release，复用以上验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；Release 保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查。未重跑真实业务 JVM、外部 Jenkins、十万规模压力和完整离线发布物验收。
+
 ## 1.22.10 - 2026-11-11
 
 ### Fixed

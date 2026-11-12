@@ -1,3 +1,4 @@
+import { SuiteExecutionEnvironment } from "@/components/suite-execution-environment";
 import { CaseSuiteLockButton } from "@/components/case-suite-lock-button";
 import { Notice } from "@/components/ui/notice";
 import { TaskExecutionAccess } from "@/components/task-execution-access";
@@ -131,9 +132,10 @@ export default async function CaseSuitePage({ params }: Props) {
           任务已由 {suite.lockedByName ?? suite.lockedBy} 锁定。
           {suite.lockedBy === identity.user.id
             ? "您可以继续修改，其他用户仅可查看任务配置。"
-            : "仅锁定人可以修改、删除、归档或解除锁定。"}
+            : "仅锁定人可以修改任务配置、删除、归档或解除锁定；有执行权限的用户仍可修改下一次执行 IP。"}
         </Notice>
       ) : null}
+      <SuiteExecutionEnvironment suite={suite} userId={identity.user.id} canExecute={canExecute} />
       <nav className={cn("section-links", pageStyles["section-links"])} aria-label="任务分区">
         <a href="#suite-members">用例列表</a>
         <a href="#suite-settings">任务配置</a>

@@ -1,4 +1,5 @@
 "use client";
+import { EnvironmentAddressesField } from "./environment-addresses-dialog";
 import { Checkbox } from "antd";
 import { Badge } from "@/components/ui/badge";
 
@@ -102,6 +103,9 @@ export function CaseSuiteEditor({
   const [copyError, setCopyError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const archived = suite.status === "archived";
+  const [environmentAddresses, setEnvironmentAddresses] = useState(
+    suite.policy.adapter.environmentAddresses,
+  );
 
   function acceptArchiveChange(updated: CaseSuite): void {
     acceptMutation(revision, updated.revision);
@@ -175,9 +179,7 @@ export function CaseSuiteEditor({
       .split("\n")
       .map((pattern) => pattern.trim())
       .filter((pattern) => pattern.length > 0);
-    const environmentAddresses = parseEnvironmentAddresses(
-      String(form.get("adapterEnvironmentAddresses") ?? ""),
-    );
+
     const runnerIds = form
       .getAll("runnerIds")
       .map(String)
@@ -1055,14 +1057,17 @@ export function CaseSuiteEditor({
                 onChange={(event) => setAdapterTestName(event.target.value)}
               />
             </label>
-            <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
-              Adapter 环境 IP / 地址（每行一个，首轮按用例、重试按环境池轮询）
-              <Textarea
-                name="adapterEnvironmentAddresses"
-                rows={3}
-                defaultValue={suite.policy.adapter.environmentAddresses.join("\n")}
+            <div className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
+              <EnvironmentAddressesField
+                addresses={environmentAddresses}
+                disabled={!canManage || pending || archived}
+                description="修改任务默认地址，点击保存任务后长期生效。首轮按用例、重试按环境池分配。"
+                onChange={(addresses) => {
+                  setEnvironmentAddresses(addresses);
+                  setDirty(true);
+                }}
               />
-            </label>
+            </div>
             <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
               任务说明
               <Textarea
@@ -1298,17 +1303,6 @@ function formatDuration(durationMs: number): string {
 
 function formatDate(value: string): string {
   return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-function parseEnvironmentAddresses(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/[\n,，]/u)
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 function optionalNumber(value: number | undefined): string {

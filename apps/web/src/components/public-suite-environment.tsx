@@ -1,9 +1,7 @@
 "use client";
 
-import { Alert, Input } from "antd";
 import { useState } from "react";
-import { publicSuiteEnvironmentAddressesSchema } from "@autoforge/contracts";
-import { ActionDialog } from "./action-dialog";
+import { EnvironmentAddressesDialog } from "./environment-addresses-dialog";
 import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
 import { Button } from "./ui/button";
 
@@ -21,23 +19,6 @@ export function PublicSuiteEnvironment({
   onChange: (addresses: string[] | undefined) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState("");
-
-  function save() {
-    const parsed = publicSuiteEnvironmentAddressesSchema.safeParse(
-      draft
-        .split(/\r?\n/)
-        .map((address) => address.trim())
-        .filter(Boolean),
-    );
-    if (!parsed.success) {
-      setError("每行填写一个 IPv4 或 IPv6 地址，最多 128 个，不能为空或重复。");
-      return;
-    }
-    onChange(parsed.data);
-    setEditing(false);
-  }
 
   return (
     <section className="mt-5 grid min-w-0 gap-3 border-t border-border pt-4" aria-label="执行环境">
@@ -67,8 +48,6 @@ export function PublicSuiteEnvironment({
               variant="secondary"
               disabled={disabled}
               onClick={() => {
-                setDraft(addresses.join("\n"));
-                setError("");
                 setEditing(true);
               }}
             >
@@ -84,45 +63,18 @@ export function PublicSuiteEnvironment({
           : "任务未启用 Adapter，无需下发环境 IP。"}
       </p>
       {editing ? (
-        <ActionDialog
-          open
+        <EnvironmentAddressesDialog
+          addresses={addresses}
+          disabled={disabled}
           title="修改执行环境 IP"
-          description="多个环境按任务原有规则分配给用例；其他执行配置保持不变。"
-          className="w-[min(560px,calc(100dvw-3rem))]"
+          label="本次执行环境 IP"
+          description="多个环境按任务原有规则分配给用例；保存后本页后续执行持续使用，刷新页面后恢复任务默认。"
           onClose={() => setEditing(false)}
-          footer={
-            <>
-              <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
-                取消
-              </Button>
-              <Button type="button" variant="default" disabled={disabled} onClick={save}>
-                使用这些 IP
-              </Button>
-            </>
-          }
-        >
-          <div className="grid gap-3">
-            <label className="grid gap-2">
-              <span className="text-sm font-medium">本次执行环境 IP</span>
-              <Input.TextArea
-                aria-label="本次执行环境 IP"
-                value={draft}
-                onChange={(event) => {
-                  setDraft(event.target.value);
-                  setError("");
-                }}
-                rows={5}
-                maxLength={8192}
-                placeholder={"每行一个 IPv4 或 IPv6 地址\n例如：10.0.0.21"}
-              />
-            </label>
-            <p className="m-0 text-xs leading-5 text-muted-foreground">
-              最多 128
-              个地址，顺序与填写顺序一致。保存后本页后续执行持续使用，刷新页面后恢复任务默认。
-            </p>
-            {error ? <Alert type="error" showIcon title={error} /> : null}
-          </div>
-        </ActionDialog>
+          onSave={(values) => {
+            onChange(values);
+            setEditing(false);
+          }}
+        />
       ) : null}
     </section>
   );

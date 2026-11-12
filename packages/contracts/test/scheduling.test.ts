@@ -24,6 +24,36 @@ describe("createRunBatchInputSchema", () => {
     expect(() => createRunBatchInputSchema.parse({ suiteId: "suite-1", retryLimit: 2 })).toThrow();
   });
 
+  it("accepts a one-execution environment override while preserving task policy boundaries", () => {
+    expect(
+      createRunBatchInputSchema.parse({
+        suiteId: "locked-task",
+        environmentAddresses: [" 10.0.0.99 ", "2001:db8::99"],
+      }),
+    ).toEqual({
+      suiteId: "locked-task",
+      delaySeconds: 0,
+      environmentAddresses: ["10.0.0.99", "2001:db8::99"],
+    });
+    for (const environmentAddresses of [
+      [],
+      ["bad"],
+      ["10.0.0.1", "10.0.0.1"],
+      Array.from({ length: 129 }, (_, index) => `10.0.0.${index}`),
+    ]) {
+      expect(
+        createRunBatchInputSchema.safeParse({ suiteId: "task", environmentAddresses }).success,
+      ).toBe(false);
+    }
+    expect(
+      createRunBatchInputSchema.safeParse({
+        suiteId: "task",
+        environmentAddresses: ["10.0.0.1"],
+        policy: { concurrency: 10 },
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects duplicate runners for a single-case shortcut", () => {
     expect(() =>
       createSingleCaseRunInputSchema.parse({

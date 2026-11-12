@@ -1,3 +1,4 @@
+import { editEnvironmentAddresses } from "./support/environment-addresses";
 import { expect, test, type Page } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -121,7 +122,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await screenshotReview(page, "ordinary-adapter-default-enabled");
   await panel.getByLabel("调试 Suite Name").fill("Remembered ordinary suite");
   await panel.getByLabel("调试 Test Name").fill("Remembered ordinary test");
-  await panel.getByLabel("调试环境地址").fill("127.0.0.1");
+  await editEnvironmentAddresses(page, panel, ["127.0.0.1"]);
   await panel.getByLabel("调试启用 Adapter").uncheck();
   await page.goto("/cases");
   await page.goto("/case-debug");
@@ -131,7 +132,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await panel.getByLabel("调试启用 Adapter").check();
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Remembered ordinary suite");
   await expect(panel.getByLabel("调试 Test Name")).toHaveValue("Remembered ordinary test");
-  await expect(panel.getByLabel("调试环境地址")).toHaveValue("127.0.0.1");
+  await expect(panel.getByLabel("本次执行环境 IP")).toContainText("127.0.0.1");
   await panel.getByLabel("调试启用 Adapter").uncheck();
   await expect(panel.getByLabel("调试配置保存状态")).toHaveText("配置已自动保存到当前浏览器");
   await screenshotReview(page, "ordinary-existing");
@@ -258,7 +259,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
     ).status,
   ).toBe(200);
   await panel.getByLabel("调试启用 Adapter").check();
-  await panel.getByLabel("调试环境地址").fill("127.0.0.1");
+  await editEnvironmentAddresses(page, panel, ["127.0.0.1"]);
   await heartbeat(page, runner);
   await panel.getByRole("button", { name: "再次执行", exact: true }).click();
   const ordinaryAdapter = await claim(page, runner);
@@ -307,7 +308,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(ddtInput.locator('option[value="PAY-1"]')).toHaveCount(1);
   await expect(panel.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
   await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
-  await panel.getByLabel("调试环境地址").fill("127.0.0.1");
+  await editEnvironmentAddresses(page, panel, ["127.0.0.1"]);
   await panel.getByLabel("调试 Suite Name").fill("Remembered DDT suite");
   await panel.getByLabel("调试 Test Name").fill("Remembered DDT test");
   await page.reload();
@@ -316,7 +317,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(panel.locator('select[aria-label="调试执行机"]')).toHaveValue(runner.runnerId);
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Remembered DDT suite");
   await expect(panel.getByLabel("调试 Test Name")).toHaveValue("Remembered DDT test");
-  await expect(panel.getByLabel("调试环境地址")).toHaveValue("127.0.0.1");
+  await expect(panel.getByLabel("本次执行环境 IP")).toContainText("127.0.0.1");
   await screenshotReview(page, "ddt-existing");
   const personalAccess = await browserJson<{ ownerUserId: string; accessKey: string }>(
     page,

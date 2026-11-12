@@ -76,3 +76,21 @@ it("returns a database error when the creation transaction does not commit", asy
   expect((await response.json()).error.code).toBe("PLATFORM_BUSY");
   expect(calls.audit).not.toHaveBeenCalled();
 });
+
+it("accepts temporary IPs using execution permission without requesting task editing", async () => {
+  calls.create.mockResolvedValue({ id: "temporary-ip-batch", status: "queued" });
+  const response = await POST(
+    new Request("http://localhost/api/v1/run-batches", {
+      method: "POST",
+      body: JSON.stringify({ suiteId: "locked-task", environmentAddresses: ["10.0.0.99"] }),
+    }),
+  );
+  expect(response.status).toBe(201);
+  expect(calls.authorize).toHaveBeenCalledWith(expect.anything(), "run.create", "project");
+  expect(calls.create).toHaveBeenCalledWith(
+    { suiteId: "locked-task", delaySeconds: 0, environmentAddresses: ["10.0.0.99"] },
+    expect.anything(),
+    undefined,
+    expect.anything(),
+  );
+});

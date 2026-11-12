@@ -1,3 +1,4 @@
+import { editEnvironmentAddresses } from "./support/environment-addresses";
 import { openExecutionCaseDetails } from "./support/execution-details";
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { zipSync } from "fflate";
@@ -89,7 +90,7 @@ test("global execution dialog schedules one case through a runner group with Ada
   await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Single Case Suite");
   await dialog.getByLabel("单用例 Adapter Test Name").fill("Single Case Test");
-  await dialog.getByLabel("单用例执行环境 IP 地址").fill("10.0.0.21");
+  await editEnvironmentAddresses(page, dialog, ["10.0.0.21"]);
   await expect(dialog.locator('select[aria-label="失败重跑方式"]')).toHaveValue("round");
   await expect(dialog.locator('select[aria-label="失败重跑次数"]')).toHaveValue("0");
   const retryModeTrigger = dialog.getByRole("combobox", { name: "失败重跑方式", exact: true });

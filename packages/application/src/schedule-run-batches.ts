@@ -217,7 +217,8 @@ export class RunBatchSchedulingService {
       : undefined;
     const validated = createRunBatchInputSchema.parse(input);
     const suite = await this.suites.get(validated.suiteId);
-    if (context?.environmentAddresses && !suite?.policy.adapter.enabled) {
+    const environmentAddresses = context?.environmentAddresses ?? validated.environmentAddresses;
+    if (environmentAddresses && !suite?.policy.adapter.enabled) {
       throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "任务未启用 Adapter，不能修改环境 IP。");
     }
     const preflight = await this.preflightValidated(validated, { suite });
@@ -364,7 +365,7 @@ export class RunBatchSchedulingService {
           suiteName: suitePolicy.adapter.suiteName,
           testName: suitePolicy.adapter.testName,
           environmentAddresses: [
-            ...(context?.environmentAddresses ?? suitePolicy.adapter.environmentAddresses),
+            ...(environmentAddresses ?? suitePolicy.adapter.environmentAddresses),
           ],
         },
         runs: [
@@ -1515,6 +1516,13 @@ export class RunBatchSchedulingService {
         }),
       );
     } else {
+      if (input.environmentAddresses && !suite.policy.adapter.enabled) {
+        blockers.push(
+          blocker("ADAPTER_DISABLED", "parameter", "任务未启用 Adapter，不能修改环境 IP。", {
+            path: ["environmentAddresses"],
+          }),
+        );
+      }
       for (const item of suite.items) {
         if (!item.caseDefinition.className.trim()) {
           blockers.push(

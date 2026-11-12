@@ -626,6 +626,100 @@ describe("run batch preflight", () => {
 });
 
 describe("run batch creation with suite policy", () => {
+  it("uses an execution override once for another user's locked task and preserves the saved defaults", async () => {
+    const original = ["10.0.0.21", "10.0.0.22"];
+    const suite = {
+      ...readySuite({
+        policy: {
+          adapter: {
+            enabled: true,
+            suiteName: "suite",
+            testName: "test",
+            environmentAddresses: original,
+          },
+        },
+      }),
+      lockedBy: "task-owner",
+    };
+    const batches = {
+      create: vi.fn().mockResolvedValue({ id: "batch" }),
+    } as unknown as RunBatchRepository;
+    const suites = { get: vi.fn().mockResolvedValue(suite) } as unknown as CaseSuiteRepository;
+    const projectStructures = {
+      list: vi.fn().mockResolvedValue(activeProjectStructure()),
+      getAdapterConfiguration: vi.fn().mockResolvedValue({
+        jarBundleAsset: {
+          id: "bundle-1",
+          projectId: "project-1",
+          kind: "jar-bundle",
+          sourceType: "upload",
+          fileName: "adapter.zip",
+          objectKey: "runtime/bundle.zip",
+          sha256: "b".repeat(64),
+          sizeBytes: 1024,
+          archiveFormat: "zip",
+          createdAt: timestamp,
+        },
+      }),
+    } as unknown as ProjectStructureRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      suites,
+      runnersFake([
+        "executor:testng-v1",
+        "isolation:cgroup-v2",
+        "java:21.0.8",
+        "testng:7.11.0",
+        "adapter:cotest-testng-v1",
+      ]),
+      { now: () => new Date(timestamp) },
+      { next: () => randomUUID() },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+      128,
+      5,
+      projectStructures,
+    );
+    await service.create(
+      { suiteId: "suite-1", environmentAddresses: ["10.0.0.99", "2001:db8::99"] },
+      { username: "other-user", source: "local" },
+    );
+    expect(batches.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expectedSuiteRevision: suite.revision,
+        adapter: expect.objectContaining({ environmentAddresses: ["10.0.0.99", "2001:db8::99"] }),
+      }),
+    );
+    expect(suite.policy.adapter.environmentAddresses).toEqual(original);
+    await service.create({ suiteId: "suite-1" });
+    expect(batches.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        adapter: expect.objectContaining({ environmentAddresses: original }),
+      }),
+    );
+  });
+
+  it("rejects internal execution overrides when Adapter is disabled in both preflight and creation", async () => {
+    const service = preflightService({
+      suites: { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runners: runnersFake(),
+      catalog: readyCatalogFake(),
+      objectStore: objectStoreFake(),
+    });
+    const input = { suiteId: "suite-1", environmentAddresses: ["10.0.0.99"] };
+    expect((await service.preflight(input)).blockers).toContainEqual(
+      expect.objectContaining({ code: "ADAPTER_DISABLED", path: ["environmentAddresses"] }),
+    );
+    await expect(service.create(input)).rejects.toMatchObject({
+      code: "RUN_BATCH_PREFLIGHT_FAILED",
+    });
+  });
+
   it("rejects public environment overrides when the saved task disables Adapter", async () => {
     const service = preflightService({
       suites: { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,

@@ -1,23 +1,7 @@
 import { z } from "zod";
-import { caseSuiteAdapterConfigurationSchema } from "./management";
+import { caseSuiteAdapterConfigurationSchema, executionEnvironmentIpsSchema } from "./management";
 
-export const publicSuiteEnvironmentAddressesSchema = z
-  .array(
-    z
-      .string()
-      .trim()
-      .max(45)
-      .pipe(z.union([z.ipv4(), z.ipv6()])),
-  )
-  .min(1)
-  .max(128)
-  .refine(
-    (addresses) =>
-      new Set(addresses.map((address) => address.toLowerCase())).size === addresses.length,
-    {
-      message: "环境 IP 不能重复。",
-    },
-  );
+export const publicSuiteEnvironmentAddressesSchema = executionEnvironmentIpsSchema;
 
 export const executionActorSchema = z
   .object({

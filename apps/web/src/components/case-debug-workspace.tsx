@@ -1,4 +1,5 @@
 "use client";
+import { EnvironmentAddressesField } from "./environment-addresses-dialog";
 
 import { DdtDebugChangeActions } from "./ddt-change-review";
 import { Divider, Empty, Flex, Switch, Tag, Typography } from "antd";
@@ -6,7 +7,7 @@ import { Bug, Play, Terminal } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { DdtScope, Runner, RunnerGroup, RunBatch } from "@autoforge/domain";
-import { Button, Input, Select, Textarea } from "./ui";
+import { Button, Input, Select } from "./ui";
 import { Card } from "./ui/card";
 import { Tabs } from "./ui/tabs";
 import { TabContent } from "./ui/tab-content";
@@ -434,18 +435,14 @@ function DebugPanel({
                     onChange={(event) => draftStore.update({ testName: event.target.value })}
                   />
                 </label>
-                <label className="grid min-w-0 gap-1">
-                  环境地址
-                  <Textarea
-                    aria-label="调试环境地址"
-                    rows={2}
-                    className="min-h-16"
-                    placeholder="每行一个 IP 或地址"
-                    value={addresses}
-                    disabled={editingDisabled}
-                    onChange={(event) => draftStore.update({ addresses: event.target.value })}
-                  />
-                </label>
+                <EnvironmentAddressesField
+                  purpose="execution"
+                  addresses={addresses.split("\n").filter(Boolean)}
+                  disabled={editingDisabled}
+                  description="仅用于本次调试执行，逐项填写环境地址。"
+                  allowEmpty={false}
+                  onChange={(values) => draftStore.update({ addresses: values.join("\n") })}
+                />
               </div>
             ) : null}
             {error ? <Notice tone="error">{error}</Notice> : null}
