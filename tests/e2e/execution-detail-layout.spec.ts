@@ -426,26 +426,51 @@ test("retry charts use only eligible round members and task actions keep a consi
     await page.goto("/case-suites");
     const cards = page.locator(".suite-card");
     await expect(cards).toHaveCount(2);
-    for (const width of [1024, 1536]) {
+    for (const width of [1024, 1536, 1920]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(page);
       for (const card of await cards.all()) {
         const footer = card.locator("footer");
-        const alignment = await footer.evaluate(
-          (element) => getComputedStyle(element).justifyContent,
-        );
-        expect(alignment).toBe("flex-start");
-        const spacing = await footer.evaluate((element) => {
+        await expect(footer).toHaveCSS("justify-content", "space-evenly");
+        await expect(footer).toHaveCSS("align-items", "center");
+        const rows = await footer.evaluate((element) => {
+          const style = getComputedStyle(element);
+          const bounds = element.getBoundingClientRect();
+          const contentLeft =
+            bounds.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+          const contentRight =
+            bounds.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
           const boxes = Array.from(element.children)
-            .filter((child) => child.getBoundingClientRect().width > 0)
-            .map((child) => child.getBoundingClientRect());
-          return boxes
-            .slice(1)
-            .flatMap((box, index) =>
-              Math.abs(box.y - boxes[index]!.y) < 3 ? [box.x - boxes[index]!.right] : [],
-            );
+            .map((child) => child.getBoundingClientRect())
+            .filter((box) => box.width > 0 && box.height > 0);
+          const grouped: Array<{ center: number; boxes: DOMRect[] }> = [];
+          for (const box of boxes) {
+            const center = box.y + box.height / 2;
+            let row = grouped.find((candidate) => Math.abs(candidate.center - center) < 2);
+            if (!row) {
+              row = { center, boxes: [] };
+              grouped.push(row);
+            }
+            row.boxes.push(box);
+          }
+          return grouped.map((row) => ({
+            left: row.boxes[0]!.left - contentLeft,
+            right: contentRight - row.boxes.at(-1)!.right,
+            columnGap: parseFloat(style.columnGap),
+            gaps: row.boxes.slice(1).map((box, index) => box.left - row.boxes[index]!.right),
+          }));
         });
-        expect(spacing.every((value) => value >= 7 && value <= 9)).toBe(true);
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+          expect(Math.abs(row.left - row.right), "each wrapped row stays centered").toBeLessThan(2);
+          for (const gap of row.gaps) {
+            expect(gap).toBeGreaterThanOrEqual(row.columnGap);
+            expect(
+              Math.abs(gap - row.columnGap - row.left),
+              "actions share the remaining row space evenly",
+            ).toBeLessThan(2);
+          }
+        }
       }
       await page.screenshot({
         path: resolve(screenshots, `task-actions-${mode}-${width}.png`),

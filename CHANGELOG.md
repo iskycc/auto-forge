@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.13 - 2026-11-12
+
+### Fixed
+
+- 用例任务卡片按钮改为每行均匀分布、居中对齐，换行后仍保持左右余量对称；正常任务和按钮较少的锁定任务采用同一规则，维护按钮组保留内部间距。
+
+### Compatibility
+
+- 从 v1.22.12 升级不新增数据库迁移、生产依赖、平台配置或 Runner 协议。Lite／Full 共用相同任务卡片，仅调整展示布局，不改变任务执行、置顶、锁定、导出、归档或删除行为。
+
+### Verification
+
+- 17 项 UI 约束、受影响文件的 Prettier／ESLint、测试类型检查与 Web 生产构建通过；生产 Lite／Full Playwright 场景分别通过，覆盖多／少按钮、单行与换行，并逐行核对左右留白及均分间距。
+- 实际审查 1024×768、1536×960、1920×960 深浅色任务截图，无新增重叠、溢出或变形，详见[按钮居中均分验证](./docs/design/execution-detail-layout.md#任务卡片按钮居中均分)。
+- 按用户要求走最快路径，仅启动 Release，复用以上定向验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查。本轮展示样式调整未重跑数据库、调度、真实 Runner 或完整离线发布验收。
+
 ## 1.22.12 - 2026-11-12
 
 ### Added

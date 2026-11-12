@@ -57,7 +57,7 @@
 
 结果分布的 SVG 保留精确分段，配合真实 Ant Design Card、Statistic、Badge 和 Tooltip；累计通过使用 Progress 圆环。两图保持 192px 大圆环、对齐的主体和页脚，并分别标注“本轮范围／去重总结／全部轮次”和“批次范围”。不新增生产依赖，不增加查询、轮询或大集合遍历，Lite／Full 与匿名页共用实现。
 
-任务卡片的操作栏同时取消空间均分和维护图标组的自动右移，统一左对齐、固定 8px 间距并自然换行；锁定、归档、权限或 Adapter 状态导致按钮数量变化时保持相同规则。
+v1.22.12 的任务卡片操作栏采用左对齐与固定间距；后续按用户反馈改为均匀分布与居中对齐，当前规则见下节。维护图标组继续保留内部统一间距，不单独推到卡片右侧。
 
 验证：七个文件共 66 项 Vitest 通过，包括图表渲染、空轮次、排队／进行中／取消、缺失统计、总体视图、用例分页及原领域轮次语义：
 
@@ -83,3 +83,21 @@ pnpm exec playwright test --config playwright.full.config.ts \
 ```
 
 实际查看 1024×768、1536×960 的后台／匿名、深浅色图表和任务按钮截图；原全屏场景还覆盖 1920×960。图例、长标题、按钮换行、数字和页脚对齐正常，没有新增横向溢出或布局变形。截图位于 `/var/tmp/autoforge-round-charts-ui` 和 `/var/tmp/autoforge-round-charts-full-ui`。范围内格式、ESLint、Web／测试类型及 Web／Worker 生产构建通过；不修改数据库统计、调度、权限、Runner 协议或既有历史数据。本次 UI 修复未新增迁移，也未重跑十万级压力、真实业务 JVM 或完整离线发布包验收。
+
+### 任务卡片按钮居中均分
+
+任务卡片操作栏统一采用 `space-evenly` 均分每行剩余空间，控件垂直居中，按钮之间保留最小间距。正常任务、锁定任务、权限不同或 Adapter 导致按钮数量变化时均使用同一规则，换行后每行的左右余量仍然对称；维护图标作为一组保持内部间距，不使用自动外边距改变整行分布。普通用例管理的选择工具栏保留原有排布。
+
+仅调整共享任务卡片布局，不改变执行、锁定、置顶、导出、公开接入、归档或删除行为，Lite／Full 使用相同组件，不新增配置、依赖、迁移或协议。
+
+2026-11-12 验证：更新现有 Playwright 场景，先在旧构建复现左对齐不满足新要求，再于生产 Lite／Full 构建各通过一次。正常和他人锁定的任务卡片同时展示，覆盖多／少按钮、单行及换行；逐行实测左右留白对称、间距均分与垂直居中。深浅色截图覆盖 1024×768、1536×960、1920×960，并已实际查看，无新增重叠、溢出或变形。截图分别位于 `/var/tmp/autoforge-centered-task-actions-ui/` 与 `/var/tmp/autoforge-centered-task-actions-full-ui/`。
+
+```sh
+pnpm exec playwright test tests/e2e/execution-detail-layout.spec.ts \
+  --grep 'retry charts use only eligible round members' --workers=1
+pnpm exec playwright test --config playwright.full.config.ts \
+  tests/e2e/execution-detail-layout.spec.ts \
+  --grep 'retry charts use only eligible round members' --workers=1
+```
+
+相关 Prettier、ESLint、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、17 项 `ui-usage.test.ts` 约束及 `pnpm --filter @autoforge/web build` 均通过。测试服务和容器已关闭；本轮是展示样式调整，未重跑数据库、调度、真实 Runner 或完整离线发布验收。
