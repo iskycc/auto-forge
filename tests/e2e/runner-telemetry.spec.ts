@@ -755,3 +755,196 @@ test("Runner telemetry shows resource samples, handles empty history and retries
   await dialog.getByRole("button", { name: /^关闭/ }).click();
   await expect(dialog).toHaveCount(0);
 });
+
+test("deleted Agents remain rejected, appear in a bounded cleanup list and allow manual SSH uninstall", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const name = uniqueName("已删除但仍尝试上线的执行节点长名称验证");
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name,
+      labels: [],
+      capabilities: ["executor:process"],
+      maxConcurrency: 1,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "1.22.11",
+      protocolVersion: 1,
+      terminalEnabled: false,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const { runnerId, credential } = (await registration.json()) as {
+    runnerId: string;
+    credential: string;
+  };
+  const { browserJson } = await import("./support/session");
+  expect(
+    (await browserJson(page, `/api/v1/runners/${runnerId}/deregister`, { method: "POST" })).status,
+  ).toBe(200);
+  expect(
+    (await browserJson(page, `/api/v1/runners/${runnerId}`, { method: "DELETE" })).status,
+  ).toBe(200);
+  const heartbeat = () =>
+    page.request.post(`/api/v1/runner-agents/${runnerId}/heartbeat`, {
+      headers: { authorization: `Bearer ${credential}` },
+      data: {
+        schemaVersion: 1,
+        busySlots: 0,
+        labels: ["untrusted-label"],
+        capabilities: ["executor:process"],
+        maxConcurrency: 1,
+        agentVersion: "untrusted-metadata",
+        terminalEnabled: false,
+      },
+    });
+  const startupClaim = await page.request.post(`/api/v1/runner-agents/${runnerId}/claims`, {
+    headers: { authorization: `Bearer ${credential}` },
+    data: {
+      schemaVersion: 1,
+      requestId: uniqueName("rejected-startup"),
+      availableSlots: 1,
+      waitSeconds: 0,
+      labels: [],
+      capabilities: ["executor:process"],
+    },
+  });
+  expect(startupClaim.status()).toBe(401);
+  expect((await heartbeat()).status()).toBe(401);
+  const first = await browserJson<{
+    items: Array<{
+      runnerId: string;
+      name: string;
+      agentVersion: string;
+      firstRejectedAt: string;
+      lastRejectedAt: string;
+    }>;
+  }>(page, "/api/v1/runners/rejected-contacts?limit=100");
+  expect(first.status).toBe(200);
+  const observed = first.body.items.find((row) => row.runnerId === runnerId)!;
+  expect(observed).toMatchObject({ name, agentVersion: "1.22.11" });
+  expect(observed.firstRejectedAt).toBeTruthy();
+  for (let index = 0; index < 15; index++) expect((await heartbeat()).status()).toBe(401);
+  const repeated = await browserJson<typeof first.body>(
+    page,
+    "/api/v1/runners/rejected-contacts?limit=100",
+  );
+  expect(repeated.body.items.find((row) => row.runnerId === runnerId)).toEqual(observed);
+  const normal = await browserJson<{ items: Array<{ id: string }> }>(
+    page,
+    "/api/v1/runners?limit=500",
+  );
+  expect(normal.body.items.some((row) => row.id === runnerId)).toBe(false);
+  const anonymous = await browser.newContext();
+  try {
+    expect(
+      (
+        await anonymous.request.get(
+          new URL("/api/v1/runners/rejected-contacts", page.url()).toString(),
+        )
+      ).status(),
+    ).toBe(401);
+  } finally {
+    await anonymous.close();
+  }
+  await page.goto("/runners");
+  const panel = page.getByRole("region", { name: "已删除 Agent 连接提醒", exact: true });
+  const article = panel.getByRole("article", { name: `已删除节点 ${name}`, exact: true });
+  // Other acceptance scenarios can have older tombstones; the directory remains cursor paged.
+  for (let index = 0; index < 30 && !(await article.count()); index++) {
+    await panel.getByRole("button", { name: "下一页", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "刷新连接记录", exact: true })).toBeEnabled();
+  }
+  await expect(article).toContainText("未保存 SSH 凭据");
+  await article.getByRole("button", { name: "卸载 Agent", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "卸载执行机 Agent", exact: true });
+  await expect(dialog).toContainText("平台未保存该节点的 SSH 密码");
+  await expect(dialog.getByRole("button", { name: "确认卸载并清理", exact: true })).toBeDisabled();
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: resolve(screenshots, `deleted-agent-password-${width}.png`) });
+  }
+  await dialog.getByLabel("执行机 IP / 主机名", { exact: true }).fill("192.0.2.10");
+  await dialog.getByLabel("用户名", { exact: true }).fill("root");
+  await dialog.getByLabel("SSH / sudo 密码", { exact: true }).fill("ManualCleanup!Password123");
+  await page.route(
+    "**/api/v1/runners/installations/probe",
+    (route) =>
+      route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "SSH 密码不正确，请重新填写。" } }),
+      }),
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "探测并核验主机", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("SSH 密码不正确");
+  await page.route(
+    "**/api/v1/runners/installations/probe",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          hostKeySha256: `SHA256:${"A".repeat(43)}`,
+          operatingSystemId: "ubuntu",
+          detectedOperatingSystemId: "ubuntu",
+          operatingSystemName: "Ubuntu 24.04",
+          architecture: "amd64",
+          initSystem: "systemd",
+          privilegeMode: "root",
+          cgroupV2Available: true,
+          bashPath: "/bin/bash",
+          forcedInstallationMode: false,
+        }),
+      }),
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "探测并核验主机", exact: true }).click();
+  await dialog.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
+  await dialog.getByLabel("我确认卸载并永久删除该执行机的 Agent 本地数据").check();
+  await page.route(
+    `**/api/v1/runners/${runnerId}/uninstall`,
+    (route) =>
+      route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "远端清理失败，可重试" } }),
+      }),
+    { times: 1 },
+  );
+  const uninstallRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/api/v1/runners/${runnerId}/uninstall`,
+  );
+  await dialog.getByRole("button", { name: "确认卸载并清理", exact: true }).click();
+  expect((await uninstallRequest).postDataJSON()).toMatchObject({
+    confirm: true,
+    connection: { host: "192.0.2.10", username: "root", password: "ManualCleanup!Password123" },
+    expectedHostKeySha256: `SHA256:${"A".repeat(43)}`,
+  });
+  await expect(dialog.getByRole("alert")).toContainText("远端清理失败");
+
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(article).toBeVisible();
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await panel.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: resolve(screenshots, `deleted-agent-list-dark-${width}.png`) });
+  }
+  await article.getByRole("button", { name: "卸载 Agent", exact: true }).click();
+  // Cancelled dialogs clear the manually entered secret.
+  await expect(dialog.getByLabel("SSH / sudo 密码", { exact: true })).toHaveValue("");
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+});

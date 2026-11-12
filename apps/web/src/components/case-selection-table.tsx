@@ -13,6 +13,8 @@ import { Disclosure } from "@/components/ui/disclosure";
 
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
+import { clearBrowserSnapshots } from "@/lib/browser-read-cache";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
 import { useDirectoryBranch } from "./use-directory-tree";
@@ -35,6 +37,7 @@ import {
   Folder,
   Layers3,
   ListFilter,
+  ListMinus,
   Search,
   Trash2,
 } from "lucide-react";
@@ -157,7 +160,8 @@ export function CaseSelectionTable({
   const [outcomeFilter, setOutcomeFilter] = useState<CaseOutcomeFilter>(
     directoryTree?.filter.outcome ?? "all",
   );
-  const [pending, setPending] = useState(false);
+  const [pendingOperation, setPendingOperation] = useState<"add" | "exclude" | "delete">();
+  const pending = pendingOperation !== undefined;
   const [message, setMessage] = useState<string | null>(null);
   const [detailReload, setDetailReload] = useState(0);
   const [detail, setDetail] = useState<CaseDetailView | null>(null);
@@ -267,7 +271,7 @@ export function CaseSelectionTable({
           completeSelection.ids.every((id) => checkedCaseIds.has(id))))
     : selectableCases.length > 0 && selectableCases.every((item) => checkedCaseIds.has(item.id));
   const selectedCases = [...selection.values()].map((item) => item.definition);
-  const selectedCasesCanJoinSuite =
+  const selectedCasesCanManageSuite =
     selectedCases.length > 0 && selectedCases.every((item) => canManageSuites(item.projectId));
   const selectedCasesCanDelete =
     selectedCases.length > 0 && selectedCases.every((item) => canManageCases(item.projectId));
@@ -423,11 +427,13 @@ export function CaseSelectionTable({
       !effectiveSuiteId ||
       checkedCaseIds.size === 0 ||
       crossProjectSelection ||
-      !selectedCasesCanJoinSuite
+      pending ||
+      collecting ||
+      !selectedCasesCanManageSuite
     )
       return;
     const selectedCaseIds = [...checkedCaseIds];
-    setPending(true);
+    setPendingOperation("add");
     setMessage(null);
     try {
       let addedCount = 0;
@@ -464,7 +470,58 @@ export function CaseSelectionTable({
     } catch (caught) {
       toast.error(caught instanceof Error ? caught.message : "添加用例失败。");
     } finally {
-      setPending(false);
+      setPendingOperation(undefined);
+    }
+  }
+
+  async function excludeFromSuite(): Promise<void> {
+    const target = targetSuites.find((suite) => suite.id === effectiveSuiteId);
+    if (!target || pending || collecting || crossProjectSelection || !selectedCasesCanManageSuite)
+      return;
+    const caseDefinitionIds = [...checkedCaseIds];
+    if (caseDefinitionIds.length > CASE_SUITE_ITEM_MUTATION_LIMIT) {
+      toast.error(`一次最多排除 ${CASE_SUITE_ITEM_MUTATION_LIMIT.toLocaleString()} 个用例。`);
+      return;
+    }
+    const confirmed = await confirmAction({
+      title: "从任务中排除用例",
+      description: `将从「${target.name}」排除选中的 ${caseDefinitionIds.length} 个普通用例。未加入此任务的用例会自动忽略，用例库、其他任务和已有执行记录均保留。本次操作仅影响该任务后续的执行范围。`,
+      confirmLabel: "确认排除",
+      tone: "warning",
+    });
+    if (!confirmed) return;
+    setPendingOperation("exclude");
+    setMessage(null);
+    try {
+      // Reuse the atomic membership mutation and its archive/owner-lock checks.
+      const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(target.id)}/cases`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ caseDefinitionIds }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok) await throwApiErrorResponse(response, "从任务排除用例失败，请重试。");
+      clearBrowserSnapshots();
+      setMissingCaseIds((current) =>
+        current ? new Set([...current, ...caseDefinitionIds]) : current,
+      );
+      setCheckedCaseIds((current) => {
+        const remaining = new Set(current);
+        for (const id of caseDefinitionIds) remaining.delete(id);
+        return remaining;
+      });
+      directoryTree?.refresh();
+      toast.success("已从任务排除所选用例；未加入此任务的用例已忽略。");
+    } catch (failure) {
+      toast.error(
+        failure instanceof Error && failure.name === "TimeoutError"
+          ? "排除请求超时，任务可能已更新；请核对后重试，重复排除不会删除用例。"
+          : failure instanceof Error
+            ? failure.message
+            : "从任务排除用例失败，请重试。",
+      );
+    } finally {
+      setPendingOperation(undefined);
     }
   }
 
@@ -480,7 +537,7 @@ export function CaseSelectionTable({
       tone: "danger",
     });
     if (!confirmed) return;
-    setPending(true);
+    setPendingOperation("delete");
     setMessage(null);
     let deletedCount = 0;
     setDeletionProgress({ completed: 0, total: caseDefinitionIds.length });
@@ -528,7 +585,7 @@ export function CaseSelectionTable({
       toast.error(caught instanceof Error ? caught.message : "删除用例失败。");
     } finally {
       setDeletionProgress(undefined);
-      setPending(false);
+      setPendingOperation(undefined);
     }
   }
 
@@ -662,7 +719,7 @@ export function CaseSelectionTable({
               {checkedCaseIds.size > 0
                 ? `已选 ${checkedCaseIds.size}`
                 : manageableSuites.length > 0
-                  ? "可批量加入任务"
+                  ? "可批量加入或排除"
                   : "可批量管理用例"}
             </span>
             {selectedCasesCanDelete ? (
@@ -672,11 +729,11 @@ export function CaseSelectionTable({
                 type="button"
                 variant="danger"
               >
-                {pending ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
+                {pendingOperation === "delete" ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
                 批量删除
               </Button>
             ) : null}
-            {manageableSuites.length === 0 && selectedCasesCanJoinSuite ? (
+            {manageableSuites.length === 0 && selectedCasesCanManageSuite ? (
               <LinkButton
                 className={cn(
                   "button button-secondary",
@@ -691,6 +748,7 @@ export function CaseSelectionTable({
               <>
                 <Select
                   value={effectiveSuiteId}
+                  disabled={pending}
                   onChange={(event) => {
                     setSuiteId(event.target.value);
                     setMissingOnly(false);
@@ -712,7 +770,7 @@ export function CaseSelectionTable({
                 </Select>
                 <Button
                   aria-pressed={missingOnly}
-                  disabled={!effectiveSuiteId || membershipPending}
+                  disabled={!effectiveSuiteId || membershipPending || pending}
                   onClick={() => {
                     setCheckedCaseIds(new Set());
                     const next = !missingOnly;
@@ -742,14 +800,35 @@ export function CaseSelectionTable({
                   disabled={
                     checkedCaseIds.size === 0 ||
                     pending ||
+                    collecting ||
                     crossProjectSelection ||
-                    !selectedCasesCanJoinSuite ||
+                    !selectedCasesCanManageSuite ||
                     !effectiveSuiteId
                   }
                   onClick={addToSuite}
                 >
-                  {pending ? <LoadingIcon size={15} /> : <Check size={15} />}
+                  {pendingOperation === "add" ? <LoadingIcon size={15} /> : <Check size={15} />}
                   加入任务
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={
+                    checkedCaseIds.size === 0 ||
+                    pending ||
+                    collecting ||
+                    crossProjectSelection ||
+                    !selectedCasesCanManageSuite ||
+                    !effectiveSuiteId
+                  }
+                  onClick={excludeFromSuite}
+                >
+                  {pendingOperation === "exclude" ? (
+                    <LoadingIcon size={15} />
+                  ) : (
+                    <ListMinus size={15} />
+                  )}
+                  从任务中排除
                 </Button>
               </>
             ) : null}
@@ -1415,7 +1494,7 @@ const caseSelectionTableStyles = {
   "case-selection-stats":
     "flex flex-wrap items-center [align-content:flex-start] gap-2 py-2 px-3 border-b border-solid border-border bg-muted text-muted-foreground text-xs [&_strong]:text-foreground [&_>_span]:[flex:0_0_auto] [&_>_span:first-child]:[flex-basis:100%]",
   "case-selection-toolbar":
-    "flex flex-wrap items-center gap-2 [border-block:1px_solid_var(--border)] py-[9px] px-3 py-2 [&>_.ui-field-feedback]:min-w-0 [&>_.ui-field-feedback]:[flex:1_1_150px] [@media(min-height:_900px)]:[&>_.ui-field-feedback]:[flex:1_1_260px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
+    "flex flex-wrap items-center justify-start gap-2 [border-block:1px_solid_var(--border)] py-[9px] px-3 py-2 [&>_.ui-field-feedback]:min-w-0 [&>_.ui-field-feedback]:[flex:1_1_150px] [@media(min-height:_900px)]:[&>_.ui-field-feedback]:[flex:1_1_260px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
   "case-tree-activate":
     "grid min-w-0 min-h-9 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-1.5 rounded-md px-1 py-0.5 text-sm text-inherit text-left no-underline hover:bg-info/10 [&_>_span]:grid [&_>_span]:min-w-0 [&_strong]:truncate [&_strong]:font-semibold [&_strong]:leading-4 [&_code]:truncate [&_code]:text-muted-foreground [&_code]:text-xs [&_code]:leading-4 [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:whitespace-nowrap max-[1600px]:[&_small]:hidden max-[1440px]:grid-cols-[auto_minmax(0,1fr)] max-[1440px]:[&_.batch-status]:hidden [&_.batch-status]:self-center",
   "case-tree-case":

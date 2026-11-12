@@ -1,3 +1,8 @@
+import {
+  listRejectedContactsQuery,
+  recordRejectedContactQuery,
+} from "./runner-rejected-contact-query";
+import { runnerRejectedContactsPageSchema, type RunnerRejectedContact } from "@autoforge/contracts";
 import { runnerPurgeValues } from "./runner-purge";
 import {
   rerunArchiveCandidates,
@@ -3283,6 +3288,25 @@ export class PostgresRunnerRepository implements RunnerRepository {
 
   private async ready(): Promise<void> {
     await this.handle.ready;
+  }
+
+  async recordRejectedContact(
+    input: Parameters<RunnerRepository["recordRejectedContact"]>[0],
+  ): Promise<void> {
+    await this.ready();
+    await this.handle.db.execute(recordRejectedContactQuery(input, "postgres"));
+  }
+
+  async listRejectedContacts(query: Parameters<RunnerRepository["listRejectedContacts"]>[0]) {
+    await this.ready();
+    const result = await this.handle.db.execute<RunnerRejectedContact>(
+      listRejectedContactsQuery(query),
+    );
+    const rows = result.rows;
+    return runnerRejectedContactsPageSchema.parse({
+      items: rows.slice(0, query.limit),
+      ...(rows.length > query.limit ? { nextCursor: rows[query.limit - 1]!.runnerId } : {}),
+    });
   }
 
   async register(record: RegisterRunnerRecord): Promise<Runner | null> {

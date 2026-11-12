@@ -2250,7 +2250,16 @@ export const versionJenkinsDependencies = sqliteTable("version_jenkins_dependenc
   updatedAt: text("updated_at").notNull(),
 });
 
+export const runnerRejectedContacts = sqliteTable("runner_rejected_contacts", {
+  runnerId: text("runner_id")
+    .primaryKey()
+    .references(() => runners.id, { onDelete: "cascade" }),
+  firstRejectedAt: text("first_rejected_at").notNull(),
+  lastRejectedAt: text("last_rejected_at").notNull(),
+});
+
 export const schema = {
+  runnerRejectedContacts,
   versionJenkinsDependencies,
   runBatchHistorySnapshots,
   logDatabases,

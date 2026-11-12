@@ -1559,6 +1559,15 @@ export type RegisterRunnerRecord = {
 };
 
 export interface RunnerRepository {
+  recordRejectedContact(input: {
+    runnerId: string;
+    recordedAt: string;
+    previousWindowBefore: string;
+  }): Promise<void>;
+  listRejectedContacts(query: {
+    afterId?: string;
+    limit: number;
+  }): Promise<import("@autoforge/contracts").RunnerRejectedContactsPage>;
   listPage(
     offlineBefore: string,
     query: { afterId?: string; limit: number },

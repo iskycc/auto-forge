@@ -2979,6 +2979,204 @@ test("terminal execution failures create a reusable task with the execution conf
   await captureUi(page, "failure-task-executed-1536");
 });
 
+test("TestNG selections exclude ordinary cases from only the chosen task without deleting assets or history", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const suffix = uniqueName("exclude-testng");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const removeClass = `example.Exclude${Date.now()}Test`;
+  const keepClass = removeClass.replace("Exclude", "Keep");
+  const outsideClass = removeClass.replace("Exclude", "Outside");
+  await importJar(
+    page,
+    project,
+    `${suffix}.jar`,
+    removeClass,
+    ["verify"],
+    [
+      { className: keepClass, methodNames: ["keep"] },
+      { className: outsideClass, methodNames: ["outside"] },
+    ],
+  );
+  const definitions = await Promise.all(
+    [removeClass, keepClass, outsideClass].map((className) =>
+      findVersionCase(page, project.id, project.versionId, project.stageId, className),
+    ),
+  );
+  const [removed, kept, outside] = definitions;
+  const suiteName = `普通用例排除验证 · ${"长任务名称".repeat(12)}`;
+  const suite = await createVersionSuite(
+    page,
+    project.id,
+    project.versionId,
+    suiteName,
+    removed!.id,
+  );
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: [kept!.id] },
+      })
+    ).status,
+  ).toBe(200);
+  const otherSuite = await createVersionSuite(
+    page,
+    project.id,
+    project.versionId,
+    `其他任务 ${suffix}`,
+    removed!.id,
+  );
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id);
+  const batch = await createTaskRun(page, suite.id);
+  expect(
+    (
+      await browserJson(page, `/api/v1/run-batches/${batch.id}/terminate`, {
+        method: "POST",
+        body: { reason: "Verify task exclusion preserves execution snapshots" },
+      })
+    ).status,
+  ).toBe(200);
+  await expect
+    .poll(async () => {
+      const result = await browserJson<{ status: string }>(
+        page,
+        `/api/v1/run-batches/${batch.id}?view=summary`,
+      );
+      expect(result.status).toBe(200);
+      return result.body.status;
+    })
+    .toBe("cancelled");
+  const readMembers = async (suiteId: string) => {
+    const result = await browserJson<{ items: Array<{ caseDefinition: { id: string } }> }>(
+      page,
+      `/api/v1/case-suites/${suiteId}`,
+    );
+    expect(result.status).toBe(200);
+    return result.body.items.map((item) => item.caseDefinition.id).sort();
+  };
+  const readHistory = () =>
+    browserJson<{ items: Array<{ run: { id: string } }> }>(
+      page,
+      `/api/v1/run-batches/${batch.id}/cases?scope=summary&pageSize=50`,
+    );
+  const history = await readHistory();
+  expect(history.status).toBe(200);
+  expect(history.body.items).toHaveLength(2);
+
+  await page.goto(`/cases?targetSuiteId=${suite.id}`);
+  const exclude = page.getByRole("button", { name: "从任务中排除", exact: true });
+  await expect(exclude).toBeVisible({ timeout: 5_000 });
+  await expect(exclude).toBeDisabled();
+  for (const className of [removeClass, outsideClass]) {
+    await page.getByLabel(`选择 ${className.split(".").at(-1)!}`, { exact: true }).check();
+  }
+  await expect(exclude).toBeEnabled();
+  for (const theme of ["light", "dark"] as const) {
+    if ((await page.locator("html").getAttribute("data-color-mode")) !== theme) {
+      await page
+        .getByRole("button", { name: theme === "dark" ? "切换到深色模式" : "切换到浅色模式" })
+        .click();
+    }
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expect(page.locator(".case-selection-toolbar")).toHaveCSS(
+        "justify-content",
+        "flex-start",
+      );
+      await expectUiIntegrity(page);
+      await captureUi(page, `testng-exclusion-toolbar-${theme}-${width}`);
+      await exclude.click();
+      const dialog = page.getByRole("dialog", { name: "从任务中排除用例", exact: true });
+      await expect(dialog).toContainText(suiteName);
+      await expect(dialog).toContainText("2 个");
+      await expectUiIntegrity(page);
+      await captureUi(page, `testng-exclusion-confirm-${theme}-${width}`);
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    }
+  }
+  expect(await readMembers(suite.id)).toEqual([removed!.id, kept!.id].sort());
+
+  // A stale task selector must not bypass an archive performed by another page.
+  const current = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suite.id}?view=summary`,
+  );
+  const archived = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suite.id}`,
+    {
+      method: "PATCH",
+      body: { archived: true, expectedRevision: current.body.revision },
+    },
+  );
+  expect(archived.status).toBe(200);
+  await exclude.click();
+  await acceptSystemDialog(page, "从任务中排除用例", "确认排除");
+  await expect(page.locator(".toast-viewport")).toContainText("归档");
+  expect(await readMembers(suite.id)).toEqual([removed!.id, kept!.id].sort());
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.id}`, {
+        method: "PATCH",
+        body: { archived: false, expectedRevision: archived.body.revision },
+      })
+    ).status,
+  ).toBe(200);
+
+  await exclude.click();
+  await acceptSystemDialog(page, "从任务中排除用例", "确认排除");
+  await expect(page.locator(".toast-viewport")).toContainText("已从任务排除所选用例");
+  await expect(exclude).toBeDisabled();
+  expect(await readMembers(suite.id)).toEqual([kept!.id]);
+  expect(await readMembers(otherSuite.id)).toEqual([removed!.id]);
+  expect((await readHistory()).body.items.map((item) => item.run.id)).toEqual(
+    history.body.items.map((item) => item.run.id),
+  );
+  for (const definition of definitions) {
+    expect((await browserJson(page, `/api/v1/case-definitions/${definition.id}`)).status).toBe(200);
+  }
+  const repeated = await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
+    method: "DELETE",
+    body: { caseDefinitionIds: [removed!.id, outside!.id] },
+  });
+  expect(repeated.status).toBe(200);
+  expect(await readMembers(suite.id)).toEqual([kept!.id]);
+
+  // Exclusion must refresh the existing "not joined" filter and still allow re-adding.
+  await page.getByRole("button", { name: "筛选未加入", exact: true }).click();
+  const removedCheckbox = page.getByLabel(`选择 ${removeClass.split(".").at(-1)!}`, {
+    exact: true,
+  });
+  await expect(removedCheckbox).toBeVisible();
+  await expect(
+    page.getByLabel(`选择 ${keepClass.split(".").at(-1)!}`, { exact: true }),
+  ).toHaveCount(0);
+  await removedCheckbox.check();
+  await page.getByRole("button", { name: "加入任务", exact: true }).click();
+  await expect(page.locator(".toast-viewport")).toContainText("已将 1 个用例加入任务");
+  expect(await readMembers(suite.id)).toEqual([removed!.id, kept!.id].sort());
+
+  await page.getByRole("button", { name: "仅看未加入", exact: true }).click();
+  await page.getByRole("button", { name: "导入用例", exact: true }).click();
+  const importDialog = page.getByRole("dialog", { name: "导入用例", exact: true });
+  await importDialog
+    .getByLabel("粘贴用例路径", { exact: true })
+    .fill(`用例路径\n${removeClass}\n${outsideClass}`);
+  await importDialog.getByRole("button", { name: "解析并预览", exact: true }).click();
+  await expect(importDialog).toContainText("匹配 2 个 · 未匹配 0 个");
+  await importDialog.getByRole("button", { name: "勾选匹配用例", exact: true }).click();
+  await exclude.click();
+  await acceptSystemDialog(page, "从任务中排除用例", "确认排除");
+  await expect(exclude).toBeDisabled();
+  expect(await readMembers(suite.id)).toEqual([kept!.id]);
+  expect(await readMembers(otherSuite.id)).toEqual([removed!.id]);
+});
+
 async function captureUi(page: Page, name: string): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!screenshotDirectory) return;

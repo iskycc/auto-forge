@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type {
   RunnerInstallationProfileRecord,
@@ -22,6 +23,9 @@ export class PostgresRunnerInstallationProfileRepository implements RunnerInstal
         .where(and(eq(pgRunners.id, input.runnerId), isNotNull(pgRunners.deregisteredAt)))
         .returning({ id: pgRunners.id });
       if (!row) throw new DomainError("RUNNER_NOT_DELETABLE", "执行机尚未注销，无法完成卸载清理。");
+      await transaction.execute(
+        sql`DELETE FROM runner_rejected_contacts WHERE runner_id=${input.runnerId}`,
+      );
       await transaction
         .delete(pgRunnerInstallationProfiles)
         .where(eq(pgRunnerInstallationProfiles.runnerId, input.runnerId));

@@ -1,3 +1,4 @@
+import { RunnerAuthLogSampler } from "./runner-auth-log-sampler.ts";
 import { redactRequestPath } from "./redact-request-path.js";
 import { observeHttpRequest } from "./http-request-observer.ts";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -32,6 +33,7 @@ import {
   matchRunnerFastPath,
 } from "./runner-fast-path.ts";
 
+const runnerAuthLogSampler = new RunnerAuthLogSampler();
 const development = process.env.NODE_ENV !== "production";
 const platformConfiguration = loadAppConfig();
 const resources = detectRuntimeResources();
@@ -204,7 +206,14 @@ const server = createServer((request, response) => {
   const currentRequestId = requestId(request.headers["x-request-id"]);
   request.headers["x-request-id"] = currentRequestId;
   response.setHeader("X-Request-Id", currentRequestId);
-  observeHttpRequest(request, response, currentRequestId, recordHttpRequest, log);
+  observeHttpRequest(
+    request,
+    response,
+    currentRequestId,
+    recordHttpRequest,
+    log,
+    runnerAuthLogSampler,
+  );
   const admission = logReadAdmission.acquire(request.method, request.url);
   if (!admission.admitted) {
     runtimePriority().report("log_io");

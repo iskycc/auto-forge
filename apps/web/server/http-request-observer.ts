@@ -1,3 +1,4 @@
+import type { RunnerAuthLogSampler } from "./runner-auth-log-sampler.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 type RequestDiagnostic = {
@@ -6,6 +7,7 @@ type RequestDiagnostic = {
   path: string;
   statusCode: number;
   durationMs: number;
+  suppressedRequests?: number;
 };
 type RequestRecorder = (
   method: string,
@@ -22,6 +24,7 @@ export function observeHttpRequest(
   requestId: string,
   record: RequestRecorder,
   log: RequestLogger,
+  runnerAuthSampler?: RunnerAuthLogSampler,
 ): void {
   const startedAt = performance.now();
   response.once("finish", () => {
@@ -31,12 +34,20 @@ export function observeHttpRequest(
     const durationMs = Math.round(performance.now() - startedAt);
     record(method, path, statusCode, durationMs);
     if (statusCode < 400) return;
+    const header = request.headers?.["x-autoforge-runner-id"];
+    const sample = runnerAuthSampler?.sample(
+      path,
+      statusCode,
+      Array.isArray(header) ? header[0] : header,
+    );
+    if (sample === null) return;
     log(statusCode >= 500 ? "error" : "warn", "HTTP request completed", {
       requestId,
       method,
       path,
       statusCode,
       durationMs,
+      ...sample,
     });
   });
 }

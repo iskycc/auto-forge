@@ -238,7 +238,7 @@ export function CaseSuiteCard({
           canPublish={canManage && canExecute && suite.status === "active"}
         />
         {canManage ? (
-          <div className="ml-auto flex shrink-0 items-center gap-2" aria-label="任务维护操作">
+          <div className="flex shrink-0 items-center gap-2" aria-label="任务维护操作">
             <CaseSuiteLockButton suite={suite} onChanged={onLockChanged} />
             {suite.status === "active" ? (
               <CaseSuiteArchiveButton
@@ -277,7 +277,7 @@ const caseSuiteCardStyles = {
   "suite-card":
     "grid min-w-0 grid-cols-[minmax(0,_1fr)] p-0 overflow-hidden transition-colors duration-150 motion-reduce:transition-none [&:hover]:shadow-xs [:is(&,_.suite-schedule-dialog)_.status-badge]:shrink-0 [:is(&,_.suite-schedule-dialog)_.status-badge]:bg-success/10 [:is(&,_.suite-schedule-dialog)_.status-badge]:text-success [:is(&,_.suite-schedule-dialog)_.status-badge.info]:bg-info/10 [:is(&,_.suite-schedule-dialog)_.status-badge.info]:text-info [:is(&,_.suite-schedule-dialog)_.status-badge.warning]:bg-warning/10 [:is(&,_.suite-schedule-dialog)_.status-badge.warning]:text-warning [:is(&,_.suite-schedule-dialog)_.status-badge.danger]:bg-destructive/10 [:is(&,_.suite-schedule-dialog)_.status-badge.danger]:text-destructive",
   "suite-card-actions":
-    "flex flex-wrap items-center gap-2 justify-between border-t border-solid border-border py-2 px-4",
+    "flex flex-wrap items-center justify-start gap-2 border-t border-solid border-border py-2 px-4",
   "suite-card-archived": "bg-muted [&_.suite-icon]:bg-muted [&_.suite-icon]:text-muted-foreground",
   "suite-card-disabled": "bg-muted [&_.suite-icon]:bg-muted [&_.suite-icon]:text-muted-foreground",
   "suite-card-export": "whitespace-nowrap",

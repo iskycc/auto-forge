@@ -1,3 +1,8 @@
+import {
+  listRejectedContactsQuery,
+  recordRejectedContactQuery,
+} from "./runner-rejected-contact-query";
+import { runnerRejectedContactsPageSchema, type RunnerRejectedContact } from "@autoforge/contracts";
 import { runnerPurgeValues } from "./runner-purge";
 import type { RunnerResourceSample } from "@autoforge/domain";
 import {
@@ -15,6 +20,20 @@ import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
 
 export class SqliteRunnerRepository implements RunnerRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async recordRejectedContact(
+    input: Parameters<RunnerRepository["recordRejectedContact"]>[0],
+  ): Promise<void> {
+    await retrySqliteLockContention(() => this.handle.db.run(recordRejectedContactQuery(input)));
+  }
+
+  async listRejectedContacts(query: Parameters<RunnerRepository["listRejectedContacts"]>[0]) {
+    const rows = this.handle.db.all<RunnerRejectedContact>(listRejectedContactsQuery(query));
+    return runnerRejectedContactsPageSchema.parse({
+      items: rows.slice(0, query.limit),
+      ...(rows.length > query.limit ? { nextCursor: rows[query.limit - 1]!.runnerId } : {}),
+    });
+  }
 
   async register(record: RegisterRunnerRecord): Promise<Runner | null> {
     return await retrySqliteWriteTransaction(this.handle, () => {

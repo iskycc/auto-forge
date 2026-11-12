@@ -54,6 +54,26 @@ function fixture() {
 }
 
 describe("Agent uninstall orchestration", () => {
+  it("uninstalls a purged Agent using newly entered SSH credentials without restoring its identity", async () => {
+    const { dependencies, calls, result } = fixture();
+    dependencies.runnerControl.get.mockResolvedValueOnce({
+      id: "runner-one",
+      deregisteredAt: "2026-11-11",
+      purgedAt: "2026-11-11",
+    } as Runner);
+    await expect(
+      uninstallRunnerAgent(dependencies, "runner-one", {
+        confirm: true,
+        connection: { host: "192.0.2.1", port: 22, username: "root", password: "new-password" },
+        expectedHostKeySha256: `SHA256:${"A".repeat(43)}`,
+        installationMode: "auto",
+      }),
+    ).resolves.toEqual(result);
+    expect(dependencies.runnerControl.deregisterRunner).not.toHaveBeenCalled();
+    expect(dependencies.runnerInstallationProfiles.connectionByProfileId).not.toHaveBeenCalled();
+    expect(calls).toEqual(["verify-host-identity", "remote-cleanup", "complete-platform-cleanup"]);
+  });
+
   it("verifies host identity before revocation and keeps cleanup before platform removal", async () => {
     const { dependencies, calls, result } = fixture();
     await expect(

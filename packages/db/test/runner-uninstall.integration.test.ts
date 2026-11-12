@@ -87,6 +87,9 @@ for (const dialect of ["sqlite", "postgresql"] as const)
           });
           await runners.deregister({ runnerId: id, deregisteredAt: now });
           await execute(
+            `INSERT INTO runner_rejected_contacts (runner_id, first_rejected_at, last_rejected_at) VALUES ('${id}', '${now}', '${now}')`,
+          );
+          await execute(
             sqlite
               ? `CREATE TRIGGER ${trigger} BEFORE DELETE ON runner_installation_profiles WHEN OLD.id = '${profileId}' BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END;`
               : `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected cleanup failure'; END $$; CREATE TRIGGER ${trigger} BEFORE DELETE ON runner_installation_profiles FOR EACH ROW WHEN (OLD.id = '${profileId}') EXECUTE FUNCTION ${trigger}();`,
@@ -104,6 +107,19 @@ for (const dialect of ["sqlite", "postgresql"] as const)
               : { message: expect.stringContaining("injected cleanup failure") },
           );
           expect((await runners.get(id, now))?.purgedAt).toBeUndefined();
+          const readContacts = async () =>
+            sqlite
+              ? sqlite.client
+                  .prepare("SELECT * FROM runner_rejected_contacts WHERE runner_id=?")
+                  .all(id)
+              : (
+                  await postgres!.pool.query(
+                    "SELECT * FROM runner_rejected_contacts WHERE runner_id=$1",
+                    [id],
+                  )
+                ).rows;
+          expect(await readContacts()).toHaveLength(1);
+
           await expect(profiles.get(profileId)).resolves.toMatchObject({
             connectionEncrypted: "encrypted-ssh-secret",
           });
@@ -111,6 +127,7 @@ for (const dialect of ["sqlite", "postgresql"] as const)
           triggerCreated = false;
           await profiles.finalizeUninstall({ runnerId: id, purgedAt: now });
           expect((await runners.get(id, now))?.purgedAt).toBe(now);
+          expect(await readContacts()).toEqual([]);
           expect((await runners.list(now, 500)).some((r) => r.id === id)).toBe(false);
           await expect(profiles.findByRunnerId(id)).resolves.toBeNull();
           await expect(

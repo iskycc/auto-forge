@@ -1,3 +1,4 @@
+import { DeletedRunnerContactService } from "@autoforge/application";
 import {
   JenkinsDependencyBuildService,
   type JenkinsDependencyRepository,
@@ -856,6 +857,9 @@ async function createPlatformServices() {
     clock,
     ids,
   );
+  const deletedRunnerContacts = new DeletedRunnerContactService(runners, clock, (cause) => {
+    logServerError(cause, ids.next(), "Recording rejected contact from a deleted Runner failed");
+  });
   const runnerControl = new RunnerControlService(
     runners,
     runnerCredentials,
@@ -865,6 +869,7 @@ async function createPlatformServices() {
     batches,
     runScheduling,
     runnerInstallationProfileRepository,
+    deletedRunnerContacts,
   );
   const platformOperations = new PlatformOperationsService(
     operationsRepository,
@@ -1005,6 +1010,7 @@ async function createPlatformServices() {
     ids,
     batches,
     runScheduling,
+    deletedRunnerContacts,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
   const runBatchExport = new RunBatchExportService(batches);
@@ -1333,6 +1339,7 @@ async function createPlatformServices() {
     executions,
     identityAccess,
     runnerControl,
+    deletedRunnerContacts,
     runnerGroups,
     runnerAgentInstaller,
     runnerInstallationProfiles,

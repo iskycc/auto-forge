@@ -65,3 +65,28 @@ describe("HTTP request diagnostics", () => {
     expect(log.mock.calls[0]?.[2].path).toBe("/[invalid-request-target]");
   });
 });
+
+it("keeps all rejected Runner requests in metrics while sampling repetitive container warnings", async () => {
+  const { RunnerAuthLogSampler } = await import("./runner-auth-log-sampler");
+  const sampler = new RunnerAuthLogSampler(() => 0);
+  const record = vi.fn();
+  const log = vi.fn();
+  for (let index = 0; index < 30; index++) {
+    const response = Object.assign(new EventEmitter(), { statusCode: 401 });
+    observeHttpRequest(
+      {
+        method: "POST",
+        url: "/api/v1/runner-agents/deleted/heartbeat",
+        headers: {},
+      } as IncomingMessage,
+      response as ServerResponse,
+      `request-${index}`,
+      record,
+      log,
+      sampler,
+    );
+    response.emit("finish");
+  }
+  expect(record).toHaveBeenCalledTimes(30);
+  expect(log).toHaveBeenCalledTimes(1);
+});

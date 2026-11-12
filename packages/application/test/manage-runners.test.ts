@@ -440,3 +440,36 @@ describe("Runner resource telemetry", () => {
     expect(resourceSamples).not.toHaveBeenCalled();
   });
 });
+
+it("records a rejected deleted heartbeat without mutating its Runner or granting authentication", async () => {
+  const observe = vi.fn().mockResolvedValue(undefined);
+  const heartbeat = vi.fn();
+  const runners = {
+    findByCredentialHash: vi.fn().mockResolvedValue(null),
+    heartbeat,
+  } as unknown as RunnerRepository;
+  const control = new RunnerControlService(
+    runners,
+    { hash: (value: string) => value } as unknown as import("../src/ports").RunnerCredentialPort,
+    {} as ExecutionControlRepository,
+    { now: () => now },
+    { next: () => "id" },
+    {} as RunBatchRepository,
+    {} as RunBatchSchedulingPort,
+    undefined,
+    { observe },
+  );
+  await expect(
+    control.heartbeat("deleted-runner", "old-credential", {
+      schemaVersion: 1,
+      busySlots: 0,
+      labels: [],
+      capabilities: [],
+      maxConcurrency: 1,
+      agentVersion: "old",
+      terminalEnabled: false,
+    }),
+  ).rejects.toMatchObject({ code: "RUNNER_AUTH_REJECTED" });
+  expect(observe).toHaveBeenCalledExactlyOnceWith("deleted-runner");
+  expect(heartbeat).not.toHaveBeenCalled();
+});

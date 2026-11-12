@@ -2279,7 +2279,16 @@ export const pgVersionJenkinsDependencies = pgTable("version_jenkins_dependencie
   updatedAt: text("updated_at").notNull(),
 });
 
+export const pgRunnerRejectedContacts = pgTable("runner_rejected_contacts", {
+  runnerId: text("runner_id")
+    .primaryKey()
+    .references(() => pgRunners.id, { onDelete: "cascade" }),
+  firstRejectedAt: text("first_rejected_at").notNull(),
+  lastRejectedAt: text("last_rejected_at").notNull(),
+});
+
 export const postgresSchema = {
+  pgRunnerRejectedContacts,
   pgVersionJenkinsDependencies,
   runBatchHistorySnapshots: pgRunBatchHistorySnapshots,
   logDatabases: pgLogDatabases,

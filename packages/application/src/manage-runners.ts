@@ -58,6 +58,22 @@ function assertRunnerIdentityAuthenticated(runner: Runner | null, runnerId: stri
   return runner;
 }
 
+export async function observeRejectedRunnerIdentity(
+  runner: Runner | null,
+  runnerId: string,
+  observer?: { observe(runnerId: string): Promise<void> },
+): Promise<void> {
+  const block = runner ? runnerAuthenticationBlock(runner) : null;
+  if (
+    !runner ||
+    runner.id !== runnerId ||
+    block === "deregistered" ||
+    block === "credential-revoked"
+  ) {
+    await observer?.observe(runnerId);
+  }
+}
+
 export class RunnerControlService {
   constructor(
     private readonly runners: RunnerRepository,
@@ -68,6 +84,7 @@ export class RunnerControlService {
     private readonly batches: RunBatchRepository,
     private readonly scheduling: RunBatchSchedulingPort,
     private readonly installationProfiles?: RunnerInstallationProfileRepository,
+    private readonly deletedRunnerContacts?: { observe(runnerId: string): Promise<void> },
   ) {}
 
   async register(bootstrapToken: string, input: RunnerRegistrationInput) {
@@ -286,6 +303,7 @@ export class RunnerControlService {
       this.credentials.hash(credential),
       this.clock.now().toISOString(),
     );
+    await observeRejectedRunnerIdentity(runner, runnerId, this.deletedRunnerContacts);
     return assertRunnerAuthenticated(runner, runnerId);
   }
 
@@ -295,6 +313,7 @@ export class RunnerControlService {
       this.credentials.hash(credential),
       this.clock.now().toISOString(),
     );
+    await observeRejectedRunnerIdentity(runner, runnerId, this.deletedRunnerContacts);
     return assertRunnerHeartbeatAuthenticated(runner, runnerId);
   }
 

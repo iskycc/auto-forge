@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   retrySqliteWriteTransaction,
   retrySqliteLockContention,
@@ -26,6 +27,9 @@ export class SqliteRunnerInstallationProfileRepository implements RunnerInstalla
         .returning({ id: runners.id })
         .get();
       if (!row) throw new DomainError("RUNNER_NOT_DELETABLE", "执行机尚未注销，无法完成卸载清理。");
+      this.handle.db.run(
+        sql`DELETE FROM runner_rejected_contacts WHERE runner_id=${input.runnerId}`,
+      );
       this.handle.db
         .delete(runnerInstallationProfiles)
         .where(eq(runnerInstallationProfiles.runnerId, input.runnerId))

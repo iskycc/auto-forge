@@ -1,127 +1,126 @@
-import { cn } from "@/lib/utils";
-export type DonutChartSegment = {
-  label: string;
-  value: number;
-  // 语义 token 引用，如 "var(--success)"；组件不硬编码任何颜色。
-  color: string;
-};
+"use client";
 
-const RADIUS = 45;
+import { Badge, Progress, Statistic, Tooltip, Typography, theme } from "antd";
+
+export type DonutChartSegment = { label: string; value: number; color: string };
+const RADIUS = 55;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-/**
- * 自绘 SVG 环形图：分段圆环 + 中心文字 + 图例。
- * figure 以 role="img" + aria-label 提供与图形等价的文本描述，SVG 本体对读屏隐藏。
- */
+/** Bounded SVG segments retain exact counts; Ant Design supplies typography, legends and progress. */
 export function DonutChart({
   segments,
   centerValue,
   centerLabel,
   ariaLabel,
   size = "default",
+  progressPercent,
 }: {
   segments: DonutChartSegment[];
   centerValue: string;
   centerLabel: string;
   ariaLabel: string;
   size?: "default" | "large";
+  progressPercent?: number;
 }) {
+  const { token } = theme.useToken();
   const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0);
   const visible = segments.filter((segment) => segment.value > 0 && total > 0);
-  // 分段很少（结果分布 4 段、进度 2 段），用纯函数按序累计偏移，避免渲染期可变状态。
-  const arcs = visible.map((segment, index) => {
-    const fraction = segment.value / total;
-    const covered = visible
-      .slice(0, index)
-      .reduce((sum, previous) => sum + previous.value / total, 0);
-    return {
-      segment,
-      // 多分段时留出 2 像素的视觉间隔，单分段（满环）不留缺口。
-      dash: Math.max(0, fraction * CIRCUMFERENCE - (fraction < 1 ? 2 : 0)),
-      offset: -covered * CIRCUMFERENCE,
-    };
-  });
-
+  const diameter = size === "large" ? 192 : 104;
+  const center = (
+    <div className="grid justify-items-center gap-1">
+      <Statistic
+        value={centerValue}
+        styles={{
+          content: {
+            fontSize: size === "large" ? 30 : 20,
+            fontWeight: 650,
+            lineHeight: 1.2,
+            color: token.colorText,
+          },
+        }}
+      />
+      <Typography.Text type="secondary" className="!text-xs">
+        {centerLabel}
+      </Typography.Text>
+    </div>
+  );
   return (
     <figure
-      className={cn("round-donut", donutChartStyles["round-donut"])}
+      className="round-donut m-0 grid min-h-56 min-w-0 grid-cols-[192px_minmax(0,1fr)] items-center gap-4"
       role="img"
       aria-label={ariaLabel}
     >
-      <svg
-        className={cn(
-          "round-donut-svg",
-          size === "large" ? "size-48 shrink-0" : donutChartStyles["round-donut-svg"],
-        )}
-        viewBox="0 0 120 120"
+      <div
+        className="relative grid shrink-0 place-items-center"
+        style={{ width: diameter, height: diameter }}
         aria-hidden="true"
       >
-        <circle
-          className={cn("round-donut-track", donutChartStyles["round-donut-track"])}
-          cx="60"
-          cy="60"
-          r={RADIUS}
-          fill="none"
-          strokeWidth="14"
-        />
-        {arcs.map(({ segment, dash, offset }) => (
-          <circle
-            key={segment.label}
-            cx="60"
-            cy="60"
-            r={RADIUS}
-            fill="none"
-            stroke={segment.color}
-            strokeWidth="14"
-            strokeDasharray={`${dash} ${CIRCUMFERENCE - dash}`}
-            strokeDashoffset={offset}
-            transform="rotate(-90 60 60)"
+        {progressPercent === undefined ? (
+          <>
+            <svg className="size-full" viewBox="0 0 120 120" aria-hidden="true">
+              <circle
+                cx="60"
+                cy="60"
+                r={RADIUS}
+                fill="none"
+                stroke={token.colorFillSecondary}
+                strokeWidth="9"
+              />
+              {visible.map((segment, index) => {
+                const covered = visible
+                  .slice(0, index)
+                  .reduce((sum, previous) => sum + previous.value / total, 0);
+                const length = (segment.value / total) * CIRCUMFERENCE;
+                const gap = visible.length === 1 ? 0 : Math.min(2, length * 0.15);
+                return (
+                  <circle
+                    key={segment.label}
+                    cx="60"
+                    cy="60"
+                    r={RADIUS}
+                    fill="none"
+                    stroke={segment.color}
+                    strokeWidth="9"
+                    strokeDasharray={`${Math.max(0, length - gap)} ${CIRCUMFERENCE - Math.max(0, length - gap)}`}
+                    strokeDashoffset={-covered * CIRCUMFERENCE}
+                    transform="rotate(-90 60 60)"
+                  />
+                );
+              })}
+            </svg>
+            <div className="absolute inset-0 grid place-items-center">{center}</div>
+          </>
+        ) : (
+          <Progress
+            type="circle"
+            size={diameter}
+            percent={progressPercent}
+            strokeWidth={7.5}
+            status="normal"
+            strokeColor={segments[0]?.color ?? token.colorPrimary}
+            railColor={token.colorFillSecondary}
+            format={() => center}
           />
-        ))}
-        <text
-          className={cn("round-donut-value", donutChartStyles["round-donut-value"])}
-          x="60"
-          y="58"
-          textAnchor="middle"
-        >
-          {centerValue}
-        </text>
-        <text
-          className={cn("round-donut-caption", donutChartStyles["round-donut-caption"])}
-          x="60"
-          y="76"
-          textAnchor="middle"
-        >
-          {centerLabel}
-        </text>
-      </svg>
-      <figcaption className={cn("round-donut-legend", donutChartStyles["round-donut-legend"])}>
+        )}
+      </div>
+      <figcaption className="round-donut-legend grid min-w-0 gap-2.5">
         {segments.map((segment) => (
-          <span
-            className={cn("round-donut-legend-item", donutChartStyles["round-donut-legend-item"])}
+          <Tooltip
             key={segment.label}
+            title={`${segment.label}：${segment.value.toLocaleString()} / ${total.toLocaleString()}（${total ? Math.round((segment.value / total) * 100) : 0}%）`}
           >
-            <span
-              className={cn("round-donut-swatch", donutChartStyles["round-donut-swatch"])}
-              style={{ backgroundColor: segment.color }}
-              aria-hidden="true"
-            />
-            {segment.label} {segment.value}
-          </span>
+            <div className="round-donut-legend-item flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5 border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <Badge color={segment.color} />
+                <span>{segment.label}</span>
+              </span>
+              <Typography.Text strong className="!text-sm tabular-nums">
+                {segment.value.toLocaleString()}
+              </Typography.Text>
+            </div>
+          </Tooltip>
         ))}
       </figcaption>
     </figure>
   );
 }
-
-const donutChartStyles = {
-  "round-donut": "flex items-center gap-4 m-0",
-  "round-donut-caption": "fill-muted-foreground text-xs",
-  "round-donut-legend": "grid gap-1.5",
-  "round-donut-legend-item":
-    "flex items-center gap-[7px] text-muted-foreground text-xs whitespace-nowrap",
-  "round-donut-svg": "w-[104px] h-[104px] [flex:0_0_auto]",
-  "round-donut-swatch": "w-2.5 h-2.5 [flex:0_0_auto] rounded-md",
-  "round-donut-track": "stroke-input",
-  "round-donut-value": "fill-foreground text-lg font-semibold",
-} as const;

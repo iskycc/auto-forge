@@ -4,7 +4,29 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.22.12 - 2026-11-12
+
+### Added
+
+- TestNG 用例管理新增“从任务中排除”，支持手工、目录及表格／文本清单选择，未加入的用例自动忽略；只修改目标任务的后续执行范围，保留用例库、其他任务与历史执行快照，沿用权限、归档及锁定保护。
+- 执行节点页新增已删除 Agent 的连接提醒，记录首次／最近鉴权拒绝时间并支持 SSH 卸载；未保存连接信息或密码时可手工填写并核验主机，卸载成功清理提醒，失败保留重试。旧身份始终失效，不计入正常节点或调度。
+
+### Fixed
+
+- 重跑轮次饼图仅统计本轮实际成员，前轮已通过用例不再被算入本轮“未执行”；总结与全部轮次保留各自口径，累计通过图明确标注批次范围。
+- 图表统一使用 Ant Design 卡片、统计、图例及进度环，放大圆环并对齐页脚；任务卡片与普通用例操作栏统一靠左、固定间距并自然换行。
+- 重复 Runner 鉴权失败按节点合并为有界警告，保留全部请求指标与服务端错误，避免已删除 Agent 反复连接刷屏。
+
+### Compatibility
+
+- 从 v1.22.11 升级新增 SQLite `0100_runner_rejected_contacts.sql` 与 PostgreSQL `0099_runner_rejected_contacts.sql`，只创建关联 Runner 的小型提醒表，不修改既有身份、执行记录或历史结果。升级前备份主库，Full 同步升级 Web／Worker；单份迁移失败事务回滚，修复后可重试。回退旧服务可保留新增表，旧身份仍被拒绝，但不展示或维护连接提醒。
+- 不新增生产依赖、平台配置或 Runner 协议；无需重装 Agent。连接提醒从升级后收到的拒绝请求开始记录，不追溯历史容器日志。普通用例排除复用现有原子成员接口，单次支持 100,000 项；当前批次执行快照保持不变。
+
+### Verification
+
+- 已删除 Agent 链路 95 项、图表及按钮范围 66 项、普通用例排除 96 项定向回归分别通过；这些范围存在交集，不作为独立测试数量相加。数据库相关测试包含真实 SQLite／PostgreSQL，迁移覆盖新库、从上一版升级与故障回滚，详见[连接提醒验证](./docs/architecture/deleted-runner-contacts.md#验证2026-11-12)、[执行详情验证](./docs/design/execution-detail-layout.md)及[任务范围验证](./docs/architecture/task-case-membership.md#验证记录2026-11-12)。
+- 三组功能分别通过生产 Lite／Full Playwright；Full 使用双 Web、Worker 和真实 PostgreSQL／NATS／Redis／MinIO。实际审查 1024×768／1536×960 深浅色页面与弹窗截图，无新增溢出或布局变形。格式、ESLint、Web／测试类型、19 行 E2E 覆盖矩阵及 Web／Worker 生产构建通过。
+- 按用户要求走最快路径，只启动 Release，复用上述定向验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名和资产完整性检查。未重跑十万级压力、真实业务 JVM、真实 systemd 卸载或完整离线发布物验收；卸载 UI 的远端请求使用受控响应，SSH 协议与身份边界由本地真实 SSH 测试服务覆盖。
 
 ## 1.22.11 - 2026-11-12
 

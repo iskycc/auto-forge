@@ -140,6 +140,12 @@ export function RunnerUninstallDialog({
               {error}
             </Notice>
           ) : null}
+          {!profile ? (
+            <Notice tone="info">
+              平台未保存该节点的 SSH
+              密码或连接信息，请填写执行机地址、用户名和密码，再探测并核验主机指纹。密码仅用于本次卸载，不会自动保存。
+            </Notice>
+          ) : null}
           {profile ? (
             <label className="flex items-center gap-2">
               <Input

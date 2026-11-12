@@ -7,7 +7,8 @@
 - 页头集中显示任务名称、批次、任务版本和项目版本；后台保留拉起人，公开页把登录与主题切换放在只读说明同一行。
 - 概览四列突出执行状态、总数、通过率和耗时／倒计时，下面集中展示起止时间、当前轮次、实际环境 IP 和适用的操作人。批次操作放在同一卡片底部，按钮有序换行。
 - 轮次表保留总结、全部轮次、每轮及环境恢复的选择、高亮和 URL 记忆。未指定轮次及失效的轮次参数默认选择“总结”，不再选择最后执行轮次；明确指定且仍存在的轮次链接继续定位原范围。后台与匿名页共用规则。
-- 两张圆环位于轮次表之前，直径 192px；跟随主页面选中的具体轮次、总结或全部轮次展示对应结果，环境恢复选择展示其之前一轮的结果。图例读取原有有界概要，深浅色共用语义 token。
+- 两张圆环位于轮次表之前，直径 192px；左侧结果分布按所选具体轮次、总结或全部轮次显示，环境恢复选择展示其之前一轮。具体轮次直接使用该轮 `totalRuns`／`notExecuted`，不把其他轮通过的用例当作未执行；总结按批次用例去重，全部轮次按轮次累计。中心及页脚明确显示范围和总数。
+- 右侧“总体通过进度”明确标记“批次范围”，展示截至所选轮次的累计通过数及批次总数；与左侧本轮口径分开说明。两张图使用 Ant Design Card、Statistic、Badge、Tooltip 和 Progress 统一层级、图例与进度环，复用主题 token 和本地资源，不新增图表依赖。
 - 轮次表之后只保留“查看用例明细”入口，默认没有用例 DOM，也不请求明细分页。
 
 ## 独立全屏明细
@@ -26,7 +27,7 @@
 
 ## 性能边界
 
-没有新增数据接口、轮询、数据库聚合或完整日志读取；原有明细请求延迟至窗口打开后。预览弹窗复用有界用例分页的现有字段；结构化详情仅点击后读取，继续复用原有缓存和授权。时钟在独立组件内更新，不使圆环及结果表每秒重渲染。未改数据库、调度、统计口径、Runner 协议与离线资源依赖。
+没有新增数据接口、轮询、数据库聚合或完整日志读取；原有明细请求延迟至窗口打开后。预览弹窗复用有界用例分页的现有字段；结构化详情仅点击后读取，继续复用原有缓存和授权。时钟在独立组件内更新，不使圆环及结果表每秒重渲染。不改数据库统计或调度规则，图表直接展示已有范围概要；Runner 协议和离线资源依赖保持一致。
 
 ## 验证范围
 
@@ -49,3 +50,36 @@
 以上两个场景及原有全屏明细闭环共三项 Playwright 测试通过；原闭环继续验证唯一关闭入口、搜索筛选、子弹窗、焦点／滚动恢复及在途请求取消。实际审查了上述两种视口的后台／匿名、深浅色加载与结果截图，未发现新增重叠、溢出或结果行变形。截图目录为 `/var/tmp/autoforge-execution-entry-ui-20261105`，最终浏览器记录为 `/var/tmp/autoforge-execution-entry-playwright-retest.log`。生产构建记录为 `/var/tmp/autoforge-execution-entry-build.log`。
 
 本次修复另通过变更文件 ESLint、Web 与测试类型检查、`pnpm format:check`（含许可证和 Go 格式）、`pnpm test:e2e:matrix`、`git diff --check`，以及后端打包、前端离线资源、部署包、发布工作流、清单和签名的 39 项检查。相关 Vitest 共五个文件 60 项，在上述四个回归文件之外新增 `execution-round-selection.test.ts`，覆盖缺失／失效参数、空统计和明确指定范围。最终检查记录为 `/var/tmp/autoforge-execution-entry-quality.log`；未重跑 Full 中间件、真实 JVM 长时执行与整套断网验收。
+
+### 2026-11-12 轮次分布与 Ant Design 图表
+
+旧页面在结果分布中使用 `batch.totalRuns - summary.executed` 作为未执行数，导致初始 100 个用例通过 90 个后，仅重跑 10 个时，多出 90 个“未执行”。新增组件回归在旧实现中复现该错误。现在直接使用 `summary.totalRuns` 与 `summary.notExecuted`，中心显示本轮用例总数，页脚区分已开始和未执行；等待中的空轮次保持零，不拿全局数补足。选中轮次暂无统计时显示明确空状态，不回退为最终结果。
+
+结果分布的 SVG 保留精确分段，配合真实 Ant Design Card、Statistic、Badge 和 Tooltip；累计通过使用 Progress 圆环。两图保持 192px 大圆环、对齐的主体和页脚，并分别标注“本轮范围／去重总结／全部轮次”和“批次范围”。不新增生产依赖，不增加查询、轮询或大集合遍历，Lite／Full 与匿名页共用实现。
+
+任务卡片的操作栏同时取消空间均分和维护图标组的自动右移，统一左对齐、固定 8px 间距并自然换行；锁定、归档、权限或 Adapter 状态导致按钮数量变化时保持相同规则。
+
+验证：七个文件共 66 项 Vitest 通过，包括图表渲染、空轮次、排队／进行中／取消、缺失统计、总体视图、用例分页及原领域轮次语义：
+
+```sh
+pnpm exec vitest run \
+  apps/web/src/components/execution-round-charts.test.tsx \
+  apps/web/src/components/ui-usage.test.ts \
+  apps/web/src/lib/execution-batch-view.test.ts \
+  apps/web/src/lib/run-batch-presentation.test.ts \
+  apps/web/src/lib/round-case-rows.test.ts \
+  apps/web/src/lib/execution-case-page-client.test.ts \
+  packages/domain/test/run-batch-rounds.test.ts \
+  --maxWorkers=1 --no-file-parallelism
+```
+
+生产 Lite 的原有全屏明细场景和新增范围／按钮场景分别通过；图表视觉对齐收尾后，范围／按钮场景在最终 Lite／Full 生产构建再次通过。Full 使用双 Web、Worker 和真实 PostgreSQL／NATS／Redis／MinIO。新增共享数据库夹具建立初始 100 例、90 例首次通过、10 例进入重跑的执行历史；后台和匿名页均确认重跑为 4 通过／6 失败／0 未执行，总结仍为 100 例、全部轮次累计 110 例。两种权限导致的多／少按钮卡片同时验证固定间距。
+
+```sh
+pnpm exec playwright test tests/e2e/execution-detail-layout.spec.ts --workers=1
+pnpm exec playwright test --config playwright.full.config.ts \
+  tests/e2e/execution-detail-layout.spec.ts \
+  --grep 'retry charts use only eligible round members' --workers=1
+```
+
+实际查看 1024×768、1536×960 的后台／匿名、深浅色图表和任务按钮截图；原全屏场景还覆盖 1920×960。图例、长标题、按钮换行、数字和页脚对齐正常，没有新增横向溢出或布局变形。截图位于 `/var/tmp/autoforge-round-charts-ui` 和 `/var/tmp/autoforge-round-charts-full-ui`。范围内格式、ESLint、Web／测试类型及 Web／Worker 生产构建通过；不修改数据库统计、调度、权限、Runner 协议或既有历史数据。本次 UI 修复未新增迁移，也未重跑十万级压力、真实业务 JVM 或完整离线发布包验收。

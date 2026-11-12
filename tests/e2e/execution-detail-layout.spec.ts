@@ -304,3 +304,153 @@ test("console and anonymous execution overviews isolate full-screen case details
     await anonymous.close();
   }
 });
+
+test("retry charts use only eligible round members and task actions keep a consistent alignment", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: uniqueName("轮次图表") } },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const { insertRoundChartFixture } = await import("./support/round-chart-fixture");
+  const fixture = await insertRoundChartFixture(version.body.id);
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${fixture.batchId}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  const anonymous = await browser.newContext();
+  try {
+    const visitor = await anonymous.newPage();
+    for (const [target, url, access] of [
+      [page, `/run-batches/${fixture.batchId}?round=2`, "console"],
+      [visitor, `${share.body.shareUrl}&round=2`, "public"],
+    ] as const) {
+      for (const mode of ["light", "dark"]) {
+        await target
+          .context()
+          .addCookies([
+            { name: "autoforge-color-mode", value: mode, url: new URL(page.url()).origin },
+          ]);
+        await target.goto(url);
+        const charts = target.getByRole("region", { name: "执行结果图表", exact: true });
+        await expect(
+          charts.getByRole("img", {
+            name: /结果分布：通过 4，失败 6，超时 0，进行中 0，取消 0，未执行 0$/u,
+          }),
+        ).toBeVisible();
+        await expect(charts).toContainText("本轮用例 10 个");
+        await expect(
+          charts.getByRole("img", {
+            name: "总体通过进度：累计通过 94 个用例，共 100 个",
+            exact: true,
+          }),
+        ).toBeVisible();
+        for (const width of [1024, 1536]) {
+          await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          await charts.scrollIntoViewIfNeeded();
+          await expectUiIntegrity(target);
+          await target.evaluate(() => window.scrollTo(0, 0));
+          await target.screenshot({
+            path: resolve(screenshots, `round-charts-${access}-${mode}-${width}.png`),
+            fullPage: true,
+          });
+        }
+        await target.goto(url.replace("round=2", "round=summary"));
+        await expect(
+          charts.getByRole("img", {
+            name: /结果分布：通过 94，失败 6，超时 0，进行中 0，取消 0，未执行 0$/u,
+          }),
+        ).toBeVisible();
+        await target.goto(url.replace("round=2", "round=all"));
+        await expect(
+          charts.getByRole("img", {
+            name: /结果分布：通过 94，失败 16，超时 0，进行中 0，取消 0，未执行 0$/u,
+          }),
+        ).toBeVisible();
+        await expect(charts).toContainText("累计执行数 110 个");
+      }
+    }
+  } finally {
+    await anonymous.close();
+  }
+  const sparse = await browserJson<{ id: string; revision: number }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: version.body.id,
+      name: uniqueName("少按钮任务"),
+      adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+    },
+  });
+  expect(sparse.status).toBe(201);
+  const peer = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: {
+      username: uniqueName("chart-lock-peer"),
+      displayName: "其他任务维护人",
+      password: "ChartPeer!Password123",
+      forcePasswordChange: false,
+    },
+  });
+  expect(peer.status).toBe(201);
+  const { openHistoryFixtureConnection } = await import("./support/history-fixture-connection");
+  const db = await openHistoryFixtureConnection({
+    directory: process.env.AUTOFORGE_E2E_POSTGRES_URL
+      ? undefined
+      : process.env.AUTOFORGE_E2E_DATA_DIR,
+    postgresUrl: process.env.AUTOFORGE_E2E_POSTGRES_URL,
+  });
+  try {
+    await db.execute("UPDATE case_suites SET locked_by=?,locked_by_name=?,locked_at=? WHERE id=?", [
+      peer.body.id,
+      "其他任务维护人",
+      new Date().toISOString(),
+      sparse.body.id,
+    ]);
+  } finally {
+    await db.close();
+  }
+  for (const mode of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: mode, url: new URL(page.url()).origin }]);
+    await page.goto("/case-suites");
+    const cards = page.locator(".suite-card");
+    await expect(cards).toHaveCount(2);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      for (const card of await cards.all()) {
+        const footer = card.locator("footer");
+        const alignment = await footer.evaluate(
+          (element) => getComputedStyle(element).justifyContent,
+        );
+        expect(alignment).toBe("flex-start");
+        const spacing = await footer.evaluate((element) => {
+          const boxes = Array.from(element.children)
+            .filter((child) => child.getBoundingClientRect().width > 0)
+            .map((child) => child.getBoundingClientRect());
+          return boxes
+            .slice(1)
+            .flatMap((box, index) =>
+              Math.abs(box.y - boxes[index]!.y) < 3 ? [box.x - boxes[index]!.right] : [],
+            );
+        });
+        expect(spacing.every((value) => value >= 7 && value <= 9)).toBe(true);
+      }
+      await page.screenshot({
+        path: resolve(screenshots, `task-actions-${mode}-${width}.png`),
+        fullPage: true,
+      });
+    }
+  }
+});

@@ -24,7 +24,7 @@ import type {
   SchedulingEventDraft,
   SecretCipherPort,
 } from "./ports";
-import { assertRunnerAuthenticated } from "./manage-runners";
+import { assertRunnerAuthenticated, observeRejectedRunnerIdentity } from "./manage-runners";
 import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
 import { buildAttemptCompletionEvents } from "./completion-scheduling-events";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
@@ -50,6 +50,7 @@ export class ExecutionControlService {
     private readonly ids: IdGenerator,
     private readonly batches: RunBatchRepository,
     private readonly scheduling: RunBatchSchedulingPort,
+    private readonly deletedRunnerContacts?: { observe(runnerId: string): Promise<void> },
   ) {}
 
   async claim(
@@ -660,6 +661,7 @@ export class ExecutionControlService {
       this.credentials.hash(credential),
       this.clock.now().toISOString(),
     );
+    await observeRejectedRunnerIdentity(runner, runnerId, this.deletedRunnerContacts);
     const authenticated = assertRunnerAuthenticated(runner, runnerId);
     if (authenticated.protocolVersion !== 1) {
       throw new DomainError("RUNNER_PROTOCOL_UNSUPPORTED", "Runner Protocol 版本不兼容。");

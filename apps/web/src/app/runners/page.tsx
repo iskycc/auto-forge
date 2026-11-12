@@ -1,3 +1,4 @@
+import { DeletedRunnerContacts } from "@/components/deleted-runner-contacts";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { PagePagination } from "@/components/ui/page-pagination";
 import { Badge } from "@/components/ui/badge";
@@ -131,6 +132,9 @@ export default async function RunnersPage({
         return services.runnerInstallationProfiles.list();
       })()
     : [];
+  const rejectedContacts = canManage
+    ? await services.deletedRunnerContacts.list({ limit: 10 })
+    : undefined;
   const installationProfileByRunnerId = new Map(
     installationProfiles.flatMap((profile) =>
       profile.runnerId ? ([[profile.runnerId, profile]] as const) : [],
@@ -178,6 +182,13 @@ export default async function RunnersPage({
           {runners.length}
         </Badge>
       </section>
+      {rejectedContacts ? (
+        <DeletedRunnerContacts
+          key={JSON.stringify(rejectedContacts)}
+          initialPage={rejectedContacts}
+          profiles={installationProfiles}
+        />
+      ) : null}
       {canManage ? (
         <RunnerAgentInstaller
           controlPlaneUrl={runnerControlPlaneUrl(services.configurationStore.read().web)}
