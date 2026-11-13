@@ -18,6 +18,8 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 
 ## 当前已实现
 
+- 执行节点安装／更新先释放上传会话再启动远程命令，兼容单 SSH 会话限制；失败按 SFTP、目录、上传、命令启动等阶段显示远端原因，详见[SSH 安装与更新诊断](./docs/architecture/runner-agent.md#ssh-安装与更新诊断)。
+
 - 用例任务支持无业务次数上限的有限重跑，以及按指定轮次的剩余数量／累计通过率／本轮通过率条件结束的无限重跑；Jenkins 环境恢复支持 `7,10,13` 多轮次共用配置，详见[不限次数重跑](./docs/architecture/unlimited-task-retries.md)。
 
 - TestNG 用例管理可将勾选、目录或清单匹配的普通用例“从任务中排除”，作为“加入任务”的反向操作；仅调整指定任务后续的执行范围，保留用例及执行历史，详见[任务用例范围调整](./docs/architecture/task-case-membership.md)。

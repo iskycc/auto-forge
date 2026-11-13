@@ -45,7 +45,7 @@ pnpm exec vitest run \
   apps/web/server/http-request-observer.test.ts \
   apps/web/src/lib/runner-rejected-contacts-api.test.ts \
   apps/web/src/lib/runner-agent-uninstall.test.ts \
-  apps/web/src/lib/runner-agent-installer-uninstall.test.ts \
+  apps/web/src/lib/runner-agent-installer-transfer.test.ts \
   apps/web/src/components/ui-usage.test.ts \
   --maxWorkers=1 --no-file-parallelism
 ```

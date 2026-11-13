@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
+import { redactLogContent } from "@autoforge/application";
 import { DEFAULT_RUNNER_DATA_DIRECTORY, runnerDataDirectorySchema } from "@autoforge/contracts";
 import {
   runnerAgentUninstallResultSchema,
@@ -14,7 +15,7 @@ import type {
   RunnerAgentRollbackResult,
   RunnerHostProbeResult,
 } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isDomainError } from "@autoforge/domain";
 import { Client, type ClientChannel, type SFTPWrapper } from "ssh2";
 
 import {
@@ -24,6 +25,7 @@ import {
 } from "./runner-agent-resources";
 
 const SSH_READY_TIMEOUT_MS = 15_000;
+const SSH_SESSION_RETRY_DELAYS_MS = [50, 100, 200, 400] as const;
 const REMOTE_COMMAND_TIMEOUT_MS = 60_000;
 const INSTALL_COMMAND_TIMEOUT_MS = 120_000;
 const MAXIMUM_COMMAND_OUTPUT_BYTES = 64 * 1024;
@@ -77,8 +79,6 @@ export class RunnerAgentInstaller {
     const temporaryDirectory = `/tmp/autoforge-install-${randomUUID()}`;
     const connected = await connectHost(input.connection, input.expectedHostKeySha256);
     try {
-      const sftp = await openSftp(connected.client);
-      await makeRemoteDirectory(sftp, temporaryDirectory);
       const uploaded = installationFiles({
         input,
         probe,
@@ -89,11 +89,7 @@ export class RunnerAgentInstaller {
         recoverIdentity: Boolean(replacementRunnerId),
         temporaryDirectory,
       });
-      try {
-        for (const file of uploaded) {
-          await writeRemoteFile(sftp, file.path, file.content, file.mode);
-          await verifyRemoteFile(sftp, file.path, file.content);
-        }
+      await withUploadedFiles(connected.client, temporaryDirectory, uploaded, async () => {
         const command = installationCommand(
           temporaryDirectory,
           probe.privilegeMode,
@@ -109,13 +105,7 @@ export class RunnerAgentInstaller {
           probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined,
           INSTALL_COMMAND_TIMEOUT_MS,
         );
-      } finally {
-        await removeRemoteFiles(
-          sftp,
-          uploaded.map((file) => file.path),
-          temporaryDirectory,
-        );
-      }
+      });
     } finally {
       connected.client.end();
     }
@@ -143,8 +133,6 @@ export class RunnerAgentInstaller {
     const temporaryDirectory = `/tmp/autoforge-upgrade-${randomUUID()}`;
     const connected = await connectHost(input.connection, input.expectedHostKeySha256);
     try {
-      const sftp = await openSftp(connected.client);
-      await makeRemoteDirectory(sftp, temporaryDirectory);
       const uploaded = [
         {
           path: `${temporaryDirectory}/autoforge-agent`,
@@ -157,24 +145,14 @@ export class RunnerAgentInstaller {
           mode: 0o600,
         },
       ];
-      try {
-        for (const file of uploaded) {
-          await writeRemoteFile(sftp, file.path, file.content, file.mode);
-          await verifyRemoteFile(sftp, file.path, file.content);
-        }
+      await withUploadedFiles(connected.client, temporaryDirectory, uploaded, async () => {
         await executeRemoteCommand(
           connected.client,
           upgradeCommand(uploaded[0]!.path, uploaded[1]!.path, probe.privilegeMode, probe.bashPath),
           probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined,
           INSTALL_COMMAND_TIMEOUT_MS,
         );
-      } finally {
-        await removeRemoteFiles(
-          sftp,
-          uploaded.map((file) => file.path),
-          temporaryDirectory,
-        );
-      }
+      });
     } finally {
       connected.client.end();
     }
@@ -228,44 +206,43 @@ export class RunnerAgentInstaller {
     const directory = `/tmp/autoforge-uninstall-${randomUUID()}`;
     const connected = await connectHost(input.connection, input.expectedHostKeySha256);
     try {
-      const sftp = await openSftp(connected.client);
-      await makeRemoteDirectory(sftp, directory);
       const binaryPath = `${directory}/autoforge-agent`;
-      try {
-        await writeRemoteFile(sftp, binaryPath, resources.binary, 0o700);
-        await verifyRemoteFile(sftp, binaryPath, resources.binary);
-        const command = (action: "inspect" | "confirm") =>
-          [
-            probe.privilegeMode === "sudo" ? "sudo -S -k -p ''" : "",
-            shellQuote(binaryPath),
-            "uninstall",
-            `--${action}`,
-            "--expected-runner-id",
-            shellQuote(runnerId),
-          ]
-            .filter(Boolean)
-            .join(" ");
-        const password =
-          probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined;
-        await executeRemoteCommand(
-          connected.client,
-          command("inspect"),
-          password,
-          REMOTE_COMMAND_TIMEOUT_MS,
-        );
-        // Revoke and recover assignments only after proving this is the selected
-        // host's installed identity; a failed SSH probe leaves the Runner intact.
-        await beforeRemoval();
-        const result = await executeRemoteCommand(
-          connected.client,
-          command("confirm"),
-          password,
-          INSTALL_COMMAND_TIMEOUT_MS,
-        );
-        return runnerAgentUninstallResultSchema.parse(JSON.parse(result.stdout));
-      } finally {
-        await removeRemoteFiles(sftp, [binaryPath], directory);
-      }
+      return await withUploadedFiles(
+        connected.client,
+        directory,
+        [{ path: binaryPath, content: resources.binary, mode: 0o700 }],
+        async () => {
+          const command = (action: "inspect" | "confirm") =>
+            [
+              probe.privilegeMode === "sudo" ? "sudo -S -k -p ''" : "",
+              shellQuote(binaryPath),
+              "uninstall",
+              `--${action}`,
+              "--expected-runner-id",
+              shellQuote(runnerId),
+            ]
+              .filter(Boolean)
+              .join(" ");
+          const password =
+            probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined;
+          await executeRemoteCommand(
+            connected.client,
+            command("inspect"),
+            password,
+            REMOTE_COMMAND_TIMEOUT_MS,
+          );
+          // Revoke and recover assignments only after proving this is the selected
+          // host's installed identity; a failed SSH probe leaves the Runner intact.
+          await beforeRemoval();
+          const result = await executeRemoteCommand(
+            connected.client,
+            command("confirm"),
+            password,
+            INSTALL_COMMAND_TIMEOUT_MS,
+          );
+          return runnerAgentUninstallResultSchema.parse(JSON.parse(result.stdout));
+        },
+      );
     } finally {
       connected.client.end();
     }
@@ -579,7 +556,7 @@ function secureEqual(left: string, right: string): boolean {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
-function executeRemoteCommand(
+async function executeRemoteCommand(
   client: Client,
   command: string,
   stdin: string | undefined,
@@ -589,15 +566,17 @@ function executeRemoteCommand(
     stderr: string;
   }) => DomainError = remoteExecutionFailure,
 ): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    client.exec(command, (error, stream) => {
-      if (error) {
-        reject(remoteCommandError(error));
-        return;
-      }
-      collectCommandOutput(stream, stdin, timeoutMs, commandError).then(resolve, reject);
-    });
-  });
+  const stream = await requestRemoteSession(
+    () =>
+      new Promise<ClientChannel>((resolve, reject) => {
+        client.exec(command, (error, channel) => {
+          if (error) reject(error);
+          else resolve(channel);
+        });
+      }),
+    "ssh.exec",
+  );
+  return collectCommandOutput(stream, stdin, timeoutMs, commandError);
 }
 
 function collectCommandOutput(
@@ -694,10 +673,61 @@ function remoteExecutionFailure(result: { stdout: string; stderr: string }): Dom
   );
 }
 
-function remoteCommandError(error: Error): DomainError {
-  return new DomainError("RUNNER_INSTALLATION_FAILED", "无法在执行机上启动安装命令。", {
-    cause: error,
-  });
+type RemoteOperationStage =
+  | "ssh.exec"
+  | "sftp.open"
+  | "sftp.close"
+  | "sftp.mkdir"
+  | "sftp.write"
+  | "sftp.read"
+  | "sftp.remove";
+
+function remoteOperationError(
+  error: Error,
+  stage: RemoteOperationStage = "ssh.exec",
+  path?: string,
+): DomainError {
+  const descriptions: Record<RemoteOperationStage, string> = {
+    "ssh.exec": "启动远程命令",
+    "sftp.open": "打开 SFTP 文件传输会话",
+    "sftp.close": "释放 SFTP 文件传输会话",
+    "sftp.mkdir": "创建临时安装目录",
+    "sftp.write": "上传安装文件",
+    "sftp.read": "读取安装文件进行校验",
+    "sftp.remove": "清理临时安装文件",
+  };
+  const diagnostic = error as Error & { code?: string | number; reason?: number };
+  const remoteCode = diagnostic.code;
+  const reason = diagnostic.reason;
+  const detail = redactLogContent(error.message, [])
+    .replace(/[\r\n\t]+/g, " ")
+    .trim()
+    .slice(0, 400);
+  const codeText = remoteCode === undefined ? "" : `（错误码 ${remoteCode}）`;
+  const reasonText = reason === undefined ? "" : `（SSH 原因 ${reason}）`;
+  let hint = "";
+  if (stage.startsWith("sftp.") && remoteCode === 3) {
+    hint = "请检查 SSH 用户对临时目录的读写权限。";
+  } else if (remoteCode === "ENOSPC" || /no space left|disk quota exceeded/i.test(detail)) {
+    hint = "请检查执行机临时目录所在磁盘的空间、inode 和配额。";
+  } else if (stage === "sftp.open") {
+    hint = "请检查 SSH 服务是否启用了 SFTP 子系统，以及会话数量和访问策略。";
+  } else if (reason !== undefined) {
+    hint = "请检查 SSH 服务的 MaxSessions、访问策略及执行机进程资源。";
+  }
+  return new DomainError(
+    "RUNNER_INSTALLATION_FAILED",
+    `${descriptions[stage]}失败：${detail || "远端未提供详细原因"}${codeText}${reasonText}。${hint}`,
+    {
+      cause: error,
+      details: {
+        stage,
+        ...(path ? { path } : {}),
+        ...(remoteCode === undefined ? {} : { remoteCode }),
+        ...(reason === undefined ? {} : { remoteReason: reason }),
+      },
+    },
+  );
 }
 
 function boundedRemoteFailure(output: string): string {
@@ -709,18 +739,43 @@ function boundedRemoteFailure(output: string): string {
 }
 
 function openSftp(client: Client): Promise<SFTPWrapper> {
-  return new Promise((resolve, reject) => {
-    client.sftp((error, sftp) => {
-      if (error) reject(remoteCommandError(error));
-      else resolve(sftp);
-    });
-  });
+  return requestRemoteSession(
+    () =>
+      new Promise<SFTPWrapper>((resolve, reject) => {
+        client.sftp((error, sftp) => {
+          if (error) reject(error);
+          else resolve(sftp);
+        });
+      }),
+    "sftp.open",
+  );
+}
+
+async function requestRemoteSession<T>(
+  request: () => Promise<T>,
+  stage: "ssh.exec" | "sftp.open",
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request();
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error("SSH 通道申请失败", { cause });
+      const reason = (error as Error & { reason?: number }).reason;
+      const delay = SSH_SESSION_RETRY_DELAYS_MS[attempt];
+      // OpenSSH can acknowledge channel closure before reaping its child and
+      // releasing MaxSessions. Only retry rejected channel opens; an accepted
+      // exec request or a nonzero command exit must never execute twice.
+      if ((reason !== 2 && reason !== 4) || delay === undefined)
+        throw remoteOperationError(error, stage);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 function makeRemoteDirectory(sftp: SFTPWrapper, path: string): Promise<void> {
   return new Promise((resolve, reject) => {
     sftp.mkdir(path, { mode: 0o700 }, (error) => {
-      if (error) reject(remoteCommandError(error));
+      if (error) reject(remoteOperationError(error, "sftp.mkdir", path));
       else resolve();
     });
   });
@@ -734,7 +789,7 @@ function writeRemoteFile(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     sftp.writeFile(path, content, { mode, flag: "wx" }, (error) => {
-      if (error) reject(remoteCommandError(error));
+      if (error) reject(remoteOperationError(error, "sftp.write", path));
       else resolve();
     });
   });
@@ -743,7 +798,7 @@ function writeRemoteFile(
 function readRemoteFile(sftp: SFTPWrapper, path: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     sftp.readFile(path, (error, content) => {
-      if (error) reject(remoteCommandError(error));
+      if (error) reject(remoteOperationError(error, "sftp.read", path));
       else resolve(content);
     });
   });
@@ -763,20 +818,126 @@ async function removeRemoteFiles(
   paths: string[],
   directory: string,
 ): Promise<void> {
-  await Promise.allSettled(paths.map((path) => unlinkRemoteFile(sftp, path)));
-  await new Promise<void>((resolve) => sftp.rmdir(directory, () => resolve()));
+  const removals = await Promise.allSettled(paths.map((path) => unlinkRemoteFile(sftp, path)));
+  const removalFailure = removals.find((result) => result.status === "rejected");
+  if (removalFailure?.status === "rejected") throw removalFailure.reason;
+  await new Promise<void>((resolve, reject) =>
+    sftp.rmdir(directory, (error) => {
+      if (error) reject(remoteOperationError(error, "sftp.remove", directory));
+      else resolve();
+    }),
+  );
 }
 
 function unlinkRemoteFile(sftp: SFTPWrapper, path: string): Promise<void> {
   return new Promise((resolve, reject) => {
     sftp.unlink(path, (error) => {
-      if (error) reject(error);
+      // A partially uploaded file may not exist; all other cleanup failures remain visible.
+      if (error && (error as Error & { code?: number }).code !== 2)
+        reject(remoteOperationError(error, "sftp.remove", path));
       else resolve();
     });
   });
 }
 
 type InstallationFile = { path: string; content: Buffer; mode: number };
+
+async function withUploadedFiles<T>(
+  client: Client,
+  directory: string,
+  files: InstallationFile[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  let directoryCreated = false;
+  return withRemoteCleanup(
+    async () => {
+      await withSftp(client, async (sftp) => {
+        await makeRemoteDirectory(sftp, directory);
+        directoryCreated = true;
+        for (const file of files) {
+          await writeRemoteFile(sftp, file.path, file.content, file.mode);
+          await verifyRemoteFile(sftp, file.path, file.content);
+        }
+      });
+      // SFTP counts toward sshd MaxSessions. Wait for its channel to close before
+      // starting exec, so hardened hosts with MaxSessions=1 can still update.
+      return operation();
+    },
+    async () => {
+      if (!directoryCreated) return;
+      await withSftp(client, (sftp) =>
+        removeRemoteFiles(
+          sftp,
+          files.map((file) => file.path),
+          directory,
+        ),
+      );
+    },
+  );
+}
+
+async function withSftp<T>(
+  client: Client,
+  operation: (sftp: SFTPWrapper) => Promise<T>,
+): Promise<T> {
+  const sftp = await openSftp(client);
+  // A disconnected channel may close before cleanup begins. Remember that
+  // acknowledgement rather than waiting for a second close event.
+  const closed = new Promise<void>((resolve) => sftp.once("close", resolve));
+  return withRemoteCleanup(
+    () => operation(sftp),
+    () => closeSftp(client, sftp, closed),
+  );
+}
+
+function closeSftp(client: Client, sftp: SFTPWrapper, closed: Promise<void>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      client.end();
+      reject(remoteOperationError(new Error("等待 SFTP 会话关闭超时"), "sftp.close"));
+    }, SSH_READY_TIMEOUT_MS);
+    void closed.then(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    sftp.end();
+  });
+}
+
+async function withRemoteCleanup<T>(
+  operation: () => Promise<T>,
+  cleanup: () => Promise<void>,
+): Promise<T> {
+  let operationFailure: unknown;
+  try {
+    return await operation();
+  } catch (error) {
+    operationFailure = error;
+    throw error;
+  } finally {
+    try {
+      await cleanup();
+    } catch (cleanupFailure) {
+      if (operationFailure === undefined) throw cleanupFailure;
+      const primaryFailure = isDomainError(operationFailure)
+        ? operationFailure
+        : new DomainError("RUNNER_INSTALLATION_FAILED", "执行机操作失败。", {
+            cause: operationFailure,
+          });
+      throw new DomainError(
+        primaryFailure.code,
+        `${primaryFailure.message} 后续清理也失败：${cleanupFailure instanceof Error ? cleanupFailure.message : "未知清理错误"}`,
+        {
+          cause: primaryFailure,
+          details: {
+            ...(primaryFailure.details as Record<string, unknown> | undefined),
+            cleanupFailed: true,
+          },
+        },
+      );
+    }
+  }
+}
 
 // schema 已校验可选取值；这里把显式提供的值再归一化到同一规则，并兜底默认目录。
 export function resolveRunnerDataDirectory(value: string | undefined): string {

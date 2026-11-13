@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.17 - 2026-11-13
+
+### Fixed
+
+- 执行节点自动安装、单节点更新、批量升级与卸载在上传校验后先释放 SFTP 会话，再启动远程命令，修复 SSH 限制单个会话时被拒绝的问题。对服务端释放名额延迟引起的通道申请拒绝有限重试，不重复执行已启动的命令。命令完成后独立清理临时文件；清理失败保留原始失败原因。
+- SSH 更新失败不再统一显示“无法启动安装命令”，改为显示实际失败阶段、远端错误码及权限／SFTP／磁盘空间等排查建议；返回诊断有界并执行凭据脱敏，保持现有 API 错误码和 Lite／Full 共用行为。
+
+### Compatibility
+
+- 从 v1.22.16 升级不新增数据库迁移、平台配置、生产依赖或 Runner 协议。修复位于主平台的 SSH 安装适配器，更新主平台后即可使用修复后的节点更新入口；原有主机指纹核验、上传摘要校验、单节点配置更新及批量升级配置保留规则不变。
+
+### Verification
+
+- SSH 安装／更新／卸载、资源校验与 API 错误映射等 68 项定向测试通过；真实 OpenSSH 在 `MaxSessions=1` 下完成上传、摘要校验、测试命令执行及清理，包含会话释放延迟场景。该测试不替换本机真实 Agent，不代表已验证用户局域网执行机。
+- 受影响文件格式与 ESLint、Web／服务端／后台线程类型检查、Web 生产构建通过。本次未修改 UI，未重跑 Playwright、完整标准 CI、真实业务执行机 systemd 安装或完整离线发布验收。
+- 按用户要求走最快路径，仅运行 Release，复用上述验证；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名和发布资产完整性检查，发布后恢复临时停用的两组标准验收工作流。
+
 ## 1.22.16 - 2026-11-13
 
 ### Added
