@@ -46,7 +46,7 @@ export function DonutChart({
   );
   return (
     <figure
-      className="round-donut m-0 grid min-h-56 min-w-0 grid-cols-[192px_minmax(0,1fr)] items-center gap-4"
+      className="round-donut m-0 grid min-h-56 min-w-0 grid-cols-[192px_minmax(0,176px)] items-center justify-center gap-5"
       role="img"
       aria-label={ariaLabel}
     >
@@ -103,13 +103,13 @@ export function DonutChart({
           />
         )}
       </div>
-      <figcaption className="round-donut-legend grid min-w-0 gap-2.5">
+      <figcaption className="round-donut-legend grid min-w-0 rounded-lg border border-border/60 bg-muted/40 px-3 py-1">
         {segments.map((segment) => (
           <Tooltip
             key={segment.label}
             title={`${segment.label}：${segment.value.toLocaleString()} / ${total.toLocaleString()}（${total ? Math.round((segment.value / total) * 100) : 0}%）`}
           >
-            <div className="round-donut-legend-item flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5 border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
+            <div className="round-donut-legend-item flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-b border-border/50 py-1 last:border-0">
               <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <Badge color={segment.color} />
                 <span>{segment.label}</span>

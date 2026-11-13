@@ -354,7 +354,7 @@ test("retry charts use only eligible round members and task actions keep a consi
             exact: true,
           }),
         ).toBeVisible();
-        for (const width of [1024, 1536]) {
+        for (const width of [1024, 1536, 2560]) {
           await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
           await charts.scrollIntoViewIfNeeded();
           await expectUiIntegrity(target);
@@ -363,6 +363,34 @@ test("retry charts use only eligible round members and task actions keep a consi
             path: resolve(screenshots, `round-charts-${access}-${mode}-${width}.png`),
             fullPage: true,
           });
+          const legends = await charts.locator(".round-donut-legend").evaluateAll((elements) =>
+            elements.map((element) => ({
+              width: element.getBoundingClientRect().width,
+              overflow: element.scrollWidth - element.clientWidth,
+              rows: Array.from(element.children).map((row) => ({
+                width: row.getBoundingClientRect().width,
+                border: parseFloat(getComputedStyle(row).borderBottomWidth),
+              })),
+            })),
+          );
+          expect(legends).toHaveLength(2);
+          for (const legend of legends) {
+            expect(legend.width, "chart legends stay compact on wide screens").toBeLessThanOrEqual(
+              176,
+            );
+            expect(
+              legend.overflow,
+              "chart labels and counts remain inside the legend",
+            ).toBeLessThanOrEqual(1);
+            expect(legend.rows.at(-1)?.border, "the last status has no extra divider").toBe(0);
+            for (const row of legend.rows.slice(0, -1)) {
+              expect(row.border, "status rows retain subtle separators").toBe(1);
+              expect(
+                row.width,
+                "separators stay short and inset within the legend",
+              ).toBeLessThanOrEqual(152);
+            }
+          }
         }
         await target.goto(url.replace("round=2", "round=summary"));
         await expect(

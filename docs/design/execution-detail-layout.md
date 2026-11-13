@@ -9,6 +9,7 @@
 - 轮次表保留总结、全部轮次、每轮及环境恢复的选择、高亮和 URL 记忆。未指定轮次及失效的轮次参数默认选择“总结”，不再选择最后执行轮次；明确指定且仍存在的轮次链接继续定位原范围。后台与匿名页共用规则。
 - 两张圆环位于轮次表之前，直径 192px；左侧结果分布按所选具体轮次、总结或全部轮次显示，环境恢复选择展示其之前一轮。具体轮次直接使用该轮 `totalRuns`／`notExecuted`，不把其他轮通过的用例当作未执行；总结按批次用例去重，全部轮次按轮次累计。中心及页脚明确显示范围和总数。
 - 右侧“总体通过进度”明确标记“批次范围”，展示截至所选轮次的累计通过数及批次总数；与左侧本轮口径分开说明。两张图使用 Ant Design Card、Statistic、Badge、Tooltip 和 Progress 统一层级、图例与进度环，复用主题 token 和本地资源，不新增图表依赖。
+- 圆环与右侧图例作为一组在卡片中居中；图例采用柔和底色、圆角与细边框的小面板，宽度最多 176px，窄桌面按剩余空间收缩。状态使用 Ant Design 色标、名称与右对齐数量，面板内保留短分隔线与两侧内边距；短线最多 150px，最后一项不画底线，避免宽屏把图例和数字拉得过远。圆环维持 192px，范围统计、悬停详情和页脚分隔保持原行为。
 - 轮次表之后只保留“查看用例明细”入口，默认没有用例 DOM，也不请求明细分页。
 
 ## 独立全屏明细
@@ -101,3 +102,11 @@ pnpm exec playwright test --config playwright.full.config.ts \
 ```
 
 相关 Prettier、ESLint、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、17 项 `ui-usage.test.ts` 约束及 `pnpm --filter @autoforge/web build` 均通过。测试服务和容器已关闭；本轮是展示样式调整，未重跑数据库、调度、真实 Runner 或完整离线发布验收。
+
+### 2026-11-13 紧凑图例
+
+右侧图例采用柔和底色、圆角与细边框的紧凑面板，每行用短分隔线区分状态，数量右对齐，最后一行不附加底线。面板最多 176px，横向留白将内部短线限制在 150px 以内，按窄桌面实际剩余空间收缩；圆环与图例一起居中，两张卡片继续保持相同主体高度、圆环尺寸与页脚对齐。状态名保留 Ant Design 色标与数量，悬停详情、轮次统计和全屏明细交互不变。颜色、边框和背景使用共享语义 token，浅色与深色一致。
+
+Playwright 布局断言验证图例限宽、内部短线保留、最后一项无底线与数字无溢出；旧构建已复现缺少分隔的情况，最终 Lite 两项、Full 一项全部通过，均无跳过或重跑。Lite 完整场景覆盖全屏窗口的唯一关闭入口、搜索、筛选、详情和导出；Full 使用真实 PostgreSQL／NATS／Redis／MinIO、双 Web 和 Worker 验证后台／匿名详情及总结／具体轮次／全部轮次。实际查看 1024×768、1536×960、2560×960 深浅色截图，面板、短线及数量对齐正常，未发现新增重叠或溢出；截图分别在 `/var/tmp/autoforge-chart-legend-panels-lite-ui/` 与 `/var/tmp/autoforge-chart-legend-panels-full-ui/`。
+
+上述七个文件的 66 项 Vitest、变更范围 Prettier／ESLint、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json` 和 `pnpm --filter @autoforge/web build` 均通过，记录在 `/var/tmp/autoforge-chart-legend-panels-quality.log`。本次仅修改共享图表样式，不新增迁移、接口、依赖或轮询；未重跑调度、真实业务 JVM、压力或完整离线发布验收。测试服务和容器已关闭。

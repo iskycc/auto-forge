@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.18 - 2026-11-13
+
+### Changed
+
+- 执行详情及匿名详情的圆环图例采用柔和底色、圆角与细边框的紧凑面板，保留有内边距的短分隔线，限制图例宽度并与圆环整体居中，数量统一右对齐；保留圆环尺寸、统计口径及原有交互。
+
+### Compatibility
+
+- 从 v1.22.17 升级不新增数据库迁移、平台配置、生产依赖或 Runner 协议。本次修改位于 Lite／Full、后台／匿名执行详情共用的展示组件；执行统计、调度、权限与导出行为不变。
+
+### Verification
+
+- 66 项相关 Vitest、受影响文件格式及 ESLint、Web／服务端／后台线程与测试类型检查、Web 生产构建通过。
+- 生产 Lite 两项、Full 一项 Playwright 场景通过，无跳过或重跑；Full 使用真实 PostgreSQL／NATS／Redis／MinIO、双 Web 和 Worker。覆盖后台／匿名详情、总结／具体轮次／全部轮次，Lite 完整场景验证全屏明细的搜索、筛选、详情、导出及唯一关闭入口。
+- 实际查看 1024×768、1536×960、2560×960 深浅色截图，图例面板、短分隔线及数量对齐正常，未发现新增重叠或溢出。保留当前紧凑面板设计，其他设计预览未进入产品代码。
+- 按用户要求走最快路径，仅运行 Release，复用上述验证；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查，完成后恢复临时停用的两组标准验收工作流。未重跑全量标准 CI、调度压力、真实业务 JVM 或完整离线发布验收。
+
 ## 1.22.17 - 2026-11-13
 
 ### Fixed
