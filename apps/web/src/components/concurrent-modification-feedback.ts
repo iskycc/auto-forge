@@ -7,6 +7,7 @@ import { isConcurrentModificationError, type ApiClientError } from "@/lib/client
 import { useConfirm } from "./ui-feedback";
 
 const RESOURCE_TITLES: Readonly<Record<string, string>> = {
+  PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT: "公开链接的环境 IP 已更新",
   CASE_SUITE_REVISION_CONFLICT: "用例任务已被其他人修改",
   CASE_DEFINITION_REVISION_CONFLICT: "用例已被其他人修改",
   DDT_CASE_REVISION_CONFLICT: "DDT 用例已被其他人修改",

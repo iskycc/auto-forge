@@ -316,6 +316,12 @@ export class RunBatchSchedulingService {
                 publisher: context.publisher,
                 initiator: context.initiator,
                 requestKey: context.requestKey,
+                ...(context.environmentRevision !== undefined
+                  ? {
+                      environmentRevision: context.environmentRevision,
+                      environmentChange: context.environmentChange,
+                    }
+                  : {}),
               },
             }
           : {}),

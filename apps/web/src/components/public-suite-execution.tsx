@@ -18,13 +18,17 @@ import { Clock3, ExternalLink, Play, RefreshCw, Square, UserRound } from "lucide
 import { useRef, useState } from "react";
 import type { PublicSuiteBatch, PublicSuiteView } from "@autoforge/contracts";
 import { CopyableText } from "./ui/copyable-text";
-import { publicSuiteExecutionResultSchema } from "@autoforge/contracts";
+import {
+  publicSuiteExecutionResultSchema,
+  publicSuiteEnvironmentStateSchema,
+} from "@autoforge/contracts";
 import { Button } from "./ui/button";
 import { ActionDialog } from "./action-dialog";
 import { ColorModeToggle } from "./color-mode-toggle";
 import { JenkinsTaskGuide } from "./jenkins-task-guide";
 import { useLoginDialog } from "./login-dialog-provider";
 import { SessionLoginButton } from "./session-login-button";
+import { useConcurrentModificationFeedback } from "./concurrent-modification-feedback";
 import { usePublicSuite } from "./use-public-suite";
 import { PublicSuiteEnvironment } from "./public-suite-environment";
 import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
@@ -41,15 +45,17 @@ export function PublicSuiteExecution({
   initial: PublicSuiteView;
   baseUrl: string | undefined;
 }) {
-  const { view, error: refreshError, refresh } = usePublicSuite(initial);
+  const { view, error: refreshError, refresh, applyEnvironment } = usePublicSuite(initial);
   const { session, openLogin } = useLoginDialog();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [mode, setMode] = useState<"immediate" | "delay">("immediate");
   const [delay, setDelay] = useState<number | null>(60);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [stop, setStop] = useState<PublicSuiteBatch | null>(null);
   const [progressPath, setProgressPath] = useState("");
-  const [environmentOverride, setEnvironmentOverride] = useState<string[]>();
+  const [savingEnvironment, setSavingEnvironment] = useState(false);
+  const environmentSaving = useRef(false);
   const [unconfirmedRequest, setUnconfirmedRequest] = useState(false);
   const requestKey = useRef<string | null>(null);
   const submitting = useRef(false);
@@ -58,7 +64,7 @@ export function PublicSuiteExecution({
   const endpoint = `/api/v1/public/case-suites/${encodeURIComponent(view.suiteId)}`;
   const query = new URLSearchParams({ PublisherId: view.publisher.id });
   const requestedAddresses = view.adapterEnabled
-    ? (environmentOverride ?? view.environmentAddresses)
+    ? (view.environment.change?.addresses ?? view.environmentAddresses)
     : [];
   const environmentConflict = view.active.find(
     (batch) =>
@@ -67,8 +73,32 @@ export function PublicSuiteExecution({
       overlappingEnvironmentAddresses(requestedAddresses, batch.environmentAddresses).length > 0,
   );
 
+  async function changeEnvironment(addresses: string[] | null, revision: number) {
+    if (submitting.current || environmentSaving.current) throw new Error("请等待当前操作完成。");
+    environmentSaving.current = true;
+    setSavingEnvironment(true);
+    try {
+      const response = await fetch(`${endpoint}/environment?${query}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ addresses, revision }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) await throwApiErrorResponse(response, "环境 IP 保存失败。");
+      applyEnvironment(publicSuiteEnvironmentStateSchema.parse(await response.json()));
+    } catch (cause) {
+      if (cause instanceof ApiClientError && cause.status === 401) openLogin();
+      await showConcurrentModification(cause);
+      await refresh();
+      throw cause;
+    } finally {
+      environmentSaving.current = false;
+      setSavingEnvironment(false);
+    }
+  }
+
   async function start() {
-    if (submitting.current) return;
+    if (submitting.current || environmentSaving.current) return;
     submitting.current = true;
     setPending(true);
     setError("");
@@ -80,9 +110,7 @@ export function PublicSuiteExecution({
         body: JSON.stringify({
           requestKey: requestKey.current,
           delaySeconds: mode === "delay" ? delay : 0,
-          ...(view.adapterEnabled && environmentOverride
-            ? { environmentAddresses: environmentOverride }
-            : {}),
+          environmentRevision: view.environment.revision,
         }),
       });
       if (!response.ok) await throwApiErrorResponse(response, "执行请求失败，请重试。");
@@ -93,6 +121,7 @@ export function PublicSuiteExecution({
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "执行失败。");
+      await showConcurrentModification(cause);
       if (cause instanceof ApiClientError && cause.status === 401) openLogin();
       // No request was submitted if key generation failed; recovery needs no status fetch.
       if (requestKey.current) await refresh();
@@ -351,6 +380,7 @@ export function PublicSuiteExecution({
                   loading={pending && !stop}
                   disabled={
                     pending ||
+                    savingEnvironment ||
                     !view.executable ||
                     !!environmentConflict ||
                     !!refreshError ||
@@ -367,9 +397,15 @@ export function PublicSuiteExecution({
               <PublicSuiteEnvironment
                 addresses={requestedAddresses}
                 enabled={view.adapterEnabled}
-                disabled={!authenticated || pending || !!refreshError || unconfirmedRequest}
-                overridden={view.adapterEnabled && !!environmentOverride}
-                onChange={setEnvironmentOverride}
+                disabled={
+                  !authenticated ||
+                  pending ||
+                  savingEnvironment ||
+                  !!refreshError ||
+                  unconfirmedRequest
+                }
+                environment={view.environment}
+                onChange={changeEnvironment}
               />
               {environmentConflict ? (
                 <Alert

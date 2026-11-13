@@ -11,6 +11,29 @@ export const executionActorSchema = z
   })
   .strict();
 
+export const publicSuiteEnvironmentChangeSchema = z
+  .object({
+    addresses: publicSuiteEnvironmentAddressesSchema.nullable(),
+    modifiedBy: executionActorSchema,
+    modifiedAt: z.iso.datetime(),
+  })
+  .strict();
+
+export const publicSuiteEnvironmentStateSchema = z
+  .object({
+    schemaVersion: z.literal(1).default(1),
+    revision: z.number().int().nonnegative(),
+    change: publicSuiteEnvironmentChangeSchema.nullable(),
+  })
+  .strict();
+
+export const changePublicSuiteEnvironmentSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    addresses: publicSuiteEnvironmentAddressesSchema.nullable(),
+  })
+  .strict();
+
 export const publicSuiteExecutionContextSchema = z
   .object({
     schemaVersion: z.literal(1).default(1),
@@ -18,6 +41,8 @@ export const publicSuiteExecutionContextSchema = z
     initiator: executionActorSchema,
     requestKey: z.uuid(),
     environmentAddresses: publicSuiteEnvironmentAddressesSchema.optional(),
+    environmentRevision: z.number().int().nonnegative().optional(),
+    environmentChange: publicSuiteEnvironmentChangeSchema.nullable().optional(),
   })
   .strict();
 
@@ -37,6 +62,7 @@ export const startPublicSuiteExecutionSchema = z
     requestKey: z.uuid(),
     delaySeconds: z.number().int().min(0).max(604800).default(0),
     environmentAddresses: publicSuiteEnvironmentAddressesSchema.optional(),
+    environmentRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -83,6 +109,11 @@ export const publicSuiteViewSchema = z.object({
   retryLimit: z.number().int().nonnegative(),
   adapterEnabled: z.boolean().default(false),
   environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses,
+  environment: publicSuiteEnvironmentStateSchema.default({
+    schemaVersion: 1,
+    revision: 0,
+    change: null,
+  }),
   publisher: executionActorSchema,
   executable: z.boolean(),
   unavailableReason: z.string().nullable(),
@@ -100,3 +131,6 @@ export type PublicSuiteExecutionContext = z.input<typeof publicSuiteExecutionCon
 export type StartPublicSuiteExecution = z.input<typeof startPublicSuiteExecutionSchema>;
 export type PublicSuiteBatch = z.infer<typeof publicSuiteBatchSchema>;
 export type PublicSuiteView = z.infer<typeof publicSuiteViewSchema>;
+
+export type PublicSuiteEnvironmentState = z.infer<typeof publicSuiteEnvironmentStateSchema>;
+export type ChangePublicSuiteEnvironment = z.infer<typeof changePublicSuiteEnvironmentSchema>;

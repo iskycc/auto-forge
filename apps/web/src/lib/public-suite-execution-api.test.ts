@@ -9,6 +9,7 @@ const f = vi.hoisted(() => ({
   authorize: vi.fn(),
   summary: vi.fn(),
   start: vi.fn(),
+  changeEnvironment: vi.fn(),
   terminate: vi.fn(),
   changeScheduling: vi.fn(),
   read: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/services", () => ({
     caseSuites: { getSummary: f.summary },
     publicSuiteExecutions: {
       start: f.start,
+      changeEnvironment: f.changeEnvironment,
       terminate: f.terminate,
       changeScheduling: f.changeScheduling,
       read: f.read,
@@ -45,6 +47,7 @@ vi.mock("@/lib/services", () => ({
   }),
 }));
 
+import { PUT as changeEnvironment } from "../app/api/v1/public/case-suites/[suiteId]/environment/route";
 import { POST as start } from "../app/api/v1/public/case-suites/[suiteId]/executions/route";
 import { POST as terminate } from "../app/api/v1/public/case-suites/[suiteId]/executions/[batchId]/terminate/route";
 import { POST as changeScheduling } from "../app/api/v1/public/case-suites/[suiteId]/executions/[batchId]/scheduling/route";
@@ -83,6 +86,52 @@ beforeEach(() => {
 });
 
 describe("public task execution HTTP boundary", () => {
+  it("records the logged-in IP modifier through the public grant without project permissions", async () => {
+    f.changeEnvironment.mockResolvedValue({ schemaVersion: 1, revision: 1, change: null });
+    const response = await changeEnvironment(
+      request("PUT", { revision: 0, addresses: ["10.0.0.21"] }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(f.changeEnvironment).toHaveBeenCalledWith(
+      "suite",
+      "owner",
+      { revision: 0, addresses: ["10.0.0.21"] },
+      actor,
+    );
+    expect(f.audit).toHaveBeenCalledWith(
+      identity,
+      expect.objectContaining({ action: "public_suite.environment.change", resourceId: "suite" }),
+    );
+    expect(f.authorize).not.toHaveBeenCalled();
+    expect(f.scope).not.toHaveBeenCalled();
+  });
+  it("rejects anonymous, service-token, invalid and stale IP changes", async () => {
+    f.authenticate.mockRejectedValueOnce(new DomainError("AUTH_REQUIRED", "请登录"));
+    expect(
+      (await changeEnvironment(request("PUT", { revision: 0, addresses: null }), context)).status,
+    ).toBe(401);
+    f.authenticate.mockResolvedValueOnce({ ...identity, sessionId: "api-token:service" });
+    expect(
+      (await changeEnvironment(request("PUT", { revision: 0, addresses: null }), context)).status,
+    ).toBe(401);
+    expect(
+      (await changeEnvironment(request("PUT", { revision: 0, addresses: [], actor }), context))
+        .status,
+    ).toBe(400);
+    expect(f.changeEnvironment).not.toHaveBeenCalled();
+    f.changeEnvironment.mockRejectedValueOnce(
+      new DomainError("PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT", "环境已更新"),
+    );
+    expect(
+      (await changeEnvironment(request("PUT", { revision: 0, addresses: null }), context)).status,
+    ).toBe(409);
+    f.allow.mockResolvedValue(false);
+    expect(
+      (await changeEnvironment(request("PUT", { revision: 0, addresses: null }), context)).status,
+    ).toBe(429);
+  });
   it("keeps link ownership on actual users rather than service accounts", async () => {
     f.authenticate.mockResolvedValue({ ...identity, sessionId: "api-token:service" });
     expect((await publish(request(), context)).status).toBe(401);

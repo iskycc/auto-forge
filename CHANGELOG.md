@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.14 - 2026-11-13
+
+### Added
+
+- 任务公开执行链接持久共享最新环境 IP，所有访问者可查看修改人和时间，刷新或跨 Full Web 实例访问仍保留；恢复任务默认也会记录操作人。立即执行和倒计时执行保存实际地址及修改人快照，不改变任务默认配置或已创建批次。
+- 共享 IP 编辑与执行创建增加修订号校验，并发修改提示重新加载且保留草稿，避免覆盖他人修改或执行旧配置；任务锁定仍不限制临时环境修改和公开执行。
+
+### Fixed
+
+- 工作台“开始执行”弹窗及地址编辑统一使用“本次执行环境 IP”，任务列表、详情等准备入口继续使用“下次”，避免执行范围歧义。
+- 执行节点页没有已删除 Agent 连接记录时隐藏整个提醒区域；有记录、翻页或读取失败时保留原有查看与处理能力。
+- 任务关闭 Adapter 后不再套用此前保存的公开链接共享 IP。
+
+### Compatibility
+
+- 从 v1.22.13 升级新增 SQLite `0101_public_suite_environment.sql`、PostgreSQL `0100_public_suite_environment.sql`，在公开执行链接中保存最新环境修改记录及修订号；旧链接升级后从任务默认 IP 开始。升级前备份主库，Full 同步升级 Web／Worker。迁移失败可事务回滚并重试，回退旧服务应恢复升级前备份。
+- 不新增生产依赖、平台配置或 Runner 协议，无需重装 Agent。公开链接设置与任务默认策略分离；其他公开链接、后台任务及 Jenkins 不读取该链接的共享值。历史 API 显式传入单次环境覆盖的行为继续兼容。
+
+### Verification
+
+- 184 项定向测试通过，包含真实 SQLite／PostgreSQL、同时编辑、修改与执行创建竞争、幂等重放、身份归属、接口鉴权及迁移升级／失败回滚；Prettier、ESLint、`pnpm typecheck`、Web／Worker 生产构建通过。
+- Lite／Full 各三个 Playwright 场景通过；Full 使用双 Web、Worker 和真实 PostgreSQL／Redis／NATS／MinIO，验证跨实例共享、甲修改乙执行、实际领取地址、锁定任务、刷新恢复和空提醒隐藏。实际审查 1024×768、1536×960 深浅色截图，无新增溢出或错位，详见[任务执行环境验证](./docs/architecture/task-execution-environment.md)。
+- 按用户要求走最快路径，仅启动 Release，复用上述定向验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查。未重跑十万级压力、真实业务 JVM／Jenkins／SSH 节点或完整离线发布验收。
+
 ## 1.22.13 - 2026-11-12
 
 ### Fixed

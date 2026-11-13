@@ -306,13 +306,22 @@ export class SqliteRunBatchRepository
             });
           const link = this.handle.client
             .prepare(
-              "SELECT 1 FROM public_suite_execution_links l JOIN users u ON u.id=l.publisher_id WHERE l.suite_id=? AND l.publisher_id=? AND l.revoked_at IS NULL AND u.status='active'",
+              "SELECT l.environment_revision FROM public_suite_execution_links l JOIN users u ON u.id=l.publisher_id WHERE l.suite_id=? AND l.publisher_id=? AND l.revoked_at IS NULL AND u.status='active'",
             )
             .get(record.suiteId, context.publisher.id);
           if (!link)
             throw new DomainError(
               "PUBLIC_SUITE_LINK_NOT_FOUND",
               "公开执行链接已撤销或分享人已停用。",
+            );
+          if (
+            context.environmentRevision !== undefined &&
+            context.environmentRevision !==
+              (link as { environment_revision: number }).environment_revision
+          )
+            throw new DomainError(
+              "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT",
+              "环境 IP 已被其他人修改，请刷新后确认最新 IP 再执行。",
             );
           let afterId = "";
           for (;;) {

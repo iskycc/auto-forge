@@ -50,6 +50,8 @@ export function DeletedRunnerContacts({
       setPending(false);
     }
   }
+  if (page.items.length === 0 && history.length === 0 && !error) return null;
+
   return (
     <Card
       as="section"

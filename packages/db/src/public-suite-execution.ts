@@ -4,6 +4,9 @@ import { storedActor } from "./run-batch-actors";
 import type { PublicSuiteExecutionRepository } from "@autoforge/application";
 import {
   executionActorSchema,
+  publicSuiteEnvironmentStateSchema,
+  type ChangePublicSuiteEnvironment,
+  type ExecutionActor,
   publicExecutionPath,
   publicSuiteBatchSchema,
   publicSuiteExecutionContextSchema,
@@ -35,6 +38,42 @@ class PublicSuiteExecutionQueries implements PublicSuiteExecutionRepository {
     private readonly environmentProjection: string,
     private readonly writeLink: WriteLink,
   ) {}
+
+  async environment(suiteId: string, publisherId: string) {
+    const [row] = await this.query(
+      `SELECT l.environment_revision,l.environment_state_json FROM public_suite_execution_links l JOIN users u ON u.id=l.publisher_id WHERE l.suite_id=${this.parameter(1)} AND l.publisher_id=${this.parameter(2)} AND l.revoked_at IS NULL AND u.status='active'`,
+      [suiteId, publisherId],
+    );
+    if (!row) return null;
+    return publicSuiteEnvironmentStateSchema.parse(
+      row.environment_state_json
+        ? JSON.parse(String(row.environment_state_json))
+        : { revision: Number(row.environment_revision), change: null },
+    );
+  }
+
+  async changeEnvironment(
+    suiteId: string,
+    publisherId: string,
+    input: ChangePublicSuiteEnvironment,
+    actor: ExecutionActor,
+    modifiedAt: string,
+  ) {
+    const state = publicSuiteEnvironmentStateSchema.parse({
+      revision: input.revision + 1,
+      change: { addresses: input.addresses, modifiedBy: actor, modifiedAt },
+    });
+    const rows = await this.query(
+      `UPDATE public_suite_execution_links SET environment_revision=environment_revision+1,environment_state_json=${this.parameter(1)} WHERE suite_id=${this.parameter(2)} AND publisher_id=${this.parameter(3)} AND environment_revision=${this.parameter(4)} AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM users WHERE id=publisher_id AND status='active') AND EXISTS (SELECT 1 FROM case_suites WHERE id=suite_id AND status='active' AND enabled) RETURNING environment_revision`,
+      [JSON.stringify(state), suiteId, publisherId, String(input.revision)],
+    );
+    if (!rows.length)
+      throw new DomainError(
+        "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT",
+        "环境 IP 已更新或任务已不可用，请刷新后确认最新配置再修改。",
+      );
+    return state;
+  }
 
   async publish(suiteId: string, publisherId: string, createdAt: string) {
     const rows = await this.writeLink(

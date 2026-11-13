@@ -1,9 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { startPublicSuiteExecutionSchema } from "./public-suite-execution";
+import {
+  changePublicSuiteEnvironmentSchema,
+  publicSuiteViewSchema,
+  startPublicSuiteExecutionSchema,
+} from "./public-suite-execution";
 
 const requestKey = "019aa000-0000-7000-8000-000000000001";
 
 describe("public task execution environment", () => {
+  it("validates shared edits without accepting client-supplied attribution", () => {
+    expect(changePublicSuiteEnvironmentSchema.parse({ revision: 0, addresses: null })).toEqual({
+      revision: 0,
+      addresses: null,
+    });
+    for (const input of [
+      { revision: -1, addresses: null },
+      { revision: 0, addresses: [] },
+      { revision: 0, addresses: ["bad"] },
+      { revision: 0, addresses: null, modifiedBy: "forged" },
+    ])
+      expect(changePublicSuiteEnvironmentSchema.safeParse(input).success).toBe(false);
+    expect(publicSuiteViewSchema.shape.environment.parse(undefined)).toMatchObject({
+      revision: 0,
+      change: null,
+    });
+  });
   it("keeps saved task defaults when no override is provided", () => {
     expect(startPublicSuiteExecutionSchema.parse({ requestKey })).toEqual({
       requestKey,

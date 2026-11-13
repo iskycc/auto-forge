@@ -29,6 +29,12 @@ export function ExecutionActors({
             <span className="text-muted-foreground">执行拉起人：</span>
             {publicExecution.initiator.username}
           </span>
+          {publicExecution.environmentChange ? (
+            <span className="[overflow-wrap:anywhere]">
+              <span className="text-muted-foreground">环境 IP 修改人：</span>
+              {publicExecution.environmentChange.modifiedBy.username}
+            </span>
+          ) : null}
         </>
       ) : null}
       {terminatedBy ? (

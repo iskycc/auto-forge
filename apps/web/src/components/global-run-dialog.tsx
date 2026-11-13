@@ -643,6 +643,7 @@ export function GlobalRunDialog({
                           </div>
                         </dl>
                         <SuiteExecutionEnvironment
+                          timing="current"
                           suite={selectedSuite}
                           userId={userId}
                           canExecute={!submitting}

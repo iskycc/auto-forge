@@ -159,7 +159,11 @@ function domainErrorStatus(code: string): number {
   )
     return 409;
   if (code === "RUN_BATCH_NOT_ACTIVE") return 409;
-  if (code === "PUBLIC_SUITE_EXECUTION_ACTIVE") return 409;
+  if (
+    code === "PUBLIC_SUITE_EXECUTION_ACTIVE" ||
+    code === "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT"
+  )
+    return 409;
   if (code === "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID") return 422;
   if (code === "EXPORT_DATA_INVALID" || code === "DDT_ASSOCIATION_IMPORT_INVALID") return 422;
   if (code === "DDT_ASSOCIATION_IMPORT_INTERRUPTED") return 409;

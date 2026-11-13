@@ -26,6 +26,104 @@ for (const adapter of ["sqlite", "postgres"] as const)
   describe.skipIf(adapter === "postgres" && !postgresUrl)(
     `${adapter} public task execution`,
     () => {
+      it("persists one latest per-link environment record and rejects stale edits or execution snapshots", async () => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          expect(await h.links.environment(h.suite.id, h.publisher.id)).toMatchObject({
+            revision: 0,
+            change: null,
+          });
+          const addresses = ["10.0.0.21", "2001:db8::21"];
+          const results = await Promise.allSettled(
+            [h.publisher, h.visitor].map((actor) =>
+              h.links.changeEnvironment(
+                h.suite.id,
+                h.publisher.id,
+                { revision: 0, addresses },
+                actor,
+                now,
+              ),
+            ),
+          );
+          expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+          const state = await h.links.environment(h.suite.id, h.publisher.id);
+          expect(state).toMatchObject({ revision: 1, change: { addresses, modifiedAt: now } });
+          for (const result of results)
+            if (result.status === "rejected")
+              expect(result.reason).toMatchObject({
+                code: "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT",
+              });
+          const stale = h.record();
+          stale.publicExecution!.environmentRevision = 0;
+          await expect(h.batches.create(stale)).rejects.toMatchObject({
+            code: "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT",
+          });
+          const current = h.record();
+          current.publicExecution!.environmentRevision = 1;
+          current.publicExecution!.environmentChange = state!.change;
+          current.adapterRuntimeSnapshot!.environmentAddresses = addresses;
+          expect(await h.batches.create(current)).toMatchObject({
+            environmentAddresses: addresses,
+            publicExecution: { environmentChange: state!.change },
+          });
+          await h.links.publish(h.suite.id, h.visitor.id, now);
+          expect(await h.links.environment(h.suite.id, h.visitor.id)).toMatchObject({
+            revision: 0,
+            change: null,
+          });
+          expect(
+            (await h.suites.getSummary(h.suite.id))!.policy.adapter.environmentAddresses,
+          ).toEqual([]);
+          expect(
+            await h.links.changeEnvironment(
+              h.suite.id,
+              h.publisher.id,
+              { revision: 1, addresses: null },
+              h.visitor,
+              now,
+            ),
+          ).toMatchObject({ revision: 2, change: { addresses: null, modifiedBy: h.visitor } });
+          await h.links.revoke(h.suite.id, h.publisher.id, now);
+          await expect(
+            h.links.changeEnvironment(
+              h.suite.id,
+              h.publisher.id,
+              { revision: 2, addresses },
+              h.visitor,
+              now,
+            ),
+          ).rejects.toMatchObject({ code: "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT" });
+        });
+      });
+      it("orders shared IP changes against simultaneous execution creation", async () => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          const record = h.record();
+          record.publicExecution!.environmentRevision = 0;
+          record.adapterRuntimeSnapshot!.environmentAddresses = ["10.0.0.1"];
+          const [created, changed] = await Promise.allSettled([
+            h.batches.create(record),
+            h.links.changeEnvironment(
+              h.suite.id,
+              h.publisher.id,
+              { revision: 0, addresses: ["10.0.0.2"] },
+              h.visitor,
+              now,
+            ),
+          ]);
+          expect(changed.status).toBe("fulfilled");
+          if (created.status === "fulfilled")
+            expect(created.value.environmentAddresses).toEqual(["10.0.0.1"]);
+          else
+            expect(created.reason).toMatchObject({
+              code: "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT",
+            });
+          expect(await h.links.environment(h.suite.id, h.publisher.id)).toMatchObject({
+            revision: 1,
+            change: { addresses: ["10.0.0.2"] },
+          });
+        });
+      });
       it("serializes public link maintenance with the task lock and leaves existing read grants intact", async () => {
         await withHarness(adapter, async (h) => {
           await h.links.publish(h.suite.id, h.visitor.id, now);

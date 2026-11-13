@@ -1,5 +1,8 @@
 import {
   publicSuiteExecutionPath,
+  changePublicSuiteEnvironmentSchema,
+  type PublicSuiteEnvironmentState,
+  type ChangePublicSuiteEnvironment,
   publicSuiteViewSchema,
   publicSuiteExecutionResultSchema,
   startPublicSuiteExecutionSchema,
@@ -20,6 +23,14 @@ import type { ExecutionControlService } from "./control-executions";
 import type { PublicExecutionAccessService } from "./public-execution-access";
 
 export interface PublicSuiteExecutionRepository {
+  environment(suiteId: string, publisherId: string): Promise<PublicSuiteEnvironmentState | null>;
+  changeEnvironment(
+    suiteId: string,
+    publisherId: string,
+    input: ChangePublicSuiteEnvironment,
+    actor: ExecutionActor,
+    modifiedAt: string,
+  ): Promise<PublicSuiteEnvironmentState>;
   publish(suiteId: string, publisherId: string, createdAt: string): Promise<void>;
   revoke(suiteId: string, publisherId: string, revokedAt: string): Promise<void>;
   publisher(suiteId: string, publisherId: string): Promise<ExecutionActor | null>;
@@ -67,10 +78,11 @@ export class PublicSuiteExecutionService {
   async read(suiteId: string, publisherId: string): Promise<PublicSuiteView> {
     const publisher = await this.requirePublisher(suiteId, publisherId);
     const suite = await this.requireSuite(suiteId);
-    const [projects, structure, executions] = await Promise.all([
+    const [projects, structure, executions, environment] = await Promise.all([
       this.projects.listProjects([suite.projectId]),
       this.structures.list(suite.projectId),
       this.links.executions(suiteId),
+      this.requireEnvironment(suiteId, publisherId),
     ]);
     const unavailableReason =
       !suite.enabled || suite.status !== "active"
@@ -94,11 +106,42 @@ export class PublicSuiteExecutionService {
         ? suite.policy.adapter.environmentAddresses
         : [],
       publisher,
+      environment,
       executable: !unavailableReason,
       unavailableReason,
       ...executions,
       generatedAt: this.clock.now().toISOString(),
     });
+  }
+
+  async changeEnvironment(
+    suiteId: string,
+    publisherId: string,
+    input: ChangePublicSuiteEnvironment,
+    actor: ExecutionActor,
+  ): Promise<PublicSuiteEnvironmentState> {
+    const validated = changePublicSuiteEnvironmentSchema.parse(input);
+    await this.requirePublisher(suiteId, publisherId);
+    const suite = await this.requireSuite(suiteId);
+    if (!suite.enabled || suite.status !== "active")
+      throw new DomainError("CASE_SUITE_DISABLED", "任务已停用或归档，不能修改执行环境。");
+    if (!suite.policy.adapter.enabled)
+      throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "任务未启用 Adapter，不能修改环境 IP。");
+    // A link grants execution configuration only; the task's lock and default policy are untouched.
+    return this.links.changeEnvironment(
+      suiteId,
+      publisherId,
+      validated,
+      actor,
+      this.clock.now().toISOString(),
+    );
+  }
+
+  private async requireEnvironment(suiteId: string, publisherId: string) {
+    const environment = await this.links.environment(suiteId, publisherId);
+    if (!environment)
+      throw new DomainError("PUBLIC_SUITE_LINK_NOT_FOUND", "公开执行链接已撤销或暂不可用。");
+    return environment;
   }
 
   async start(
@@ -110,6 +153,19 @@ export class PublicSuiteExecutionService {
     const validated = startPublicSuiteExecutionSchema.parse(input);
     const publisher = await this.requirePublisher(suiteId, publisherId);
     const replay = await this.links.replay(suiteId, publisherId, validated.requestKey);
+    const environment = replay ? null : await this.requireEnvironment(suiteId, publisherId);
+    if (
+      environment &&
+      validated.environmentRevision !== undefined &&
+      environment.revision !== validated.environmentRevision
+    )
+      throw new DomainError(
+        "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT",
+        "环境 IP 已被其他人修改，请刷新后确认最新 IP 再执行。",
+      );
+    const useShared = validated.environmentAddresses === undefined;
+    const sharedEnabled =
+      useShared && !replay ? (await this.requireSuite(suiteId)).policy.adapter.enabled : false;
     const batch = replay
       ? await this.runs.getSummary(replay)
       : await this.runs.create(
@@ -119,6 +175,15 @@ export class PublicSuiteExecutionService {
             publisher,
             initiator: actor,
             requestKey: validated.requestKey,
+            ...(useShared && environment
+              ? {
+                  environmentRevision: environment.revision,
+                  environmentChange: sharedEnabled ? environment.change : null,
+                  ...(sharedEnabled && environment.change?.addresses
+                    ? { environmentAddresses: environment.change.addresses }
+                    : {}),
+                }
+              : {}),
             ...(validated.environmentAddresses
               ? { environmentAddresses: validated.environmentAddresses }
               : {}),

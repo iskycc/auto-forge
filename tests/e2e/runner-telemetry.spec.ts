@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { ensureAdministrator, uniqueName } from "./support/session";
+import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 import { insertRunnerPaginationFixture } from "./support/runner-pagination-fixture";
 import { DatabaseSync } from "node:sqlite";
@@ -761,6 +761,24 @@ test("deleted Agents remain rejected, appear in a bounded cleanup list and allow
   browser,
 }, testInfo) => {
   await ensureAdministrator(page);
+  const initialContacts = await browserJson<{ items: unknown[] }>(
+    page,
+    "/api/v1/runners/rejected-contacts?limit=1",
+  );
+  expect(initialContacts.status).toBe(200);
+  if (initialContacts.body.items.length === 0) {
+    await page.goto("/runners");
+    await expect(
+      page.getByRole("region", { name: "已删除 Agent 连接提醒", exact: true }),
+    ).toHaveCount(0);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`no-deleted-agent-contacts-${width}.png`),
+      });
+    }
+  }
   const name = uniqueName("已删除但仍尝试上线的执行节点长名称验证");
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
@@ -782,7 +800,6 @@ test("deleted Agents remain rejected, appear in a bounded cleanup list and allow
     runnerId: string;
     credential: string;
   };
-  const { browserJson } = await import("./support/session");
   expect(
     (await browserJson(page, `/api/v1/runners/${runnerId}/deregister`, { method: "POST" })).status,
   ).toBe(200);

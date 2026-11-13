@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { publicSuiteViewSchema, type PublicSuiteView } from "@autoforge/contracts";
+import {
+  publicSuiteViewSchema,
+  type PublicSuiteView,
+  type PublicSuiteEnvironmentState,
+} from "@autoforge/contracts";
 import { throwApiErrorResponse } from "@/lib/client-api";
 
 export function usePublicSuite(initial: PublicSuiteView) {
@@ -24,7 +28,12 @@ export function usePublicSuite(initial: PublicSuiteView) {
         if (!response.ok) await throwApiErrorResponse(response, "任务状态刷新失败。");
         const next = publicSuiteViewSchema.parse(await response.json());
         if (!lifetime.current?.signal.aborted) {
-          setView(next);
+          // A poll started before a save must not restore an older shared IP selection.
+          setView((current) =>
+            next.environment.revision < current.environment.revision
+              ? { ...next, environment: current.environment }
+              : next,
+          );
           setError("");
         }
       } catch (cause) {
@@ -57,5 +66,10 @@ export function usePublicSuite(initial: PublicSuiteView) {
       document.removeEventListener("visibilitychange", visible);
     };
   }, [refresh]);
-  return { view, error, refresh };
+  const applyEnvironment = useCallback((environment: PublicSuiteEnvironmentState) => {
+    setView((current) =>
+      environment.revision >= current.environment.revision ? { ...current, environment } : current,
+    );
+  }, []);
+  return { view, error, refresh, applyEnvironment };
 }

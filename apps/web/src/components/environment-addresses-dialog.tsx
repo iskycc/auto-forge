@@ -35,7 +35,7 @@ export function EnvironmentAddressesDialog({
   title?: string;
   confirmLabel?: string;
   onClose: () => void;
-  onSave: (addresses: string[]) => void;
+  onSave: (addresses: string[]) => void | Promise<void>;
 }) {
   const nextRowId = useRef(addresses.length || 1);
   const [rows, setRows] = useState(() =>
@@ -43,7 +43,11 @@ export function EnvironmentAddressesDialog({
   );
   const [error, setError] = useState("");
 
-  function save() {
+  const [saving, setSaving] = useState(false);
+  const busy = disabled || saving;
+
+  async function save() {
+    if (busy) return;
     const values = rows.map((row) => row.value.trim());
     const schema =
       validation === "ip"
@@ -58,7 +62,15 @@ export function EnvironmentAddressesDialog({
       );
       return;
     }
-    onSave(parsed.data);
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(parsed.data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "保存失败，请重试。");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -68,13 +80,13 @@ export function EnvironmentAddressesDialog({
       description={description}
       className="w-[min(560px,calc(100dvw-3rem))]"
       onClose={onClose}
-      closeDisabled={disabled}
+      closeDisabled={busy}
       footer={
         <>
-          <Button type="button" variant="secondary" disabled={disabled} onClick={onClose}>
+          <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
             取消
           </Button>
-          <Button type="button" disabled={disabled} onClick={save}>
+          <Button type="button" disabled={busy} onClick={() => void save()}>
             {confirmLabel}
           </Button>
         </>
@@ -100,13 +112,13 @@ export function EnvironmentAddressesDialog({
               <Input
                 aria-label={`${label} ${index + 1}`}
                 value={row.value}
-                disabled={disabled}
+                disabled={busy}
                 maxLength={validation === "ip" ? 45 : 2048}
                 placeholder="例如：10.0.0.21 或 2001:db8::1"
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    save();
+                    void save();
                   }
                 }}
                 onChange={(event) => {
@@ -124,7 +136,7 @@ export function EnvironmentAddressesDialog({
                 type="button"
                 variant="ghost"
                 aria-label={`删除${label} ${index + 1}`}
-                disabled={disabled || rows.length === 1}
+                disabled={busy || rows.length === 1}
                 onClick={() => {
                   setRows((current) => current.filter((candidate) => candidate.id !== row.id));
                   setError("");
@@ -138,7 +150,7 @@ export function EnvironmentAddressesDialog({
         <Button
           type="button"
           variant="secondary"
-          disabled={disabled || rows.length >= 128}
+          disabled={busy || rows.length >= 128}
           onClick={() => {
             setRows((current) => [...current, { id: nextRowId.current++, value: "" }]);
             setError("");

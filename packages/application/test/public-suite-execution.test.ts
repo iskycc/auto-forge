@@ -27,6 +27,8 @@ const suite: CaseSuite = {
 
 function fixture() {
   const links = {
+    environment: vi.fn().mockResolvedValue({ revision: 0, change: null }),
+    changeEnvironment: vi.fn(),
     publish: vi.fn(),
     revoke: vi.fn(),
     publisher: vi.fn().mockResolvedValue(publisher),
@@ -62,6 +64,108 @@ describe("public task execution", () => {
   beforeEach(() => {
     f = fixture();
   });
+  it("shares the latest IP and modifier between visitors without changing a locked task", async () => {
+    const change = { addresses: ["10.0.0.21"], modifiedBy: actor, modifiedAt: now };
+    const environment = { revision: 1, change };
+    f.getSummary.mockResolvedValue({
+      ...suite,
+      lockedBy: publisher.id,
+      policy: {
+        ...suite.policy,
+        adapter: { ...suite.policy.adapter, enabled: true, environmentAddresses: ["10.0.0.11"] },
+      },
+    });
+    f.links.changeEnvironment.mockResolvedValue(environment);
+    await expect(
+      f.service.changeEnvironment(
+        "suite",
+        publisher.id,
+        { revision: 0, addresses: change.addresses },
+        actor,
+      ),
+    ).resolves.toEqual(environment);
+    expect(f.links.changeEnvironment).toHaveBeenCalledWith(
+      "suite",
+      publisher.id,
+      { revision: 0, addresses: change.addresses },
+      actor,
+      now,
+    );
+    f.links.environment.mockResolvedValue(environment);
+    expect(await f.service.read("suite", publisher.id)).toMatchObject({
+      environment,
+      environmentAddresses: ["10.0.0.11"],
+    });
+    await f.service.start(
+      "suite",
+      publisher.id,
+      { requestKey: key, environmentRevision: 1 },
+      publisher,
+    );
+    expect(f.runs.create).toHaveBeenLastCalledWith(
+      { suiteId: "suite", delaySeconds: 0 },
+      { username: publisher.username, source: publisher.source },
+      {
+        publisher,
+        initiator: publisher,
+        requestKey: key,
+        environmentAddresses: change.addresses,
+        environmentRevision: 1,
+        environmentChange: change,
+      },
+    );
+    await expect(
+      f.service.start("suite", publisher.id, { requestKey: key, environmentRevision: 0 }, actor),
+    ).rejects.toMatchObject({ code: "PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT" });
+    expect(f.runs.create).toHaveBeenCalledTimes(1);
+    expect(suite.policy.adapter.environmentAddresses).toEqual([]);
+  });
+  it("does not apply a previous shared override after the task disables Adapter", async () => {
+    f.links.environment.mockResolvedValue({
+      revision: 1,
+      change: { addresses: ["10.0.0.21"], modifiedBy: actor, modifiedAt: now },
+    });
+    await f.service.start(
+      "suite",
+      publisher.id,
+      { requestKey: key, environmentRevision: 1 },
+      actor,
+    );
+    expect(f.runs.create.mock.calls[0]?.[2]).toMatchObject({
+      environmentRevision: 1,
+      environmentChange: null,
+    });
+    expect(f.runs.create.mock.calls[0]?.[2]).not.toHaveProperty("environmentAddresses");
+  });
+  it("replays an accepted request even when the shared environment changed afterwards", async () => {
+    f.links.replay.mockResolvedValue("batch");
+    await f.service.start(
+      "suite",
+      publisher.id,
+      { requestKey: key, environmentRevision: 0 },
+      actor,
+    );
+    expect(f.runs.getSummary).toHaveBeenCalledWith("batch");
+    expect(f.links.environment).not.toHaveBeenCalled();
+  });
+  it.each([
+    { enabled: false },
+    { status: "archived" },
+    { policy: { ...suite.policy, adapter: { ...suite.policy.adapter, enabled: false } } },
+  ])("rejects edits when task execution is unavailable: %j", async (override) => {
+    f.getSummary.mockResolvedValue({ ...suite, ...override });
+    await expect(
+      f.service.changeEnvironment(
+        "suite",
+        publisher.id,
+        { revision: 0, addresses: ["10.0.0.21"] },
+        actor,
+      ),
+    ).rejects.toMatchObject({
+      code: expect.stringMatching(/CASE_SUITE_DISABLED|RUN_BATCH_PREFLIGHT_FAILED/),
+    });
+    expect(f.links.changeEnvironment).not.toHaveBeenCalled();
+  });
   it("publishes and revokes a per-publisher business link without changing task configuration", async () => {
     await expect(f.service.publish("suite", "maintainer")).resolves.toBe(
       "/RunTask?SuiteId=suite&PublisherId=maintainer",
@@ -94,7 +198,13 @@ describe("public task execution", () => {
     expect(f.runs.create).toHaveBeenCalledWith(
       { suiteId: "suite", delaySeconds: 60 },
       { username: actor.username, source: "local" },
-      { publisher, initiator: actor, requestKey: key },
+      {
+        publisher,
+        initiator: actor,
+        requestKey: key,
+        environmentRevision: 0,
+        environmentChange: null,
+      },
     );
   });
   it("replays the same request even after the execution ended", async () => {

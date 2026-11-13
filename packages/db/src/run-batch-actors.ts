@@ -13,7 +13,13 @@ export function runBatchActors(row: {
     : undefined;
   return {
     ...(context
-      ? { publicExecution: { publisher: context.publisher, initiator: context.initiator } }
+      ? {
+          publicExecution: {
+            publisher: context.publisher,
+            initiator: context.initiator,
+            ...(context.environmentChange ? { environmentChange: context.environmentChange } : {}),
+          },
+        }
       : {}),
     ...(row.terminatedByJson ? { terminatedBy: storedActor(row.terminatedByJson) } : {}),
   };
