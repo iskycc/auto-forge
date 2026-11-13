@@ -88,6 +88,7 @@ type AttemptControlRow = {
   status: RunAttemptStatus;
   run_status: ExecutionRunStatus;
   retry_limit: number;
+  policy_json: string | null;
   retry_mode: "immediate" | "round";
   queue_timeout_ms: number;
   batch_id: string;
@@ -347,7 +348,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
             response: {
               ...storedResponse,
               disposition: "duplicate" as const,
-              ...(liveBatch ? { batchClosed: isTerminalBatchStatus(liveBatch.status) } : {}),
+              ...(liveBatch
+                ? {
+                    batchClosed: isTerminalBatchStatus(liveBatch.status),
+                    ...(isTerminalBatchStatus(liveBatch.status) ? { retryScheduled: false } : {}),
+                  }
+                : {}),
             },
           };
         }
@@ -377,7 +383,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           const decision = outcomeAfterCompletion({
             outcome: effectiveResult.status,
             attemptNumber: control.attempt_number,
-            retryLimit: control.retry_limit,
+            retryLimit: Number(control.retry_limit),
+            unlimitedRetries: JSON.parse(control.policy_json ?? "{}")?.unlimitedRetries === true,
             cancellationRequested: control.run_cancel_requested_at !== null,
             retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
             runnerFailuresBefore: failureCounts.runner,
@@ -413,6 +420,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           );
           // 与 PostgreSQL 适配器同形：提交后探测是否存在可调度 run，供路由层
           // 短路补调度（SQLite 单进程内该探针成本可忽略）。
+          if (response.batchClosed) response.retryScheduled = false;
           response.hasSchedulableRuns = this.hasSchedulableRuns(control.batch_id);
           // 调度事件与完成写入同事务提交，与 PostgreSQL 适配器保持同形。
           if (completionEvents && assignment) {
@@ -1319,7 +1327,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     const decision = outcomeAfterCompletion({
       outcome: "timed_out",
       attemptNumber: control.attempt_number,
-      retryLimit: control.retry_limit,
+      retryLimit: Number(control.retry_limit),
+      unlimitedRetries: JSON.parse(control.policy_json ?? "{}")?.unlimitedRetries === true,
       cancellationRequested: control.run_cancel_requested_at !== null,
       retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
       runnerFailuresBefore: failureCounts.runner,
@@ -1631,7 +1640,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
            a.attempt_number, a.execution_round, a.status AS attempt_status,
            r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
            r.display_name AS run_display_name, r.held_round AS run_held_round,
-           b.id AS batch_id, b.project_id, b.retry_limit, b.retry_mode, b.queue_timeout_ms,
+           b.id AS batch_id, b.project_id, b.retry_limit, b.policy_json, b.retry_mode, b.queue_timeout_ms,
            b.status AS batch_status, b.cancel_requested_at AS batch_termination_requested_at,
            asn.id AS assignment_id, asn.attempt_id AS assignment_attempt_id,
            asn.execution_run_id AS assignment_execution_run_id,
@@ -1676,6 +1685,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           batch_id: string;
           project_id: string;
           retry_limit: number;
+          policy_json: string | null;
           retry_mode: "immediate" | "round";
           queue_timeout_ms: number;
           batch_status: RunBatchStatus;
@@ -1753,7 +1763,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         execution_round: row.execution_round,
         status: row.attempt_status,
         run_status: row.run_status,
-        retry_limit: row.retry_limit,
+        retry_limit: Number(row.retry_limit),
+        policy_json: row.policy_json,
         retry_mode: row.retry_mode,
         queue_timeout_ms: row.queue_timeout_ms,
         batch_id: row.batch_id,
@@ -1797,7 +1808,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare(
         `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.execution_round, a.status,
          r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-         b.retry_limit, b.retry_mode, b.queue_timeout_ms, b.id AS batch_id, b.project_id,
+         b.retry_limit, b.policy_json, b.retry_mode, b.queue_timeout_ms, b.id AS batch_id, b.project_id,
          b.cancel_requested_at AS batch_termination_requested_at
          FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
          JOIN run_batches b ON b.id = r.batch_id WHERE a.id = ?`,

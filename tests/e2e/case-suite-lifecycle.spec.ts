@@ -4258,3 +4258,251 @@ async function setAuthoritativeSource(
   });
   expect(result.status).toBe(200);
 }
+
+test("unlimited retry configuration preserves large counts, stop conditions and explicit recovery round lists", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("unlimited-retries");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const className = `example.UnlimitedRetry${Date.now()}Test`;
+  await importJar(page, project, `${suffix}.jar`, className, ["verify"]);
+  const definition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    className,
+  );
+  const response = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      name: `无限重跑配置 ${suffix}`,
+    },
+  });
+  expect(response.status).toBe(201);
+  const suiteId = response.body.id;
+  const added = await browserJson(page, `/api/v1/case-suites/${suiteId}/cases`, {
+    method: "POST",
+    body: { caseDefinitionIds: [definition.id] },
+  });
+  expect(added.status).toBe(200);
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suiteId, runner.id, {
+    retryMode: "round",
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  await page.goto(`/case-suites/${suiteId}`);
+  await page.getByLabel("重试次数上限").fill("25");
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.getByText("任务配置已保存", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("重试次数上限")).toHaveValue("25");
+  await page.getByRole("checkbox", { name: "无限重跑", exact: true }).check();
+  await expect(page.getByLabel("重试次数上限")).toBeDisabled();
+  await page.getByRole("button", { name: "添加结束条件", exact: true }).click();
+  await expect(page.getByRole("spinbutton", { name: "结束条件 1 轮次", exact: true })).toHaveValue(
+    "10",
+  );
+  await page.getByRole("button", { name: "添加恢复步骤", exact: true }).click();
+  const rounds = page.getByRole("textbox", { name: "恢复步骤 1 暂停轮次", exact: true });
+  await rounds.fill("8*9");
+  expect(
+    await rounds.evaluate((element: HTMLInputElement) => element.validity.patternMismatch),
+  ).toBe(true);
+  await rounds.fill("7,10,13");
+  expect(await rounds.evaluate((element: HTMLInputElement) => element.checkValidity())).toBe(true);
+  const recoveryRow = page.locator("article").filter({ has: rounds });
+  await recoveryRow
+    .getByLabel("恢复步骤 1 Jenkins 任务链接")
+    .fill("https://jenkins.internal/job/reset/");
+  await recoveryRow.getByLabel("恢复步骤 1 API 密钥", { exact: true }).fill("fixture:token");
+  const save = page.waitForResponse(
+    (result) =>
+      result.url().endsWith(`/api/v1/case-suites/${suiteId}`) &&
+      result.request().method() === "PATCH",
+  );
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  expect((await save).status()).toBe(200);
+  await page.reload();
+  await expect(page.getByRole("checkbox", { name: "无限重跑", exact: true })).toBeChecked();
+  await expect(rounds).toHaveValue("7,10,13");
+  const saved = await browserJson<{
+    policy: {
+      retryLimit: number;
+      unlimitedRetries: boolean;
+      retryStopRules: { afterRound: number; value: number }[];
+      roundRecoveryRules: { afterRounds: number[] }[];
+    };
+  }>(page, `/api/v1/case-suites/${suiteId}`);
+  expect(saved.body.policy).toMatchObject({
+    retryLimit: 25,
+    unlimitedRetries: true,
+    retryStopRules: [{ afterRound: 10, value: 1000 }],
+    roundRecoveryRules: [{ afterRounds: [7, 10, 13] }],
+  });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await page
+      .getByText("轮次结束条件", { exact: true })
+      .evaluate((element) =>
+        element.closest(".ant-card")!.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+    await expectUiIntegrity(page);
+    await captureUi(page, `unlimited-retries-${width}`);
+    await recoveryRow.evaluate((element) =>
+      element.scrollIntoView({ block: "center", behavior: "instant" }),
+    );
+    await expectUiIntegrity(page);
+    await captureUi(page, `unlimited-recovery-${width}`);
+  }
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page
+    .getByText("轮次结束条件", { exact: true })
+    .evaluate((element) =>
+      element.closest(".ant-card")!.scrollIntoView({ block: "center", behavior: "instant" }),
+    );
+  await expectUiIntegrity(page);
+  await captureUi(page, "unlimited-retries-dark-1536");
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await page.getByRole("button", { name: "开始执行", exact: true }).click();
+  const executionDialog = page.getByRole("dialog", { name: "开始执行", exact: true });
+  await executionDialog.locator('select[aria-label="执行用例任务"]').selectOption(suiteId);
+  await expect(executionDialog.getByText(/无限重跑.*整轮重跑/)).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `unlimited-execute-dialog-${width}`);
+  }
+  await executionDialog.getByRole("button", { name: "取消", exact: true }).click();
+  const executionRunner = await registerRunner(page, `${suffix}-execution`);
+  await configureTaskExecution(page, suiteId, executionRunner.id);
+  const current = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suiteId}?view=summary`,
+  );
+  const update = await browserJson(page, `/api/v1/case-suites/${suiteId}`, {
+    method: "PATCH",
+    body: {
+      expectedRevision: current.body.revision,
+      policy: {
+        retryStopRules: [
+          { id: "browser-stop", afterRound: 1, metric: "remainingRuns", operator: "gt", value: 0 },
+        ],
+      },
+    },
+  });
+  expect(update.status).toBe(200);
+  await page.reload();
+  const access = page.getByRole("region", { name: "任务公开执行链接", exact: true });
+  await access.getByRole("button", { name: "生成本人的公开执行链接", exact: true }).click();
+  const publicUrl = await access
+    .getByRole("textbox", { name: "公开执行链接", exact: true })
+    .inputValue();
+  await page.goto(publicUrl);
+  await expect(page.getByText("无限", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `unlimited-public-task-${width}`);
+  }
+  const launched = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(`/case-suites/${suiteId}/executions`),
+  );
+  await page.getByRole("button", { name: "执行任务", exact: true }).click();
+  const started = await launched;
+  expect(started.status(), await started.text()).toBe(201);
+  const result = (await started.json()) as { batchId: string; progressPath: string };
+  const claimed = await claimDeletionAttempt(page, executionRunner);
+  await uploadDeletionLog(page, executionRunner, claimed, "conditional completion browser fixture");
+  await completeDeletionAttempt(page, executionRunner, claimed, "failed");
+  const summary = await browserJson<{
+    status: string;
+    policy: { retryCompletion: { round: number } };
+  }>(page, `/api/v1/run-batches/${result.batchId}?view=summary`);
+  expect(summary.body.status).toBe("succeeded");
+  expect(summary.body.policy.retryCompletion.round).toBe(1);
+  const anonymous = await browser.newContext();
+  try {
+    const visitor = await anonymous.newPage();
+    for (const [label, viewer, url] of [
+      ["private", page, `/run-batches/${result.batchId}`],
+      ["public", visitor, new URL(result.progressPath, publicUrl).toString()],
+    ] as const) {
+      await viewer.goto(url);
+      await expect(viewer.getByText(/按条件结束执行/)).toBeVisible({ timeout: 30000 });
+      await expect(viewer.getByText(/第 1 轮 · 无限重跑/)).toBeVisible();
+      await expect(viewer.getByText("0%", { exact: true }).first()).toBeVisible({ timeout: 30000 });
+      for (const width of [1024, 1536]) {
+        await viewer.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await expectUiIntegrity(viewer);
+        await captureUi(viewer, `unlimited-${label}-result-${width}`);
+      }
+    }
+  } finally {
+    await anonymous.close();
+  }
+  const copied = await browserJson<{
+    id: string;
+    caseCount: number;
+    policy: {
+      unlimitedRetries?: boolean;
+      retryStopRules?: { afterRound: number }[];
+      roundRecoveryRules: { afterRounds?: number[] }[];
+    };
+  }>(page, `/api/v1/run-batches/${result.batchId}/failure-case-suite`, {
+    method: "POST",
+    body: { name: `未通过用例复制 ${suffix}` },
+  });
+  expect(copied.status).toBe(201);
+  expect(copied.body.caseCount).toBe(1);
+  expect(copied.body.policy.unlimitedRetries).toBe(true);
+  expect(copied.body.policy.retryStopRules?.[0]?.afterRound).toBe(1);
+  expect(copied.body.policy.roundRecoveryRules[0]?.afterRounds).toEqual([7, 10, 13]);
+  expect(copied.body.policy).not.toHaveProperty("retryCompletion");
+  const logLink = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-attempts/${claimed.assignment.attemptId}/log-share`,
+    { method: "POST", body: {} },
+  );
+  expect(logLink.status).toBe(200);
+  await page.goto(logLink.body.shareUrl);
+  const manualRequest = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/run-attempts/${claimed.assignment.attemptId}/rerun`,
+  );
+  await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+  const manualResponse = await manualRequest;
+  expect(manualResponse.status(), await manualResponse.text()).toBe(201);
+  const manualBatch = (await manualResponse.json()) as { batchId: string };
+  // Diagnostic reruns deliberately hide ordinary batch details; verify their supported log target instead.
+  const hiddenManual = await browserJson(
+    page,
+    `/api/v1/run-batches/${manualBatch.batchId}?view=summary`,
+  );
+  expect(hiddenManual.status).toBe(404);
+  const manualTargetPath = `/api/v1/case-log-reruns/${manualBatch.batchId}/log-target`;
+  const manualClaim = await claimDeletionAttempt(page, executionRunner);
+  await uploadDeletionLog(
+    page,
+    executionRunner,
+    manualClaim,
+    "manual rerun remains a single attempt",
+  );
+  await completeDeletionAttempt(page, executionRunner, manualClaim, "failed");
+  const finishedManual = await browserJson(page, manualTargetPath);
+  expect(finishedManual.status).toBe(200);
+  expect(finishedManual.body).toMatchObject({
+    batchId: manualBatch.batchId,
+    batchStatus: "succeeded",
+    attempt: { id: manualClaim.assignment.attemptId, status: "failed" },
+  });
+});

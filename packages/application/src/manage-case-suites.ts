@@ -559,6 +559,7 @@ export class CaseSuiteService {
       return {
         id: rule.id,
         afterRound: rule.afterRound,
+        ...(rule.afterRounds ? { afterRounds: [...rule.afterRounds] } : {}),
         jenkinsJobUrl: normalizeJenkinsJobUrl(rule.jenkinsJobUrl),
         waitMinutes: rule.waitMinutes,
         apiKeyConfigured: true,
@@ -902,11 +903,24 @@ function assertRetryOrchestrationPolicy(policy: CaseSuiteExecutionPolicy): void 
       "动态重跑并发和 Jenkins 环境恢复只适用于整轮重跑模式。",
     );
   }
-  const maximumExecutionRound = policy.retryLimit + 1;
+  if (policy.retryMode !== "round" && (policy.unlimitedRetries || policy.retryStopRules?.length)) {
+    throw new DomainError("ROUND_RETRY_REQUIRED", "无限重跑和轮次结束条件仅适用于整轮重跑模式。");
+  }
+  const maximumExecutionRound = policy.unlimitedRetries
+    ? Number.POSITIVE_INFINITY
+    : policy.retryLimit + 1;
   if (policy.retryConcurrencyRules.some((rule) => rule.executionRound > maximumExecutionRound)) {
     throw new DomainError("RETRY_RULE_ROUND_INVALID", "动态并发规则的轮次超过了任务最大重跑轮次。");
   }
-  if (policy.roundRecoveryRules.some((rule) => rule.afterRound > policy.retryLimit)) {
+  if (policy.retryStopRules?.some((rule) => rule.afterRound > maximumExecutionRound))
+    throw new DomainError("RETRY_STOP_ROUND_INVALID", "结束条件的轮次超过任务最大执行轮次。");
+  if (
+    policy.roundRecoveryRules.some(
+      (rule) =>
+        !policy.unlimitedRetries &&
+        (rule.afterRounds ?? [rule.afterRound]).some((round) => round > policy.retryLimit),
+    )
+  ) {
     throw new DomainError("RECOVERY_RULE_ROUND_INVALID", "环境恢复边界之后必须存在下一轮重跑。");
   }
 }

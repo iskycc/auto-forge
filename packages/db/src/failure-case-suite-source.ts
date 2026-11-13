@@ -109,6 +109,7 @@ export type FailureCaseSuiteSourceRow = {
 };
 
 export type FailureCaseSuiteRecovery = {
+  credentialRuleId?: string | null;
   ruleId: string;
   afterRound: number;
   jenkinsJobUrl: string;
@@ -128,7 +129,7 @@ export function toFailureCaseSuiteSource(
     kind: row.kind,
     ...(row.description ? { description: row.description } : {}),
     roundRecoveryCredentials: Object.fromEntries(
-      recoveries.map((rule) => [rule.ruleId, rule.apiKeyCiphertext]),
+      recoveries.map((rule) => [rule.credentialRuleId ?? rule.ruleId, rule.apiKeyCiphertext]),
     ),
   };
   if (!row.suitePolicyJson || !row.batchPolicyJson) return source;
@@ -144,6 +145,7 @@ export function toFailureCaseSuiteSource(
   );
   // Scheduling the copied task assigns its own batch identity for automatic analysis.
   delete executionPolicy.aiAnalysisExecutionId;
+  delete executionPolicy.retryCompletion;
   source.policy = mergeCaseSuiteExecutionPolicy(
     mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, {
       ...suitePolicy,
@@ -173,22 +175,40 @@ export function toFailureCaseSuiteSource(
       queueTimeoutMs: row.queueTimeoutMs,
       claimTimeoutMs: row.claimTimeoutMs,
       uploadTimeoutMs: row.uploadTimeoutMs,
-      roundRecoveryRules: recoveries.map(({ ruleId, afterRound, jenkinsJobUrl, waitMinutes }) => ({
-        id: ruleId,
-        afterRound,
-        jenkinsJobUrl,
-        waitMinutes,
-        apiKeyConfigured: true,
-      })),
+      roundRecoveryRules: groupedRecoveryRules(recoveries),
     },
   );
   return source;
 }
 
 export function failureSuiteRecoveryQuery(batchId: string) {
-  return sql`SELECT rule_id AS "ruleId", after_round AS "afterRound",
+  return sql`SELECT rule_id AS "ruleId", credential_rule_id AS "credentialRuleId", after_round AS "afterRound",
     jenkins_job_url AS "jenkinsJobUrl", wait_minutes AS "waitMinutes",
     api_key_ciphertext AS "apiKeyCiphertext"
     FROM run_batch_round_recoveries WHERE batch_id = ${batchId}
     ORDER BY after_round, rule_id`;
+}
+
+function groupedRecoveryRules(
+  recoveries: readonly FailureCaseSuiteRecovery[],
+): import("@autoforge/domain").RoundRecoveryRule[] {
+  const groups = new Map<string, import("@autoforge/domain").RoundRecoveryRule>();
+  for (const recovery of recoveries) {
+    const id = recovery.credentialRuleId ?? recovery.ruleId;
+    const existing = groups.get(id);
+    if (existing)
+      existing.afterRounds = [
+        ...(existing.afterRounds ?? [existing.afterRound]),
+        recovery.afterRound,
+      ];
+    else
+      groups.set(id, {
+        id,
+        afterRound: recovery.afterRound,
+        jenkinsJobUrl: recovery.jenkinsJobUrl,
+        waitMinutes: recovery.waitMinutes,
+        apiKeyConfigured: true,
+      });
+  }
+  return [...groups.values()];
 }

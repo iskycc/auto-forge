@@ -10,6 +10,7 @@ type RecoveryRow = {
   batch_id: string;
   suite_id: string;
   rule_id: string;
+  credential_rule_id: string | null;
   after_round: number;
   next_round: number;
   jenkins_job_url: string;
@@ -321,6 +322,7 @@ function toClaim(row: RecoveryRow): RoundRecoveryClaim {
     batchId: row.batch_id,
     suiteId: row.suite_id,
     ruleId: row.rule_id,
+    ...(row.credential_rule_id ? { credentialRuleId: row.credential_rule_id } : {}),
     afterRound: row.after_round,
     nextRound: row.next_round,
     jenkinsJobUrl: row.jenkins_job_url,

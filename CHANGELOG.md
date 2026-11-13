@@ -4,6 +4,31 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.16 - 2026-11-13
+
+### Added
+
+- 用例任务新增“无限重跑”，支持在指定轮次结束后按剩余未通过用例数、累计通过率或本轮通过率判断结束条件；任一条件命中即正常收尾，保留每个用例最后一次真实结果，并在登录／匿名执行详情显示完成原因。条件边界保留完整统计屏障，不允许下一轮提前补位越过判断。
+- Jenkins 环境恢复支持 `7,10,13` 一次配置多个轮次，每个指定轮次触发一次，共用安全保存的凭据；拒绝表达式、重复、空项、非正整数等错误格式。结束条件优先于同一边界恢复，提前结束时不触发未来恢复。
+
+### Changed
+
+- 取消前端、接口与双数据库的 10 次业务上限，有限重跑次数可按需填写非负整数；动态并发和恢复轮次同步取消原有轮次上限。旧任务仍使用原有次数与方式。
+- 无限重跑仅用于整轮模式，全部通过时自然结束，支持原有暂停／继续和终止；执行节点故障恢复仍有有限预算。无限任务的自动 AI 初析等待批次结束，有限任务继续使用原有末轮渐进初析。
+- 任务复制、以未通过用例创建任务及版本迁移保留新策略与正确的恢复凭据绑定，不继承源批次完成原因；公开日志页的单例诊断重跑保持一次性执行。
+
+### Compatibility
+
+- 从 v1.22.15 升级新增 SQLite `0102_unlimited_retries.sql`、PostgreSQL `0101_unlimited_retries.sql`。SQLite 事务重建批次表移除旧上限，保留历史、外键、索引与快照并校验引用完整性；PostgreSQL 将次数字段扩展为 BIGINT，两个模式的恢复快照均保留原始凭据步骤。迁移失败回滚后可修正重试。
+- 升级前备份主库，Full 同步升级 Web、调度器与全部 Worker，不让旧进程消费无限策略。降级前停止新策略批次并调整配置，恢复说明见[不限次数重跑](./docs/architecture/unlimited-task-retries.md)。不新增生产依赖、平台配置或 Runner 协议，无需重装 Agent。
+
+### Verification
+
+- 493 项相关领域／契约／应用／数据库／Web 测试通过，实际执行 SQLite／PostgreSQL，另补跑 SQLite 多进程迁移检查通过；覆盖超过 10 轮的调度、结束与恢复优先级、50 亿次有限配置存取、双库升级／失败回滚、凭据复制及 AI 时机。
+- Lite 17 个与 Full 7 个 Playwright 场景的完整报告全部通过，另补跑无限任务复制／手动单次重跑加强边界；Full 使用真实 PostgreSQL／NATS／Redis／MinIO、两个 Web 和一个 Worker。原有有限重跑、Jenkins 恢复、暂停／继续、终止与超时恢复、任务生命周期、公开／匿名详情、AI 初析及导出、单例与 501 用例批次日志页重跑均完成复验；本轮无业务回归。外层测试进程状态的说明见[验证记录](./docs/architecture/unlimited-task-retries.md#既有功能-e2e-复验2026-11-13)。
+- 实际查看 1024×768、1536×960 深浅色截图，未发现新增变形、重叠或溢出；全仓格式、受影响 ESLint、应用／数据库／Web／Worker／E2E 类型检查与 Web／Worker 生产构建通过。
+- 按用户要求走最快路径，仅启动 Release，复用上述验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名与资产完整性检查。未进行真实业务 JVM／Jenkins／SSH、生产规模长期压力或完整离线发布验收。
+
 ## 1.22.15 - 2026-11-13
 
 ### Added

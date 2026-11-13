@@ -1,6 +1,8 @@
 "use client";
 import { EnvironmentAddressesField } from "./environment-addresses-dialog";
 import { Checkbox } from "antd";
+import { RetryCompletionEditor } from "./retry-completion-editor";
+import { parseRecoveryRounds, recoveryRounds, type RetryStopRule } from "@autoforge/domain";
 import { Badge } from "@/components/ui/badge";
 
 import { LoadingIcon } from "@/components/ui/loading-icon";
@@ -114,6 +116,10 @@ export function CaseSuiteEditor({
     suite.policy.runnerGroupId ? "group" : "runners",
   );
   const [retryMode, setRetryMode] = useState(suite.policy.retryMode);
+  const [unlimitedRetries, setUnlimitedRetries] = useState(suite.policy.unlimitedRetries ?? false);
+  const [retryStopRules, setRetryStopRules] = useState<RetryStopRule[]>(
+    suite.policy.retryStopRules ?? [],
+  );
   const [retryLimit, setRetryLimit] = useState(String(suite.policy.retryLimit));
   const [retryConcurrencyRules, setRetryConcurrencyRules] = useState<
     EditableRetryConcurrencyRule[]
@@ -131,7 +137,7 @@ export function CaseSuiteEditor({
   const [roundRecoveryRules, setRoundRecoveryRules] = useState<EditableRoundRecoveryRule[]>(() =>
     suite.policy.roundRecoveryRules.map((rule) => ({
       id: rule.id,
-      afterRound: String(rule.afterRound),
+      afterRound: recoveryRounds(rule).join(","),
       jenkinsJobUrl: rule.jenkinsJobUrl,
       waitMinutes: String(rule.waitMinutes),
       apiKey: "",
@@ -207,6 +213,8 @@ export function CaseSuiteEditor({
             priority: Number(form.get("priority")),
             concurrency: Number(form.get("concurrency")),
             retryLimit: Number(retryLimit),
+            unlimitedRetries,
+            retryStopRules,
             retryMode,
             queueTimeoutMs: Math.round(Number(form.get("queueTimeoutMinutes")) * 60_000),
             claimTimeoutMs: Math.round(Number(form.get("claimTimeoutMinutes")) * 60_000),
@@ -234,7 +242,7 @@ export function CaseSuiteEditor({
       setRoundRecoveryRules(
         savedSuite.policy.roundRecoveryRules.map((rule) => ({
           id: rule.id,
-          afterRound: String(rule.afterRound),
+          afterRound: recoveryRounds(rule).join(","),
           jenkinsJobUrl: rule.jenkinsJobUrl,
           waitMinutes: String(rule.waitMinutes),
           apiKey: "",
@@ -416,18 +424,31 @@ export function CaseSuiteEditor({
                 defaultValue={suite.policy.concurrency}
               />
             </label>
-            <label>
-              重试次数上限
-              <Input
-                name="retryLimit"
-                type="number"
-                min={0}
-                max={10}
-                step={1}
-                value={retryLimit}
-                onChange={(event) => setRetryLimit(event.currentTarget.value)}
-              />
-            </label>
+            <div className="grid content-start gap-2">
+              <label>
+                重试次数上限
+                <Input
+                  name="retryLimit"
+                  type="number"
+                  min={0}
+                  disabled={unlimitedRetries}
+                  step={1}
+                  value={retryLimit}
+                  onChange={(event) => setRetryLimit(event.currentTarget.value)}
+                />
+              </label>
+              <Checkbox
+                className={cn("checkbox-field", uiPatterns["checkbox-field"])}
+                checked={unlimitedRetries}
+                onChange={(event) => {
+                  setUnlimitedRetries(event.target.checked);
+                  if (event.target.checked) setRetryMode("round");
+                  setDirty(true);
+                }}
+              >
+                无限重跑
+              </Checkbox>
+            </div>
             <label>
               失败重跑方式
               <Select
@@ -437,10 +458,24 @@ export function CaseSuiteEditor({
                   setRetryMode(event.currentTarget.value as "immediate" | "round")
                 }
               >
-                <option value="immediate">立即重跑（失败后马上重试）</option>
+                <option value="immediate" disabled={unlimitedRetries || retryStopRules.length > 0}>
+                  立即重跑（失败后马上重试）
+                </option>
                 <option value="round">整轮轮次（本轮结束后统一重试）</option>
               </Select>
             </label>
+            {retryMode === "round" ? (
+              <div className={uiPatterns["settings-wide-field"]}>
+                <RetryCompletionEditor
+                  disabled={!canManage || pending || archived}
+                  rules={retryStopRules}
+                  onChange={(rules) => {
+                    setRetryStopRules(rules);
+                    setDirty(true);
+                  }}
+                />
+              </div>
+            ) : null}
             <div
               className={cn(
                 "settings-wide-field retry-orchestration-card",
@@ -547,7 +582,6 @@ export function CaseSuiteEditor({
                           <Input
                             aria-label={`规则 ${index + 1} 判断轮次`}
                             min={2}
-                            max={11}
                             required
                             type="number"
                             value={rule.executionRound}
@@ -715,13 +749,13 @@ export function CaseSuiteEditor({
                       key={rule.id}
                     >
                       <label>
-                        第几轮后暂停
+                        恢复轮次（结束后）
                         <Input
                           aria-label={`恢复步骤 ${index + 1} 暂停轮次`}
-                          min={1}
-                          max={10}
                           required
-                          type="number"
+                          type="text"
+                          placeholder="例如 7,10,13"
+                          pattern={"\\s*[1-9][0-9]*\\s*(,\\s*[1-9][0-9]*\\s*)*"}
                           value={rule.afterRound}
                           onChange={(event) =>
                             updateRecoveryRule(rule.id, { afterRound: event.currentTarget.value })
@@ -873,8 +907,8 @@ export function CaseSuiteEditor({
               <p className={"form-help"}>
                 API 密钥使用单个“用户名:API Token”字段，服务端加密保存；页面不会回显。Jenkins 需安装
                 Rebuilder 插件。可通过“复用密钥”选择本任务其他步骤或有管理权限的其他任务；同一
-                Jenkins
-                服务地址下可复用，保存后独立加密。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。“测试配置”只读取任务与上一构建信息，不会触发构建。
+                Jenkins 服务地址下可复用，保存后独立加密。恢复轮次可填写
+                7,10,13，每个指定轮次结束后各触发一次；提前结束时忽略未到达的轮次。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。“测试配置”只读取任务与上一构建信息，不会触发构建。
               </p>
             </div>
             <label>
@@ -1363,7 +1397,8 @@ function toRetryConcurrencyRuleInput(rule: EditableRetryConcurrencyRule) {
 function toRoundRecoveryRuleInput(rule: EditableRoundRecoveryRule) {
   return {
     id: rule.id,
-    afterRound: Number(rule.afterRound),
+    afterRound: parseRecoveryRounds(rule.afterRound)[0]!,
+    afterRounds: parseRecoveryRounds(rule.afterRound),
     jenkinsJobUrl: rule.jenkinsJobUrl,
     waitMinutes: Number(rule.waitMinutes),
     apiKeyConfigured: rule.apiKeyConfigured,

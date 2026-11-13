@@ -207,7 +207,7 @@ const retryConcurrencyRuleSchema = z.preprocess(
   z
     .object({
       id: z.string().trim().min(1).max(128),
-      executionRound: z.number().int().min(2).max(11),
+      executionRound: z.number().int().min(2),
       previousRoundPassRateMinimum: z.number().int().min(0).max(100).optional(),
       previousRoundPassRateMaximum: z.number().int().min(0).max(100).optional(),
       remainingRunsMinimum: z.number().int().min(0).max(100_000).optional(),
@@ -294,7 +294,12 @@ function hasSingleCredentialSource(input: {
 const roundRecoveryRuleInputSchema = z
   .object({
     id: z.string().trim().min(1).max(128),
-    afterRound: z.number().int().min(1).max(10),
+    afterRound: z.number().int().min(1),
+    afterRounds: z
+      .array(z.number().int().min(1))
+      .min(1)
+      .refine((rounds) => new Set(rounds).size === rounds.length, "恢复轮次不能重复。")
+      .optional(),
     jenkinsJobUrl: jenkinsJobUrlSchema,
     waitMinutes: z.number().int().min(0).max(1_440),
     ...credentialInputFields,
@@ -304,6 +309,10 @@ const roundRecoveryRuleInputSchema = z
   .refine(hasSingleCredentialSource, {
     message: "输入新密钥与复用密钥只能选择一种。",
     path: ["apiKeySource"],
+  })
+  .refine((rule) => !rule.afterRounds || rule.afterRounds[0] === rule.afterRound, {
+    message: "恢复起始轮次与轮次清单不一致。",
+    path: ["afterRounds"],
   });
 
 export const inspectRoundRecoveryConfigurationInputSchema = z
@@ -361,6 +370,30 @@ export const jenkinsJobInspectionSchema = z.object({
   lastBuild: jenkinsLastBuildInspectionSchema.optional(),
 });
 
+export const retryStopRuleSchema = z
+  .object({
+    id: z.string().trim().min(1).max(128),
+    afterRound: z.number().int().min(1),
+    metric: z.enum(["remainingRuns", "cumulativePassRate", "roundPassRate"]),
+    operator: z.enum(["gt", "gte", "lt", "lte"]),
+    value: z.number().nonnegative(),
+  })
+  .strict()
+  .superRefine((rule, context) => {
+    if (
+      (rule.metric === "remainingRuns" && !Number.isSafeInteger(rule.value)) ||
+      (rule.metric !== "remainingRuns" && rule.value > 100)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["value"],
+        message:
+          rule.metric === "remainingRuns"
+            ? "用例数量必须为非负整数。"
+            : "通过率必须在 0～100% 之间。",
+      });
+  });
+
 export const caseSuiteExecutionPolicySchema = z
   .object({
     aiAnalysisAfterCompletion: z.boolean().optional(),
@@ -368,7 +401,9 @@ export const caseSuiteExecutionPolicySchema = z
     adapter: caseSuiteAdapterConfigurationSchema.optional(),
     priority: z.number().int().min(-100).max(100).optional(),
     concurrency: z.number().int().min(1).max(10_000).optional(),
-    retryLimit: z.number().int().min(0).max(10).optional(),
+    retryLimit: z.number().int().min(0).optional(),
+    unlimitedRetries: z.boolean().optional(),
+    retryStopRules: z.array(retryStopRuleSchema).max(100).optional(),
     retryMode: z.enum(["immediate", "round"]).optional(),
     queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),
     claimTimeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
@@ -389,7 +424,11 @@ export const caseSuiteExecutionPolicySchema = z
   })
   .strict()
   .superRefine((policy, context) => {
-    for (const field of ["retryConcurrencyRules", "roundRecoveryRules"] as const) {
+    for (const field of [
+      "retryConcurrencyRules",
+      "roundRecoveryRules",
+      "retryStopRules",
+    ] as const) {
       const rules = policy[field];
       if (rules && new Set(rules.map((rule) => rule.id)).size !== rules.length) {
         context.addIssue({ code: "custom", path: [field], message: "规则 ID 不能重复。" });
@@ -400,6 +439,13 @@ export const caseSuiteExecutionPolicySchema = z
 // Stored execution snapshots contain batch-only metadata, unlike task mutation inputs.
 export const caseSuiteCopyBatchPolicySchema = caseSuiteExecutionPolicySchema.safeExtend({
   aiAnalysisExecutionId: z.string().min(1).max(128).optional(),
+  retryCompletion: z
+    .object({
+      round: z.number().int().min(1),
+      ruleId: z.string().min(1),
+      reason: z.string().min(1),
+    })
+    .optional(),
   environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses
     .removeDefault()
     .optional(),

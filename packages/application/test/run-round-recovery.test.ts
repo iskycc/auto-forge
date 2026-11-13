@@ -29,7 +29,9 @@ describe("RoundRecoveryService", () => {
   });
 
   it("decrypts the snapshot credential and triggers Rebuild for the last Jenkins build", async () => {
-    const repository = repositoryWithClaims(claim({ status: "pending" }));
+    const repository = repositoryWithClaims(
+      claim({ status: "pending", ruleId: "occurrence-13", credentialRuleId: "recovery-1" }),
+    );
     const transport = {
       inspectJob: vi.fn(),
       rebuildLast: vi.fn().mockResolvedValue({ sourceBuildNumber: 41 }),

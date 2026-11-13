@@ -45,6 +45,11 @@ describe("failure task execution snapshot compatibility", () => {
   it("accepts every current batch policy field written by the repositories", () => {
     // Keep this exhaustive: adding persisted policy fields must also audit task copying.
     const batchPolicy: Required<RunBatchExecutionPolicy> = {
+      unlimitedRetries: true,
+      retryStopRules: [
+        { id: "finish", afterRound: 10, metric: "remainingRuns", operator: "gt", value: 1000 },
+      ],
+      retryCompletion: { round: 10, ruleId: "finish", reason: "condition met" },
       aiAnalysisAfterCompletion: true,
       aiAnalysisExecutionId: "original-batch",
       executor: "testng-container",
@@ -204,4 +209,37 @@ describe("failure task execution snapshot compatibility", () => {
       expect(JSON.stringify(error)).not.toContain("private-value");
     }
   });
+});
+
+it("copies repeated recovery boundaries with their original credential binding", () => {
+  const row = sourceRow({
+    unlimitedRetries: true,
+    retryStopRules: [],
+    executor: "testng",
+    concurrency: 4,
+    runnerLabels: [],
+    artifactPatterns: [],
+  });
+  const source = toFailureCaseSuiteSource(
+    row,
+    [7, 10, 13].map((round) => ({
+      ruleId: `occurrence-${round}`,
+      credentialRuleId: "original",
+      afterRound: round,
+      jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+      waitMinutes: 0,
+      apiKeyCiphertext: "encrypted-original",
+    })),
+  );
+  expect(source.policy?.roundRecoveryRules).toEqual([
+    {
+      id: "original",
+      afterRound: 7,
+      afterRounds: [7, 10, 13],
+      jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+      waitMinutes: 0,
+      apiKeyConfigured: true,
+    },
+  ]);
+  expect(source.roundRecoveryCredentials).toEqual({ original: "encrypted-original" });
 });

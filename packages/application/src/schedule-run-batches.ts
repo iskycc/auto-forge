@@ -22,6 +22,7 @@ import {
   type RunBatchPreflightResult,
 } from "@autoforge/contracts";
 import {
+  recoveryRounds,
   assessRunnerCompatibility,
   DEFAULT_EXECUTION_ADAPTER_ENABLED,
   executionAdapterNameDefaults,
@@ -344,6 +345,8 @@ export class RunBatchSchedulingService {
         secretBindings: [],
         runnerIds,
         policy: {
+          unlimitedRetries: suitePolicy.unlimitedRetries ?? false,
+          retryStopRules: (suitePolicy.retryStopRules ?? []).map((rule) => ({ ...rule })),
           aiAnalysisAfterCompletion: suitePolicy.aiAnalysisAfterCompletion ?? false,
           ...(suitePolicy.aiAnalysisAfterCompletion ? { aiAnalysisExecutionId: batchId } : {}),
           executor: suitePolicy.executor,
@@ -359,13 +362,16 @@ export class RunBatchSchedulingService {
             ...rule,
           })),
         },
-        roundRecoveries: roundRecoveryRules.map((rule) => ({
-          ruleId: rule.id,
-          afterRound: rule.afterRound,
-          jenkinsJobUrl: rule.jenkinsJobUrl,
-          apiKeyCiphertext: roundRecoveryCredentials[rule.id]!,
-          waitMinutes: rule.waitMinutes,
-        })),
+        roundRecoveries: roundRecoveryRules.flatMap((rule) =>
+          recoveryRounds(rule).map((round, index) => ({
+            ruleId: index === 0 ? rule.id : this.ids.next(),
+            credentialRuleId: rule.id,
+            afterRound: round,
+            jenkinsJobUrl: rule.jenkinsJobUrl,
+            apiKeyCiphertext: roundRecoveryCredentials[rule.id]!,
+            waitMinutes: rule.waitMinutes,
+          })),
+        ),
         adapter: {
           enabled: suitePolicy.adapter.enabled,
           suiteName: suitePolicy.adapter.suiteName,
@@ -930,6 +936,8 @@ export class RunBatchSchedulingService {
       policy: {
         ...policy,
         concurrency: 1,
+        unlimitedRetries: false,
+        retryStopRules: [],
         runnerLabels: [...policy.runnerLabels],
         artifactPatterns: [...policy.artifactPatterns],
         retryConcurrencyRules: [],
@@ -1115,7 +1123,7 @@ export class RunBatchSchedulingService {
       environmentVariables: [],
       secretBindings: [],
       runnerIds: [...input.snapshot.batch.selectedRunnerIds],
-      policy: input.policy,
+      policy: freshBatchPolicy(input.policy),
       roundRecoveries: input.roundRecoveries.map((recovery) => ({ ...recovery })),
       ...derivedBatchAdapterRuntime(input),
       runs,
@@ -2073,4 +2081,12 @@ function offlineBefore(now: Date): string {
 
 function metricsFreshAfter(now: Date, maximumAgeSeconds: number): string {
   return new Date(now.getTime() - maximumAgeSeconds * 1_000).toISOString();
+}
+
+function freshBatchPolicy(
+  source: NonNullable<RunBatch["policy"]>,
+): NonNullable<RunBatch["policy"]> {
+  const policy = { ...source };
+  delete policy.retryCompletion;
+  return policy;
 }

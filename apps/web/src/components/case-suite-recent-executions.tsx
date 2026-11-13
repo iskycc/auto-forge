@@ -263,7 +263,7 @@ function RecentExecution({ batch }: { batch: CaseSuiteRecentExecution }) {
             <strong>{batch.totalRuns === 0 ? "—" : `${runBatchPassRate(batch)}%`}</strong>
           </span>
           <span>
-            第 {batch.currentRound} / {batch.retryLimit + 1} 轮
+            第 {batch.currentRound} / {batch.unlimitedRetries ? "无限" : batch.retryLimit + 1} 轮
           </span>
         </span>
         <span

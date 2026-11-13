@@ -125,6 +125,28 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} progressive final-round AI`,
     () => {
+      it("defers unlimited automatic analysis until the execution is terminal", async () => {
+        const context = await fixture(dialect);
+        try {
+          await context.query(
+            "UPDATE run_batches SET current_round=10000,policy_json=? WHERE id='batch'",
+            [
+              JSON.stringify({
+                unlimitedRetries: true,
+                aiAnalysisAfterCompletion: true,
+                aiAnalysisExecutionId: "batch",
+              }),
+            ],
+          );
+          expect(await context.repository.automaticCandidates(null, 10)).toEqual([]);
+          await context.query("UPDATE run_batches SET status='succeeded' WHERE id='batch'");
+          expect(
+            (await context.repository.automaticCandidates(null, 10)).map((item) => item.batchId),
+          ).toEqual(["batch"]);
+        } finally {
+          await context.close();
+        }
+      });
       it.each([0, 1])(
         "keeps intake open when the last case finishes between reading %i candidates and committing the plan",
         async (alreadyFinished) => {

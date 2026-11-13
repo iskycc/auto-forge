@@ -120,3 +120,5 @@ ORDER BY execution_round, status, held_round;
 ```
 
 `held_round=0` 才可直接分配；assigned／running 所在的最早轮次决定能否向后滑动窗口。批次的 `current_round` 是最新开放轮次，不能据此推断所有运行中用例的归属。
+
+新增的[轮次结束条件](./unlimited-task-retries.md)也是完整统计屏障：配置该轮的结束规则时，下一轮不能提前补位；该轮排空后先判断结束条件，再决定是否触发 Jenkins 恢复及释放下一轮。没有结束条件的轮次保持现有两轮补位逻辑。

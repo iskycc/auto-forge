@@ -810,7 +810,7 @@ export const pgRunBatches = pgTable(
     status: text("status", {
       enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
-    retryLimit: integer("retry_limit").notNull(),
+    retryLimit: bigint("retry_limit", { mode: "number" }).notNull(),
     retryMode: text("retry_mode", { enum: ["immediate", "round"] })
       .notNull()
       .default("immediate"),

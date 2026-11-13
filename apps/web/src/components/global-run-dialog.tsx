@@ -621,7 +621,10 @@ export function GlobalRunDialog({
                           <div>
                             <dt>失败重跑</dt>
                             <dd>
-                              {selectedSuite.policy.retryLimit} 次 ·{" "}
+                              {selectedSuite.policy.unlimitedRetries
+                                ? "无限重跑"
+                                : `${selectedSuite.policy.retryLimit} 次`}{" "}
+                              ·{" "}
                               {selectedSuite.policy.retryMode === "round" ? "整轮重跑" : "立即重跑"}
                             </dd>
                           </div>
@@ -794,17 +797,14 @@ export function GlobalRunDialog({
                       >
                         <label className={cn("field-stack", uiPatterns["field-stack"])}>
                           <span>失败重跑</span>
-                          <Select
+                          <Input
+                            type="number"
+                            min={0}
+                            step={1}
                             aria-label="失败重跑次数"
                             onChange={(event) => setRetryLimit(Number(event.target.value))}
                             value={String(retryLimit)}
-                          >
-                            {Array.from({ length: 11 }, (_, value) => (
-                              <option key={value} value={value}>
-                                {value === 0 ? "不重跑" : `${value} 次`}
-                              </option>
-                            ))}
-                          </Select>
+                          />
                         </label>
                         <label className={cn("field-stack", uiPatterns["field-stack"])}>
                           <span>重跑方式</span>

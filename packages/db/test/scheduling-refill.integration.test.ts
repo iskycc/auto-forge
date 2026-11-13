@@ -414,6 +414,166 @@ async function createOverlappingRound(harness: RefillHarness) {
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("dispatches beyond ten rounds with no retry ceiling, stops on round twelve and skips round thirteen recovery", async () => {
+    const harness = await createHarness();
+    try {
+      const trace = await createOverlappingRound(harness);
+      await harness.rawQuery("UPDATE run_batches SET retry_limit=0,policy_json=? WHERE id=?", [
+        JSON.stringify({
+          concurrency: 4,
+          unlimitedRetries: true,
+          retryStopRules: [
+            {
+              id: "stop-twelve",
+              afterRound: 12,
+              metric: "remainingRuns",
+              operator: "gte",
+              value: 1,
+            },
+          ],
+        }),
+        trace.batchId,
+      ]);
+      await harness.rawQuery(
+        "INSERT INTO run_batch_round_recoveries(batch_id,rule_id,after_round,next_round,jenkins_job_url,api_key_ciphertext,wait_minutes,status,available_at,created_at,updated_at) VALUES (?,'later-reset',13,14,'https://jenkins.internal/job/reset/','fixture',0,'idle',?,?,?)",
+        [trace.batchId, trace.now, trace.now, trace.now],
+      );
+      await harness.executions.completeAttempt(
+        trace.completion(
+          harness.completion.attempt2Id,
+          harness.completion.lease2TokenHash,
+          "succeeded",
+        ),
+      );
+      let claimed = trace.second;
+      for (let round = 2; round <= 12; round++) {
+        const response = await harness.executions.completeAttempt(
+          trace.completion(claimed.claim.assignment.attemptId, claimed.token),
+        );
+        const attempt = (await harness.batches.get(trace.batchId))!.attempts.find(
+          (item) => item.id === claimed.claim.assignment.attemptId,
+        )!;
+        expect(attempt.executionRound).toBe(round);
+        expect(response.retryScheduled).toBe(round < 12);
+        if (round < 12) claimed = await trace.scheduleAndClaim();
+      }
+      const completed = (await harness.batches.get(trace.batchId))!;
+      expect(completed).toMatchObject({
+        status: "succeeded",
+        currentRound: 12,
+        succeededRuns: 1,
+        failedRuns: 1,
+      });
+      expect(completed.attempts).toHaveLength(13);
+      expect(completed.policy?.retryCompletion?.round).toBe(12);
+      expect(await harness.batches.listSchedulableBatchIds(10, trace.now)).not.toContain(
+        trace.batchId,
+      );
+      expect(
+        await harness.roundRecoveries.claimDue({
+          workerId: "later",
+          now: trace.now,
+          leaseExpiresAt: "2026-08-10T00:10:00.000Z",
+          limit: 10,
+        }),
+      ).toEqual([]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it.each([true, false])(
+    "drains a conditional retry boundary before recovery and finishes naturally when matched=%s",
+    async (matches) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+        harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=5000000000,policy_json=? WHERE id=?",
+          [
+            JSON.stringify({
+              concurrency: 4,
+              unlimitedRetries: true,
+              retryStopRules: [
+                {
+                  id: "threshold",
+                  afterRound: 1,
+                  metric: "remainingRuns",
+                  operator: "gt",
+                  value: matches ? 0 : 999,
+                },
+              ],
+            }),
+            batchId,
+          ],
+        );
+        await harness.rawQuery(
+          "INSERT INTO run_batch_round_recoveries(batch_id,rule_id,after_round,next_round,jenkins_job_url,api_key_ciphertext,wait_minutes,status,available_at,created_at,updated_at) VALUES (?,'reset',1,2,'https://jenkins.internal/job/reset/','fixture',0,'idle',?,?,?)",
+          [batchId, now, now, now],
+        );
+        const finish = (attemptId: string, token: string) =>
+          harness.executions.completeAttempt({
+            runnerId: harness.runnerId,
+            attemptId,
+            leaseTokenHash: token,
+            completionId: randomUUID(),
+            resultDigest: randomUUID(),
+            eventId: randomUUID(),
+            acceptedAt: now,
+            result: {
+              status: "failed",
+              resultCode: "TESTNG_ASSERTIONS_FAILED",
+              summary: "failed normally",
+              durationMs: 1,
+              artifacts: [],
+            },
+          });
+        await finish(attempt1Id, lease1TokenHash);
+        expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(1);
+        expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+        await finish(attempt2Id, lease2TokenHash);
+        const details = (await harness.batches.get(batchId))!;
+        expect(details.retryLimit).toBe(5000000000);
+        if (matches) {
+          expect(details.status).toBe("succeeded");
+          expect(details.currentRound).toBe(1);
+          expect(details.policy?.retryCompletion).toMatchObject({ round: 1, ruleId: "threshold" });
+          expect(
+            details.runs.every((run) => run.status === "failed" && run.executionRound === 1),
+          ).toBe(true);
+          expect(details.attempts).toHaveLength(2);
+          expect(
+            await harness.roundRecoveries.claimDue({
+              workerId: "recovery",
+              now,
+              leaseExpiresAt: "2026-08-10T00:10:00.000Z",
+              limit: 10,
+            }),
+          ).toEqual([]);
+          await harness.batches.prepareSchedulingRound(batchId, now);
+          expect((await harness.batches.getMetadata(batchId))?.status).toBe("succeeded");
+        } else {
+          expect(details.policy?.retryCompletion).toBeUndefined();
+          expect(details.runs.every((run) => run.status === "queued")).toBe(true);
+          expect(
+            await harness.roundRecoveries.claimDue({
+              workerId: "recovery",
+              now,
+              leaseExpiresAt: "2026-08-10T00:10:00.000Z",
+              limit: 10,
+            }),
+          ).toHaveLength(1);
+        }
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
   it.each(["current", "legacy"] as const)(
     "preserves the previous-result barrier for a %s stored concurrency rule",
     async (format) => {

@@ -1783,6 +1783,7 @@ export type CreateRunBatchRecord = {
   policy?: RunBatchExecutionPolicy;
   roundRecoveries?: Array<{
     ruleId: string;
+    credentialRuleId?: string;
     afterRound: number;
     jenkinsJobUrl: string;
     apiKeyCiphertext: string;
@@ -2409,6 +2410,7 @@ export interface RunBatchRepository {
 export type RoundRecoveryStatus = "pending" | "polling" | "waiting" | "releasing";
 
 export type RoundRecoveryClaim = {
+  credentialRuleId?: string;
   batchId: string;
   suiteId: string;
   ruleId: string;

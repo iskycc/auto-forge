@@ -40,7 +40,11 @@ export function roundNeedsCompleteStatistics(
   policyJson: string | null,
   nextRound: number,
 ): boolean {
-  const policy = JSON.parse(policyJson ?? "{}") as { retryConcurrencyRules?: unknown } | null;
+  const policy = JSON.parse(policyJson ?? "{}") as {
+    retryConcurrencyRules?: unknown;
+    retryStopRules?: { afterRound: number }[];
+  } | null;
+  if (policy?.retryStopRules?.some((rule) => rule.afterRound === nextRound - 1)) return true;
   return normalizeStoredRetryConcurrencyRules(policy?.retryConcurrencyRules).some(
     (rule) =>
       rule.executionRound === nextRound &&

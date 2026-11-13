@@ -1,3 +1,9 @@
+import {
+  finishHeldRetriesSql,
+  retryRoundStatisticsSql,
+  roundCompletionDecision,
+  type RetryRoundStatistics,
+} from "./retry-completion-query";
 import { roundDispatchTarget, roundNeedsCompleteStatistics } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 import { queueDeadlineAfter } from "./execution-queue-timing";
@@ -31,6 +37,37 @@ export async function advancePostgresSchedulingRound(
     )
   ).rows[0]!;
   if (state.held === null) return;
+  const policy = JSON.parse(batch.policy_json ?? "{}") as {
+    retryStopRules?: { afterRound: number }[];
+  };
+  if (
+    state.held > batch.current_round &&
+    !state.queued &&
+    state.active === null &&
+    policy.retryStopRules?.some((rule) => rule.afterRound === batch.current_round)
+  ) {
+    const statistics = (
+      await client.query<RetryRoundStatistics>(retryRoundStatisticsSql("$1", "$2"), [
+        batchId,
+        batch.current_round,
+      ])
+    ).rows[0]!;
+    const completion = roundCompletionDecision(batch.policy_json, batch.current_round, statistics);
+    if (completion) {
+      await client.query(finishHeldRetriesSql("$1", "$2"), [batchId, now]);
+      await client.query("UPDATE run_batches SET policy_json=$1, updated_at=$2 WHERE id=$3", [
+        JSON.stringify({ ...policy, retryCompletion: completion }),
+        now,
+        batchId,
+      ]);
+      await client.query(
+        "UPDATE run_batch_round_recoveries SET status='cancelled', updated_at=$1 WHERE batch_id=$2 AND status='idle'",
+        [now, batchId],
+      );
+      return;
+    }
+  }
+
   const recovery = (
     await client.query<{ total: string; succeeded: string }>(
       `SELECT COUNT(*) AS total,

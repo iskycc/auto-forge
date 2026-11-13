@@ -146,7 +146,7 @@ export class AiAnalysisService {
       (!batch.policy?.aiAnalysisAfterCompletion ||
         batch.policy.aiAnalysisExecutionId !== batch.id ||
         (!["succeeded", "failed", "cancelled"].includes(batch.status) &&
-          (batch.currentRound ?? 1) < batch.retryLimit + 1 &&
+          (batch.policy?.unlimitedRetries || (batch.currentRound ?? 1) < batch.retryLimit + 1) &&
           batch.retryMode !== "immediate"))
     )
       throw new DomainError("AI_BATCH_ACTIVE", "尚未进入最终轮次，暂不启动自动初析。");

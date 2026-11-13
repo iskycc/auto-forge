@@ -1,3 +1,9 @@
+import {
+  finishHeldRetriesSql,
+  retryRoundStatisticsSql,
+  roundCompletionDecision,
+  type RetryRoundStatistics,
+} from "./retry-completion-query";
 import { roundDispatchTarget, roundNeedsCompleteStatistics } from "@autoforge/domain";
 import type { SqliteDatabaseHandle } from "./database";
 import { queueDeadlineAfter } from "./execution-queue-timing";
@@ -30,6 +36,33 @@ export function advanceSqliteSchedulingRound(
     queued: number;
   };
   if (state.held === null) return;
+  const policy = JSON.parse(batch.policy_json ?? "{}") as {
+    retryStopRules?: { afterRound: number }[];
+  };
+  if (
+    state.held > batch.current_round &&
+    !state.queued &&
+    state.active === null &&
+    policy.retryStopRules?.some((rule) => rule.afterRound === batch.current_round)
+  ) {
+    const statistics = handle.client
+      .prepare(retryRoundStatisticsSql("?1", "?2"))
+      .get({ 1: batchId, 2: batch.current_round }) as RetryRoundStatistics;
+    const completion = roundCompletionDecision(batch.policy_json, batch.current_round, statistics);
+    if (completion) {
+      handle.client.prepare(finishHeldRetriesSql("?1", "?2")).run({ 1: batchId, 2: now });
+      handle.client
+        .prepare("UPDATE run_batches SET policy_json=?, updated_at=? WHERE id=?")
+        .run(JSON.stringify({ ...policy, retryCompletion: completion }), now, batchId);
+      handle.client
+        .prepare(
+          "UPDATE run_batch_round_recoveries SET status='cancelled', updated_at=? WHERE batch_id=? AND status='idle'",
+        )
+        .run(now, batchId);
+      return;
+    }
+  }
+
   const recovery = handle.client
     .prepare(
       `SELECT COUNT(*) AS total,

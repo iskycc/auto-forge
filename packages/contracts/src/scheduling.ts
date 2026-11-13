@@ -8,7 +8,7 @@ const executionInputFields = {
   runnerIds: z.array(z.string().min(1).max(128)).max(64).default([]),
   runnerGroupId: z.string().min(1).max(128).optional(),
   // 单用例临时执行仍可覆盖重试与排队策略；用例任务执行只读取任务快照。
-  retryLimit: z.number().int().min(0).max(10).optional(),
+  retryLimit: z.number().int().min(0).optional(),
   retryMode: z.enum(["immediate", "round"]).optional(),
   priority: z.number().int().min(-100).max(100).optional(),
   queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),

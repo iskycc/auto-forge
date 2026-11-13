@@ -26,6 +26,7 @@ export function recoverableRoundTailSql(
         NOT EXISTS(SELECT 1 FROM run_batch_round_recoveries barrier WHERE barrier.batch_id=${batch}.id
           AND barrier.after_round=${batch}.current_round)
         AND ${noResultDependentRules}
+        AND ${noStopBoundarySql(dialect, batch)}
       ))
     )
   ))`;
@@ -58,4 +59,10 @@ function noResultDependentRuleSql(
   ).join(" OR ");
   return `NOT EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${rules})='array' THEN ${rules} ELSE '[]'::jsonb END) rule(value)
     WHERE COALESCE(rule.value->>'executionRound',rule.value->>'executionRoundFrom')=(${batch}.current_round+1)::text AND (${fields}))`;
+}
+
+function noStopBoundarySql(dialect: "sqlite" | "postgres", batch: "b" | "run_batches"): string {
+  if (dialect === "sqlite")
+    return `NOT EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(${batch}.policy_json,'$.retryStopRules'),'[]')) stop_rule WHERE json_extract(stop_rule.value,'$.afterRound')=${batch}.current_round)`;
+  return `NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${batch}.policy_json::jsonb->'retryStopRules','[]'::jsonb)) stop_rule WHERE stop_rule->>'afterRound'=${batch}.current_round::text)`;
 }

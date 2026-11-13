@@ -36,6 +36,8 @@ export type ExecutionBatchView = Pick<
     | "runnerFaultIncidents"
     | "finishedAt"
   > & {
+    unlimitedRetries?: boolean;
+    retryCompletionReason?: string;
     accessToken?: string;
     publicAccess?: boolean;
     statistics?: ReadModelStatus;
@@ -54,6 +56,10 @@ export function toExecutionBatchView(
     status: batch.status,
     ...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {}),
     ...(batch.terminatedBy ? { terminatedBy: batch.terminatedBy } : {}),
+    unlimitedRetries: batch.policy?.unlimitedRetries ?? false,
+    ...(batch.policy?.retryCompletion
+      ? { retryCompletionReason: batch.policy.retryCompletion.reason }
+      : {}),
     retryLimit: batch.retryLimit,
     retryMode: batch.retryMode,
     currentRound: batch.currentRound,

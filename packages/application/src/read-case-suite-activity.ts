@@ -103,6 +103,7 @@ export class CaseSuiteActivityService {
         cancelledRuns: batch.cancelledRuns,
         currentRound: batch.currentRound,
         retryLimit: batch.retryLimit,
+        unlimitedRetries: batch.policy?.unlimitedRetries ?? false,
         ...(batch.requestedBy ? { requestedBy: batch.requestedBy.username } : {}),
         ...(batch.pauseRequestedAt ? { pauseRequestedAt: batch.pauseRequestedAt } : {}),
         ...(batch.terminationRequestedAt

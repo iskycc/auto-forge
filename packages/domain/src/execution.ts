@@ -163,6 +163,7 @@ export function outcomeAfterCompletion(input: {
   outcome: AttemptOutcome;
   attemptNumber: number;
   retryLimit: number;
+  unlimitedRetries?: boolean;
   cancellationRequested: boolean;
   retryableRunnerFailure?: boolean;
   runnerFailuresBefore?: number;
@@ -177,7 +178,8 @@ export function outcomeAfterCompletion(input: {
   const failuresBefore = Math.max(0, input.attemptNumber - 1);
   const retryScheduled = input.retryableRunnerFailure
     ? (input.runnerFailuresBefore ?? failuresBefore) < MAX_RUNNER_FAILURE_RESCHEDULES
-    : (input.ordinaryFailuresBefore ?? failuresBefore) < input.retryLimit;
+    : input.unlimitedRetries === true ||
+      (input.ordinaryFailuresBefore ?? failuresBefore) < input.retryLimit;
   return { runStatus: retryScheduled ? "queued" : "failed", retryScheduled };
 }
 

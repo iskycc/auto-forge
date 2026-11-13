@@ -188,10 +188,21 @@ describe("case suite update and copy", () => {
       policy: {
         retryMode: "round",
         retryLimit: 2,
+        unlimitedRetries: true,
+        retryStopRules: [
+          {
+            id: "finish-ten",
+            afterRound: 10,
+            metric: "remainingRuns",
+            operator: "gt",
+            value: 1000,
+          },
+        ],
         roundRecoveryRules: [
           {
             id: "recovery-1",
-            afterRound: 1,
+            afterRound: 7,
+            afterRounds: [7, 10, 13],
             jenkinsJobUrl: "https://jenkins.internal/job/reset",
             waitMinutes: 5,
             apiKey: "jenkins-user:api-token",
@@ -212,6 +223,7 @@ describe("case suite update and copy", () => {
             expect.objectContaining({
               id: "recovery-1",
               apiKeyConfigured: true,
+              afterRounds: [7, 10, 13],
               jenkinsJobUrl: "https://jenkins.internal/job/reset/",
             }),
           ],

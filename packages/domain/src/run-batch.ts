@@ -1,3 +1,4 @@
+import type { RetryStopRule, RetryCompletion } from "./retry-completion";
 import type {
   ExecutionEnvironmentSecretBinding,
   ExecutionEnvironmentVariable,
@@ -69,6 +70,9 @@ export type TestNgResultDetails = TestNgResultCounts & {
 // 批次创建时从用例任务策略固化的执行配置快照；缺省（历史数据）表示不限制并发、
 // 仅使用内置必需标签与默认产物规则。
 export type RunBatchExecutionPolicy = {
+  unlimitedRetries?: boolean;
+  retryStopRules?: RetryStopRule[];
+  retryCompletion?: RetryCompletion;
   aiAnalysisAfterCompletion?: boolean;
   aiAnalysisExecutionId?: string;
   executor: "testng" | "testng-container";

@@ -485,6 +485,42 @@ describe("AI group reduction admission", () => {
 });
 
 describe("automatic final-round intake", () => {
+  it("waits for actual completion of an unlimited batch instead of treating its stored finite limit as a final round", async () => {
+    const batch = {
+      id: "batch",
+      projectId: "project",
+      status: "running",
+      currentRound: 10000,
+      retryLimit: 0,
+      retryMode: "round",
+      policy: {
+        unlimitedRetries: true,
+        aiAnalysisAfterCompletion: true,
+        aiAnalysisExecutionId: "batch",
+      },
+    };
+    const create = vi.fn(async (job) => job);
+    const service = new AiAnalysisService(
+      {
+        configuration: async () => ({ configuration: { enabled: true } }),
+        create,
+      } as unknown as AiAnalysisRepository,
+      { getMetadata: async () => batch } as unknown as RunBatchRepository,
+      {} as SecretCipherPort,
+      { now: () => new Date("2026-11-13T00:00:00Z") },
+      { next: () => "job" },
+    );
+    const identity = actor(["analysis.ai.create", "run.read", "case.read", "log.read"]);
+    await expect(service.createAutomatic(identity, "batch")).rejects.toMatchObject({
+      code: "AI_BATCH_ACTIVE",
+    });
+    expect(create).not.toHaveBeenCalled();
+    batch.status = "succeeded";
+    await expect(service.createAutomatic(identity, "batch")).resolves.toMatchObject({
+      batchId: "batch",
+      requestedBy: "actor",
+    });
+  });
   it("allows only the configured final round to stream; manual whole-batch analysis still waits", async () => {
     const batch = {
       id: "batch",

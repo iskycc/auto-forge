@@ -17,7 +17,7 @@ export type RunProgress = {
   statusLabel: string;
   active: boolean;
   currentRound: number;
-  maximumRounds: number;
+  maximumRounds: number | null;
   totalCases: number;
   completedCases: number;
   totalPassed: number;
@@ -51,7 +51,7 @@ export function buildRunProgress(batch: RunBatchDetails): RunProgress {
     statusLabel: runBatchCompletionLabel(batch),
     active: isActiveRunBatch(batch.status),
     currentRound,
-    maximumRounds: batch.retryLimit + 1,
+    maximumRounds: batch.policy?.unlimitedRetries ? null : batch.retryLimit + 1,
     totalCases: batch.totalRuns,
     completedCases:
       batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns,
@@ -80,7 +80,7 @@ export function buildRunProgressFromOverview(overview: RunBatchDetailOverview): 
     statusLabel: runBatchCompletionLabel(batch),
     active: isActiveRunBatch(batch.status),
     currentRound,
-    maximumRounds: batch.retryLimit + 1,
+    maximumRounds: batch.policy?.unlimitedRetries ? null : batch.retryLimit + 1,
     totalCases: batch.totalRuns,
     completedCases:
       batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns,

@@ -28,6 +28,9 @@ export function runSqliteMigrations(client: Database.Database, migrationsFolder:
     if (existing) return;
 
     client.exec(migration.sql);
+    if (migration.rebuild && (client.pragma("foreign_key_check") as unknown[]).length > 0) {
+      throw new Error(`Migration ${migration.name} would leave invalid foreign keys.`);
+    }
     insertMigration.run(migration.name, migration.sha256, new Date().toISOString());
   });
 
@@ -37,7 +40,15 @@ export function runSqliteMigrations(client: Database.Database, migrationsFolder:
     // BEGIN IMMEDIATE serializes the read-before-DDL decision across processes.
     // A deferred transaction lets multiple startup workers cache the same stale
     // "not applied" result and then repeat an ALTER TABLE after waiting for the writer.
-    applyMigration.immediate({ name: fileName, sql, sha256 });
+    const rebuild = sql.startsWith("-- autoforge:rebuild-with-foreign-keys-disabled");
+    // SQLite cannot drop a CHECK constraint directly. Rebuild only under the migration
+    // writer transaction, and restore this connection’s FK enforcement on every exit.
+    if (rebuild) client.pragma("foreign_keys = OFF");
+    try {
+      applyMigration.immediate({ name: fileName, sql, sha256, rebuild });
+    } finally {
+      if (rebuild) client.pragma("foreign_keys = ON");
+    }
   }
 }
 
@@ -45,4 +56,5 @@ type MigrationFile = {
   name: string;
   sql: string;
   sha256: string;
+  rebuild: boolean;
 };

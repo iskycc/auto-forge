@@ -449,3 +449,41 @@ describe("runner memory budget compatibility", () => {
     ).toBe(false);
   });
 });
+
+describe("unbounded task retries", () => {
+  it("accepts retry limits above ten and recovery round lists, rejecting invalid boundaries", () => {
+    expect(
+      caseSuiteExecutionPolicySchema.parse({
+        retryLimit: 50000,
+        unlimitedRetries: true,
+        retryStopRules: [
+          { id: "stop", afterRound: 10, metric: "remainingRuns", operator: "gt", value: 1000 },
+        ],
+      }).retryLimit,
+    ).toBe(50000);
+    const rule = {
+      id: "reset",
+      afterRound: 7,
+      afterRounds: [7, 10, 13],
+      jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+      waitMinutes: 0,
+    };
+    expect(caseSuiteExecutionPolicySchema.safeParse({ roundRecoveryRules: [rule] }).success).toBe(
+      true,
+    );
+    for (const afterRounds of [[7, 7], [0], [7, 10.5], [8, 9], ["8*9"]])
+      expect(
+        caseSuiteExecutionPolicySchema.safeParse({ roundRecoveryRules: [{ ...rule, afterRounds }] })
+          .success,
+      ).toBe(false);
+    for (const retryLimit of [-1, 0.1, Number.MAX_SAFE_INTEGER + 1, Infinity])
+      expect(caseSuiteExecutionPolicySchema.safeParse({ retryLimit }).success).toBe(false);
+    expect(
+      caseSuiteExecutionPolicySchema.safeParse({
+        retryStopRules: [
+          { id: "stop", afterRound: 10, metric: "cumulativePassRate", operator: "gt", value: 101 },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+});

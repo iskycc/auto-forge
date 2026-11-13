@@ -1,5 +1,6 @@
 import type { CaseDefinitionWithMethods } from "./case-definition";
 import type { DdtCase } from "./ddt";
+import type { RetryStopRule } from "./retry-completion";
 import { DomainError } from "./errors";
 
 export function assertCaseSuiteCanArchive(activeBatch: { id: string } | undefined): void {
@@ -119,6 +120,8 @@ export type CaseSuiteExecutionPolicy = {
   priority: number;
   concurrency: number;
   retryLimit: number;
+  unlimitedRetries?: boolean;
+  retryStopRules?: RetryStopRule[];
   retryMode: "immediate" | "round";
   queueTimeoutMs: number;
   claimTimeoutMs: number;
@@ -150,6 +153,7 @@ export type RetryConcurrencyRule = {
 export type RoundRecoveryRule = {
   id: string;
   afterRound: number;
+  afterRounds?: number[];
   jenkinsJobUrl: string;
   waitMinutes: number;
   // 只表示服务端已保存密钥；密钥明文和密文都不得进入领域对象或 HTTP 输出。
@@ -341,6 +345,16 @@ export function mergeCaseSuiteExecutionPolicy(
     priority: override.priority ?? base.priority,
     concurrency: override.concurrency ?? base.concurrency,
     retryLimit: override.retryLimit ?? base.retryLimit,
+    ...(override.unlimitedRetries !== undefined || base.unlimitedRetries !== undefined
+      ? { unlimitedRetries: override.unlimitedRetries ?? base.unlimitedRetries ?? false }
+      : {}),
+    ...(override.retryStopRules !== undefined || base.retryStopRules !== undefined
+      ? {
+          retryStopRules: (override.retryStopRules ?? base.retryStopRules ?? []).map((rule) => ({
+            ...rule,
+          })),
+        }
+      : {}),
     retryMode: override.retryMode ?? base.retryMode,
     queueTimeoutMs: override.queueTimeoutMs ?? base.queueTimeoutMs,
     claimTimeoutMs: override.claimTimeoutMs ?? base.claimTimeoutMs,

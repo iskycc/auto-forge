@@ -747,6 +747,7 @@ describe("run batch creation with suite policy", () => {
             priority: 3,
             concurrency: 2,
             retryLimit: 2,
+            unlimitedRetries: true,
             queueTimeoutMs: 60_000,
             runnerLabels: [],
             artifactPatterns: ["reports/**"],
@@ -755,6 +756,7 @@ describe("run batch creation with suite policy", () => {
               {
                 id: "recovery-app",
                 afterRound: 1,
+                afterRounds: [1, 7, 13],
                 jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
                 waitMinutes: 3,
                 apiKeyConfigured: true,
@@ -822,7 +824,22 @@ describe("run batch creation with suite policy", () => {
         executionTimeoutMs: 600_000,
         policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
         roundRecoveries: [
-          expect.objectContaining({ ruleId: "recovery-app", afterRound: 1, waitMinutes: 3 }),
+          expect.objectContaining({
+            ruleId: "recovery-app",
+            credentialRuleId: "recovery-app",
+            afterRound: 1,
+            waitMinutes: 3,
+          }),
+          expect.objectContaining({
+            credentialRuleId: "recovery-app",
+            afterRound: 7,
+            waitMinutes: 3,
+          }),
+          expect.objectContaining({
+            credentialRuleId: "recovery-app",
+            afterRound: 13,
+            waitMinutes: 3,
+          }),
           expect.objectContaining({ ruleId: "recovery-database", afterRound: 1, waitMinutes: 7 }),
         ],
         runs: [{ parameters: { SHARED: "case" } }],
@@ -1955,6 +1972,8 @@ describe("scheduling event log", () => {
 });
 
 const readyPolicy = {
+  unlimitedRetries: false,
+  retryStopRules: [] as import("@autoforge/domain").RetryStopRule[],
   executor: "testng" as "testng" | "testng-container",
   adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] as string[] },
   priority: 0,

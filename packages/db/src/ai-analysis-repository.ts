@@ -830,7 +830,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
   async automaticCandidates(after: string | null, limit: number) {
     const rows = await this.query(
       statement(
-        `SELECT id,project_id,requested_by_username FROM run_batches WHERE (status IN ('succeeded','failed','cancelled') OR (status IN ('queued','dispatching','scheduled','running') AND (current_round>=retry_limit+1 OR (retry_mode='immediate' AND EXISTS(SELECT 1 FROM execution_runs r WHERE r.batch_id=run_batches.id AND r.status='failed'))))) AND batch_kind='standard'
+        `SELECT id,project_id,requested_by_username FROM run_batches WHERE (status IN ('succeeded','failed','cancelled') OR (status IN ('queued','dispatching','scheduled','running') AND (policy_json NOT LIKE '%"unlimitedRetries":true%') AND (current_round>=retry_limit+1 OR (retry_mode='immediate' AND EXISTS(SELECT 1 FROM execution_runs r WHERE r.batch_id=run_batches.id AND r.status='failed'))))) AND batch_kind='standard'
       AND id>? AND policy_json LIKE '%"aiAnalysisAfterCompletion":true%' AND policy_json LIKE ('%"aiAnalysisExecutionId":"'||id||'"%') AND NOT EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE batch_id=run_batches.id AND request_key='automatic') ORDER BY id LIMIT ?`,
         after ?? "",
         limit,

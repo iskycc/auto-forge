@@ -124,6 +124,7 @@ export const publicSuiteViewSchema = z.object({
   caseCount: z.number().int().nonnegative(),
   concurrency: z.number().int().positive(),
   retryLimit: z.number().int().nonnegative(),
+  unlimitedRetries: z.boolean().optional(),
   adapterEnabled: z.boolean().default(false),
   environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses,
   environment: publicSuiteEnvironmentStateSchema.default({

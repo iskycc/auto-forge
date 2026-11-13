@@ -104,6 +104,7 @@ export class PublicSuiteExecutionService {
       caseCount: suite.caseCount,
       concurrency: suite.policy.concurrency,
       retryLimit: suite.policy.retryLimit,
+      unlimitedRetries: suite.policy.unlimitedRetries ?? false,
       adapterEnabled: suite.policy.adapter.enabled,
       environmentAddresses: suite.policy.adapter.enabled
         ? suite.policy.adapter.environmentAddresses

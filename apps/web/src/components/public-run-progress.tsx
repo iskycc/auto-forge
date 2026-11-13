@@ -111,7 +111,7 @@ export function PublicRunProgress({
           <div>
             <dt>当前轮次</dt>
             <dd>
-              第 {progress.currentRound} / {progress.maximumRounds} 轮
+              第 {progress.currentRound} / {progress.maximumRounds ?? "无限"} 轮
             </dd>
           </div>
           <div>

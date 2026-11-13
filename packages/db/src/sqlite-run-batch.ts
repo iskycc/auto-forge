@@ -430,13 +430,14 @@ export class SqliteRunBatchRepository
           this.handle.client
             .prepare(
               `INSERT INTO run_batch_round_recoveries
-             (batch_id, rule_id, after_round, next_round, jenkins_job_url,
+             (batch_id, rule_id, credential_rule_id, after_round, next_round, jenkins_job_url,
               api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)`,
             )
             .run(
               record.id,
               recovery.ruleId,
+              recovery.credentialRuleId ?? null,
               recovery.afterRound,
               recovery.afterRound + 1,
               recovery.jenkinsJobUrl,
@@ -903,7 +904,7 @@ export class SqliteRunBatchRepository
       .all();
     const recoveries = this.handle.client
       .prepare(
-        `SELECT rule_id AS ruleId, after_round AS afterRound,
+        `SELECT rule_id AS ruleId, credential_rule_id AS credentialRuleId, after_round AS afterRound,
                 jenkins_job_url AS jenkinsJobUrl, api_key_ciphertext AS apiKeyCiphertext,
                 wait_minutes AS waitMinutes
          FROM run_batch_round_recoveries
@@ -911,6 +912,7 @@ export class SqliteRunBatchRepository
       )
       .all(batchId) as Array<{
       ruleId: string;
+      credentialRuleId?: string;
       afterRound: number;
       jenkinsJobUrl: string;
       apiKeyCiphertext: string;
@@ -2360,6 +2362,17 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
         : {}),
       ...(typeof record.aiAnalysisExecutionId === "string"
         ? { aiAnalysisExecutionId: record.aiAnalysisExecutionId }
+        : {}),
+      unlimitedRetries: record.unlimitedRetries === true,
+      retryStopRules: Array.isArray(record.retryStopRules)
+        ? (record.retryStopRules as NonNullable<RunBatchExecutionPolicy["retryStopRules"]>)
+        : [],
+      ...(record.retryCompletion
+        ? {
+            retryCompletion: record.retryCompletion as NonNullable<
+              RunBatchExecutionPolicy["retryCompletion"]
+            >,
+          }
         : {}),
       executor: record.executor === "testng-container" ? "testng-container" : "testng",
       concurrency:

@@ -33,6 +33,7 @@ const RELATION_COLUMNS = new Set([
   "category_id",
   "tag_id",
   "rule_id",
+  "credential_rule_id",
   "jdk_asset_id",
   "jar_bundle_asset_id",
   "schedule_id",
@@ -198,7 +199,7 @@ export function copyVersionRecord(input: {
     )
       copied[column] = objectKey(value);
     else if (column === "api_key_ciphertext" && typeof value === "string")
-      copied[column] = reencrypt(value, String(row.rule_id));
+      copied[column] = reencrypt(value, String(row.credential_rule_id ?? row.rule_id));
     else if (typeof value === "string" && METADATA_JSON_COLUMNS.has(column))
       copied[column] = JSON.stringify(rewriteMetadata(JSON.parse(value)));
     else copied[column] = value;

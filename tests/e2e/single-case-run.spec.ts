@@ -92,7 +92,11 @@ test("global execution dialog schedules one case through a runner group with Ada
   await dialog.getByLabel("单用例 Adapter Test Name").fill("Single Case Test");
   await editEnvironmentAddresses(page, dialog, ["10.0.0.21"]);
   await expect(dialog.locator('select[aria-label="失败重跑方式"]')).toHaveValue("round");
-  await expect(dialog.locator('select[aria-label="失败重跑次数"]')).toHaveValue("0");
+  const retryCount = dialog.getByRole("spinbutton", { name: "失败重跑次数", exact: true });
+  await expect(retryCount).toHaveValue("0");
+  await retryCount.fill("25");
+  await expect(retryCount).toHaveValue("25");
+  await retryCount.fill("0");
   const retryModeTrigger = dialog.getByRole("combobox", { name: "失败重跑方式", exact: true });
   await expect(
     dialog.locator(".ui-select", {

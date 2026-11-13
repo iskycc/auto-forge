@@ -66,7 +66,7 @@ for (const adapter of ["sqlite", "postgres"] as const)
           const service = new AiAnalysisService(
             h.ai,
             h.batches,
-            { encrypt: () => "unused", decrypt: () => "unused" },
+            { available: true, encrypt: () => "unused", decrypt: () => "unused" },
             { now: () => new Date(now) },
             { next: randomUUID },
           );

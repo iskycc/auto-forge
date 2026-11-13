@@ -43,6 +43,7 @@ export const caseSuiteRecentExecutionSchema = z.object({
   cancelledRuns: z.number().int().nonnegative(),
   currentRound: z.number().int().positive(),
   retryLimit: z.number().int().nonnegative(),
+  unlimitedRetries: z.boolean().optional(),
   requestedBy: z.string().optional(),
   pauseRequestedAt: z.iso.datetime().optional(),
   terminationRequestedAt: z.iso.datetime().optional(),

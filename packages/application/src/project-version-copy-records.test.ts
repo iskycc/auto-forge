@@ -50,6 +50,37 @@ const cipher = {
 };
 
 describe("version-copy record boundaries", () => {
+  it("reencrypts repeated recovery occurrences using their original credential identity", () => {
+    const copied = copyVersionRecord({
+      job,
+      collection: "run_batch_round_recoveries",
+      row: {
+        batch_id: "batch",
+        suite_id: "suite",
+        rule_id: "occurrence-13",
+        credential_rule_id: "original-rule",
+        api_key_ciphertext: "ciphertext",
+      },
+      cipher: {
+        available: true,
+        decrypt: (value, purpose) => {
+          expect(value).toBe("ciphertext");
+          expect(purpose).toBe("case-suite-round-recovery:suite:original-rule");
+          return "credential";
+        },
+        encrypt: (value, purpose) => {
+          expect(value).toBe("credential");
+          expect(purpose).toBe(
+            `case-suite-round-recovery:${versionCopyId(job, "suite")}:${versionCopyId(job, "original-rule")}`,
+          );
+          return "copied-ciphertext";
+        },
+      },
+    });
+    expect(copied.credential_rule_id).toBe(versionCopyId(job, "original-rule"));
+    expect(copied.rule_id).toBe(versionCopyId(job, "occurrence-13"));
+    expect(copied.api_key_ciphertext).toBe("copied-ciphertext");
+  });
   it("retains the original AI trigger identity so copying history cannot launch model work", () => {
     const copied = copyVersionRecord({
       job,

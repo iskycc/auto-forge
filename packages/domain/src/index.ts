@@ -29,3 +29,5 @@ export { shouldChangeBatchScheduling } from "./batch-scheduling-control";
 
 export * from "./round-dispatch";
 export * from "./execution-environment-overlap";
+
+export * from "./retry-completion";

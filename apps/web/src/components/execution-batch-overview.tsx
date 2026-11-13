@@ -70,11 +70,17 @@ export function ExecutionBatchOverview({
               )}
             </dd>
           </div>
+          {batch.retryCompletionReason ? (
+            <div className="col-span-full">
+              <dt>完成原因</dt>
+              <dd className="break-words">{batch.retryCompletionReason}</dd>
+            </div>
+          ) : null}
           <div>
             <dt>当前轮次</dt>
             <dd>
               {batch.retryMode === "round"
-                ? `第 ${batch.currentRound} 轮 · 重跑上限 ${batch.retryLimit} 次`
+                ? `第 ${batch.currentRound} 轮 · ${batch.unlimitedRetries ? "无限重跑" : `重跑上限 ${batch.retryLimit} 次`}`
                 : "立即重跑模式"}
             </dd>
           </div>

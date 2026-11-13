@@ -282,7 +282,7 @@ export class RoundRecoveryService {
   private decryptCredential(claim: RoundRecoveryClaim): string {
     return this.cipher.decrypt(
       claim.apiKeyCiphertext,
-      roundRecoverySecretPurpose(claim.suiteId, claim.ruleId),
+      roundRecoverySecretPurpose(claim.suiteId, claim.credentialRuleId ?? claim.ruleId),
     );
   }
 

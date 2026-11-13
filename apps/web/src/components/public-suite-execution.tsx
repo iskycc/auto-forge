@@ -219,7 +219,11 @@ export function PublicSuiteExecution({
           <div className="mt-6 grid grid-cols-4 gap-6 border-t border-border pt-5">
             <Statistic title="用例总数" value={view.caseCount} />
             <Statistic title="并发上限" value={view.concurrency} />
-            <Statistic title="重跑上限" value={view.retryLimit} suffix="次" />
+            <Statistic
+              title="重跑上限"
+              value={view.unlimitedRetries ? "无限" : view.retryLimit}
+              suffix={view.unlimitedRetries ? undefined : "次"}
+            />
             <Statistic title="当前执行批次" value={view.active.length} suffix="个" />
           </div>
         </Card>
