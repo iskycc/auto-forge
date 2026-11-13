@@ -210,12 +210,27 @@ export async function apiErrorResponse(
   return NextResponse.json(mapped.body, { status: mapped.status });
 }
 
-export async function readJsonBody(request: Request, maximumBytes: number): Promise<unknown> {
+export function readJsonBody(request: Request, maximumBytes: number): Promise<unknown> {
+  return readRequestJsonBody(request, maximumBytes, "reject");
+}
+
+export function readOptionalJsonBody(request: Request, maximumBytes: number): Promise<unknown> {
+  return readRequestJsonBody(request, maximumBytes, "empty-object");
+}
+
+async function readRequestJsonBody(
+  request: Request,
+  maximumBytes: number,
+  emptyBody: "reject" | "empty-object",
+): Promise<unknown> {
   const contentLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
     throw new DomainError("REQUEST_BODY_TOO_LARGE", "请求体超过允许的大小。");
   }
-  if (!request.body) throw new DomainError("INVALID_JSON", "请求体必须是 JSON。");
+  if (!request.body) {
+    if (emptyBody === "empty-object") return {};
+    throw new DomainError("INVALID_JSON", "请求体必须是 JSON。");
+  }
 
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -231,6 +246,8 @@ export async function readJsonBody(request: Request, maximumBytes: number): Prom
     chunks.push(value);
   }
 
+  // Node's HTTP bridge may supply a readable stream even for a zero-byte POST.
+  if (totalBytes === 0 && emptyBody === "empty-object") return {};
   const body = new Uint8Array(totalBytes);
   let offset = 0;
   for (const chunk of chunks) {

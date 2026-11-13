@@ -204,12 +204,48 @@ describe("public task execution HTTP boundary", () => {
       (await start(request("POST", { requestKey: key, environmentAddresses: [] }), context)).status,
     ).toBe(400);
   });
-  it("uses the authenticated terminator rather than request body attribution", async () => {
-    expect((await terminate(request("POST", { actor: { id: "forged" } }), context)).status).toBe(
-      200,
-    );
-    expect(f.terminate).toHaveBeenCalledWith("suite", "owner", "batch", actor);
+  it("validates typed confirmation and attributes termination to the logged-in user", async () => {
+    const confirmation = {
+      initiatorUsername: "actual-starter",
+      environmentAddresses: ["10.0.0.21"],
+    };
+    expect((await terminate(request("POST", { confirmation }), context)).status).toBe(200);
+    expect(f.terminate).toHaveBeenCalledWith("suite", "owner", "batch", actor, confirmation);
     expect(f.scope).not.toHaveBeenCalled();
+    expect(f.allow).toHaveBeenCalled();
+    expect((await terminate(request(), context)).status).toBe(200);
+    expect(f.terminate).toHaveBeenLastCalledWith("suite", "owner", "batch", actor, undefined);
+    f.terminate.mockClear();
+    expect((await terminate(request("POST", { actor: { id: "forged" } }), context)).status).toBe(
+      400,
+    );
+    expect(f.terminate).not.toHaveBeenCalled();
+  });
+  it("accepts the empty request stream produced by the HTTP server for legacy initiators", async () => {
+    const empty = new Request(
+      "http://localhost/api/v1/public/case-suites/suite/executions/batch/terminate?PublisherId=owner",
+      { method: "POST", body: new Uint8Array(0) },
+    );
+    expect(empty.body).not.toBeNull();
+    expect((await terminate(empty, context)).status).toBe(200);
+    expect(f.terminate).toHaveBeenCalledWith("suite", "owner", "batch", actor, undefined);
+  });
+  it("preserves confirmation failures without stopping or auditing success", async () => {
+    f.terminate.mockRejectedValue(
+      new DomainError("PUBLIC_SUITE_TERMINATION_CONFIRMATION_MISMATCH", "确认信息不匹配"),
+    );
+    const response = await terminate(
+      request("POST", { confirmation: { initiatorUsername: "wrong", environmentAddresses: [] } }),
+      context,
+    );
+    expect(response.status).toBe(400);
+    expect(f.audit).not.toHaveBeenCalled();
+    f.authenticate.mockRejectedValueOnce(new DomainError("AUTH_REQUIRED", "请登录"));
+    expect((await terminate(request(), context)).status).toBe(401);
+    f.authenticate.mockResolvedValueOnce({ ...identity, sessionId: "api-token:service" });
+    expect((await terminate(request(), context)).status).toBe(401);
+    f.allow.mockResolvedValue(false);
+    expect((await terminate(request(), context)).status).toBe(429);
   });
   it("keeps anonymous status reads bounded behind the publication service", async () => {
     f.read.mockResolvedValue({ name: "public projection" });

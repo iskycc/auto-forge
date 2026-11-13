@@ -149,6 +149,7 @@ function publicBatch(row: Record<string, unknown>) {
     totalRuns: row.total_runs,
     currentRound: row.current_round,
     requestedBy: row.requested_by_username ?? null,
+    initiator: context?.initiator ?? null,
     publisher: context?.publisher.username ?? null,
     terminatedBy: terminatedBy?.username ?? null,
     pauseRequestedAt: row.pause_requested_at ?? null,

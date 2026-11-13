@@ -3,8 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { CreateRunBatchRecord } from "@autoforge/application";
-import { defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
+import {
+  AiAnalysisService,
+  resolveAutomaticAiAuthority,
+  type CreateRunBatchRecord,
+} from "@autoforge/application";
+import { aiModelConfigurationSchema } from "@autoforge/contracts";
+import { SqliteIdentityAccessRepository } from "../src/sqlite-identity-access";
+import { PostgresIdentityAccessRepository } from "../src/postgres-identity-access";
+import { SqliteAiAnalysisRepository } from "../src/sqlite-ai-analysis";
+import { PostgresAiAnalysisRepository } from "../src/postgres-ai-analysis";
+import { defaultCaseSuiteExecutionPolicy, builtInRoleDefinitions } from "@autoforge/domain";
 import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
@@ -26,6 +35,64 @@ for (const adapter of ["sqlite", "postgres"] as const)
   describe.skipIf(adapter === "postgres" && !postgresUrl)(
     `${adapter} public task execution`,
     () => {
+      it("authorizes automatic AI with the public publisher and retains the actual initiator", async () => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          await h.identities.ensureBuiltInRoles(builtInRoleDefinitions, now);
+          await h.identities.assignSystemRole(
+            h.publisher.id,
+            builtInRoleDefinitions[0]!.id,
+            h.publisher.id,
+            now,
+          );
+          const record = h.record();
+          const batch = await h.batches.create(record);
+          await h.query("UPDATE run_batches SET status='failed',policy_json=? WHERE id=?", [
+            JSON.stringify({ aiAnalysisAfterCompletion: true, aiAnalysisExecutionId: batch.id }),
+            batch.id,
+          ]);
+          const configuration = aiModelConfigurationSchema.parse({
+            enabled: true,
+            baseUrl: "http://model/v1",
+            modelId: "fixture",
+          });
+          const current = await h.ai.configuration();
+          await h.ai.saveConfiguration(
+            { revision: current.revision + 1, configuration, encryptedKey: null },
+            current.revision,
+          );
+          const authority = await resolveAutomaticAiAuthority(h.identities, h.batches, batch.id);
+          expect(authority.actor?.user.id).toBe(h.publisher.id);
+          const service = new AiAnalysisService(
+            h.ai,
+            h.batches,
+            { encrypt: () => "unused", decrypt: () => "unused" },
+            { now: () => new Date(now) },
+            { next: randomUUID },
+          );
+          const job = await service.createAutomatic(authority.actor!, batch.id);
+          expect(job.requestedBy).toBe(h.publisher.id);
+          expect((await h.batches.getMetadata(batch.id))?.requestedBy?.username).toBe(
+            h.visitor.username,
+          );
+          expect((await h.batches.getMetadata(batch.id))?.publicExecution?.initiator).toEqual(
+            h.visitor,
+          );
+          await h.identities.assignSystemRole(
+            h.visitor.id,
+            builtInRoleDefinitions[0]!.id,
+            h.publisher.id,
+            now,
+          );
+          await h.identities.removeSystemRole(h.publisher.id, builtInRoleDefinitions[0]!.id);
+          const revoked = await resolveAutomaticAiAuthority(h.identities, h.batches, batch.id);
+          expect(revoked.actor).toBeNull();
+          expect(revoked.unavailableReason).toContain("分享人缺少当前 AI 或证据权限");
+          expect(
+            (await h.ai.view({ batchId: batch.id, jobId: job.id, limit: 10 }))?.job.requestedBy,
+          ).toBe(h.publisher.id);
+        });
+      });
       it("persists one latest per-link environment record and rejects stale edits or execution snapshots", async () => {
         await withHarness(adapter, async (h) => {
           await h.links.publish(h.suite.id, h.publisher.id, now);
@@ -202,6 +269,7 @@ for (const adapter of ["sqlite", "postgres"] as const)
             id: batch.id,
             publisher: h.publisher.username,
             requestedBy: h.visitor.username,
+            initiator: h.visitor,
             terminatedBy: "actual-terminator",
             publicExecution: true,
             progressPath: `/Execution?BatchId=${batch.id}`,
@@ -508,6 +576,12 @@ async function createHarness(adapter: "sqlite" | "postgres") {
   const batches = sqlite
     ? new SqliteRunBatchRepository(sqlite)
     : new PostgresRunBatchRepository(postgres!);
+  const identities = sqlite
+    ? new SqliteIdentityAccessRepository(sqlite)
+    : new PostgresIdentityAccessRepository(postgres!);
+  const ai = sqlite
+    ? new SqliteAiAnalysisRepository(sqlite)
+    : new PostgresAiAnalysisRepository(postgres!);
   const logs = createAttemptLogStore(join(directory, "logs"));
   const executions = sqlite
     ? new SqliteExecutionControlRepository(sqlite, logs)
@@ -545,6 +619,8 @@ async function createHarness(adapter: "sqlite" | "postgres") {
     suite,
     suites,
     links,
+    identities,
+    ai,
     batches,
     executions,
     record,

@@ -3,7 +3,13 @@ import { DomainError } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
 import { config as proxyConfig } from "../proxy";
-import { apiErrorResponse, readDdtUploads, readJarUpload } from "./api-response";
+import {
+  apiErrorResponse,
+  readDdtUploads,
+  readJarUpload,
+  readJsonBody,
+  readOptionalJsonBody,
+} from "./api-response";
 
 const MEBIBYTE = 1_048_576;
 
@@ -124,5 +130,45 @@ describe("DDT upload request boundaries", () => {
       code: "DDT_FILE_LIMIT_EXCEEDED",
       message: "一次最多上传 1 个表格或 ZIP。",
     });
+  });
+});
+
+describe("optional JSON confirmation bodies", () => {
+  it.each([undefined, new Uint8Array(0)])(
+    "allows absent and zero-byte bodies only through the optional reader: %j",
+    async (body) => {
+      const makeRequest = () =>
+        new Request("http://localhost/terminate", {
+          method: "POST",
+          ...(body === undefined ? {} : { body }),
+        });
+      await expect(readOptionalJsonBody(makeRequest(), 1024)).resolves.toEqual({});
+      await expect(readJsonBody(makeRequest(), 1024)).rejects.toMatchObject({
+        code: "INVALID_JSON",
+      });
+    },
+  );
+  it.each([" ", "{", "not-json"])(
+    "still rejects a nonempty malformed optional body: %s",
+    async (body) => {
+      await expect(
+        readOptionalJsonBody(
+          new Request("http://localhost/terminate", { method: "POST", body }),
+          1024,
+        ),
+      ).rejects.toMatchObject({ code: "INVALID_JSON" });
+    },
+  );
+  it("enforces the byte limit rather than trusting a declared zero size", async () => {
+    await expect(
+      readOptionalJsonBody(
+        new Request("http://localhost/terminate", {
+          method: "POST",
+          body: "x".repeat(20),
+          headers: { "content-length": "0" },
+        }),
+        10,
+      ),
+    ).rejects.toMatchObject({ code: "REQUEST_BODY_TOO_LARGE" });
   });
 });

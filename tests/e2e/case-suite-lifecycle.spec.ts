@@ -396,7 +396,7 @@ test("public task links execute with login only, share live status, record actor
       await captureUi(visitor, `public-task-environment-conflict-${width}`);
     }
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
-    await fillEnvironmentAddressList(environmentDialog, ["10.88.0.1"]);
+    await fillEnvironmentAddressList(environmentDialog, ["10.88.0.1", "10.88.0.2"]);
     await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await visitor.getByLabel("启动方式", { exact: true }).click();
     await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
@@ -439,15 +439,108 @@ test("public task links execute with login only, share live status, record actor
     });
     expect(overlap.status).toBe(409);
     expect(JSON.stringify(overlap.body)).toContain("10.88.0.1");
+    const concurrentStopPath = `/api/v1/public/case-suites/${suite.id}/executions/${concurrent.batchId}/terminate?PublisherId=${publisherId}`;
+    const missingStopConfirmation = await browserJson<{ error: { code: string } }>(
+      page,
+      concurrentStopPath,
+      { method: "POST" },
+    );
+    expect(missingStopConfirmation.status).toBe(400);
+    expect(missingStopConfirmation.body.error.code).toBe(
+      "PUBLIC_SUITE_TERMINATION_CONFIRMATION_REQUIRED",
+    );
+    for (const confirmation of [
+      { initiatorUsername: username, environmentAddresses: ["10.88.0.1"] },
+      { initiatorUsername: username, environmentAddresses: originalAddresses },
+      { initiatorUsername: E2E_ADMIN_USERNAME, environmentAddresses: ["10.88.0.1", "10.88.0.2"] },
+    ])
+      expect(
+        (await browserJson(page, concurrentStopPath, { method: "POST", body: { confirmation } }))
+          .status,
+      ).toBe(400);
+    const concurrentSummary = await browserJson<{
+      sequenceNumber: number;
+      terminationRequestedAt: string | null;
+    }>(page, `/api/v1/run-batches/${concurrent.batchId}?view=summary`);
+    expect(concurrentSummary.body.terminationRequestedAt).toBeFalsy();
+    await page.goto(url);
+    const concurrentCard = page.getByRole("article", {
+      name: `执行批次 ${concurrentSummary.body.sequenceNumber}`,
+      exact: true,
+    });
+    await concurrentCard.getByRole("button", { name: "终止执行", exact: true }).click();
+    const otherStopDialog = page.getByRole("dialog", { name: "终止任务执行", exact: true });
+    await expect(otherStopDialog.getByText("您不是此批次的拉起人", { exact: true })).toBeVisible();
+    await expect(
+      otherStopDialog.getByRole("button", { name: "确认终止", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      otherStopDialog.getByRole("textbox", { name: "拉起人账号", exact: true }),
+    ).toHaveValue("");
+    await otherStopDialog
+      .getByRole("textbox", { name: "拉起人账号", exact: true })
+      .fill("wrong-user");
+    await otherStopDialog
+      .getByRole("textbox", { name: "本批次环境 IP 1", exact: true })
+      .fill("10.88.0.1");
+    await otherStopDialog
+      .getByRole("textbox", { name: "本批次环境 IP 2", exact: true })
+      .fill("10.0.0.99");
+    await expect(
+      otherStopDialog.getByRole("button", { name: "确认终止", exact: true }),
+    ).toBeDisabled();
+    await expect(otherStopDialog).toContainText("账号与本批次拉起人不一致");
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await captureUi(page, `public-task-other-stop-invalid-${width}`);
+      await expectUiIntegrity(page);
+    }
+    await otherStopDialog.getByRole("button", { name: "返回", exact: true }).click();
+    await concurrentCard.getByRole("button", { name: "终止执行", exact: true }).click();
+    await expect(
+      otherStopDialog.getByRole("textbox", { name: "拉起人账号", exact: true }),
+    ).toHaveValue("");
+    await otherStopDialog.getByRole("textbox", { name: "拉起人账号", exact: true }).fill(username);
+    // Address order does not matter, but every address in this batch is required.
+    await otherStopDialog
+      .getByRole("textbox", { name: "本批次环境 IP 1", exact: true })
+      .fill("10.88.0.2");
+    await expect(
+      otherStopDialog.getByRole("button", { name: "确认终止", exact: true }),
+    ).toBeDisabled();
+    await otherStopDialog
+      .getByRole("textbox", { name: "本批次环境 IP 2", exact: true })
+      .fill("10.88.0.1");
+    await expect(
+      otherStopDialog.getByRole("button", { name: "确认终止", exact: true }),
+    ).toBeEnabled();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await captureUi(page, `public-task-other-stop-${width}`);
+      await expectUiIntegrity(page);
+    }
+    await otherStopDialog.getByRole("button", { name: "返回", exact: true }).click();
+    await page.getByRole("button", { name: "切换到深色模式" }).click();
+    await concurrentCard.getByRole("button", { name: "终止执行", exact: true }).click();
+    await otherStopDialog.getByRole("textbox", { name: "拉起人账号", exact: true }).fill(username);
+    await otherStopDialog
+      .getByRole("textbox", { name: "本批次环境 IP 1", exact: true })
+      .fill("10.88.0.2");
+    await otherStopDialog
+      .getByRole("textbox", { name: "本批次环境 IP 2", exact: true })
+      .fill("10.88.0.1");
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await captureUi(page, `public-task-other-stop-dark-${width}`);
+      await expectUiIntegrity(page);
+    }
+    await otherStopDialog.getByRole("button", { name: "确认终止", exact: true }).click();
+    await expect(otherStopDialog).toHaveCount(0);
+    await page.getByRole("button", { name: "切换到浅色模式" }).click();
+    expect((await browserJson(visitor, concurrentStopPath, { method: "POST" })).status).toBe(200);
     expect(
-      (
-        await browserJson(
-          visitor,
-          `/api/v1/public/case-suites/${suite.id}/executions/${concurrent.batchId}/terminate?PublisherId=${publisherId}`,
-          { method: "POST" },
-        )
-      ).status,
-    ).toBe(200);
+      (await browserJson(page, `/api/v1/run-batches/${concurrent.batchId}?view=summary`)).body,
+    ).toMatchObject({ terminatedBy: { username: E2E_ADMIN_USERNAME } });
     await visitor.getByRole("button", { name: "刷新任务状态" }).click();
     await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(1);
     await visitor.getByLabel("启动方式", { exact: true }).click();
@@ -578,6 +671,7 @@ test("public task links execute with login only, share live status, record actor
     await visitor.getByRole("button", { name: "终止执行", exact: true }).click();
     const confirm = visitor.getByRole("dialog", { name: "终止任务执行" });
     await expect(confirm).toContainText("已领取的用例");
+    await expect(confirm.getByRole("textbox")).toHaveCount(0);
     await captureUi(visitor, "public-task-terminate-dialog-1536");
     await confirm.getByRole("button", { name: "确认终止", exact: true }).click();
     await expect(confirm).toHaveCount(0);
@@ -643,6 +737,60 @@ test("public task links execute with login only, share live status, record actor
           ).body.status,
       )
       .toBe("cancelled");
+    const noEnvironmentSuite = await createVersionSuite(
+      page,
+      project.id,
+      project.versionId,
+      `${suffix} 无环境终止确认`,
+      definition.id,
+    );
+    await configureTaskExecution(page, noEnvironmentSuite.id, runner.id, {
+      concurrency: 1,
+      retryLimit: 0,
+    });
+    const noEnvironmentLink = await browserJson<{ url: string }>(
+      page,
+      `/api/v1/case-suites/${noEnvironmentSuite.id}/execution-link`,
+      { method: "POST" },
+    );
+    expect(noEnvironmentLink.status).toBe(200);
+    await refreshRunnerHeartbeat(page, runner);
+    const noEnvironmentStart = await browserJson<{ batchId: string }>(
+      visitor,
+      `/api/v1/public/case-suites/${noEnvironmentSuite.id}/executions?PublisherId=${publisherId}`,
+      { method: "POST", body: { requestKey: crypto.randomUUID(), delaySeconds: 3600 } },
+    );
+    expect(noEnvironmentStart.status, JSON.stringify(noEnvironmentStart.body)).toBe(201);
+    await page.goto(noEnvironmentLink.body.url);
+    await page.getByRole("button", { name: "终止执行", exact: true }).click();
+    const noEnvironmentDialog = page.getByRole("dialog", { name: "终止任务执行", exact: true });
+    await noEnvironmentDialog
+      .getByRole("textbox", { name: "拉起人账号", exact: true })
+      .fill(username);
+    await expect(
+      noEnvironmentDialog.getByRole("button", { name: "确认终止", exact: true }),
+    ).toBeDisabled();
+    await noEnvironmentDialog
+      .getByRole("textbox", { name: "环境 IP 确认", exact: true })
+      .fill("未配置环境 IP");
+    await expect(
+      noEnvironmentDialog.getByRole("button", { name: "确认终止", exact: true }),
+    ).toBeEnabled();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await captureUi(page, `public-task-other-stop-no-environment-${width}`);
+      await expectUiIntegrity(page);
+    }
+    await noEnvironmentDialog.getByRole("button", { name: "确认终止", exact: true }).click();
+    await expect(noEnvironmentDialog).toHaveCount(0);
+    expect(
+      (
+        await browserJson(
+          page,
+          `/api/v1/run-batches/${noEnvironmentStart.body.batchId}?view=summary`,
+        )
+      ).body,
+    ).toMatchObject({ terminatedBy: { username: E2E_ADMIN_USERNAME } });
     await visitor.getByText("Jenkins 对接指导与插件下载", { exact: true }).click();
     await expect(visitor.getByText("创建服务账号和 Jenkins 凭据", { exact: true })).toBeVisible();
     await expect(visitor.locator("pre")).toContainText(suite.id);

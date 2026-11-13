@@ -12,6 +12,7 @@ import {
   createPostgresDatabase,
   PostgresIdentityAccessRepository,
   PostgresAiAnalysisRepository,
+  PostgresRunBatchRepository,
   PostgresLogDatabaseRepository,
   PostgresRoutedAttemptLogStore,
   createAttemptLogStore,
@@ -23,7 +24,11 @@ import { namespacedKey } from "@autoforge/cache/memory";
 import { builtInRoleDefinitions, DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { aiModelConfigurationSchema } from "@autoforge/contracts";
 import { AiAnalysisWorkerHost } from "./ai-analysis-worker-host";
-import { AI_EVIDENCE_INPUT_POLICY } from "@autoforge/application";
+import {
+  AiAnalysisService,
+  resolveAutomaticAiAuthority,
+  AI_EVIDENCE_INPUT_POLICY,
+} from "@autoforge/application";
 import { AesGcmSecretCipher } from "../src/lib/secret-cipher-core";
 
 const enabled = [
@@ -254,27 +259,72 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           timeoutSeconds: 10,
         });
         await repository.saveConfiguration({ revision: 1, configuration, encryptedKey: null }, 0);
-        const job = await repository.create(
-          {
-            id: randomUUID(),
-            batchId,
-            projectId: DEFAULT_PROJECT_ID,
-            requestedBy: actorId,
-            attemptId: null,
-            strategy,
-            status: "queued",
+        let job: import("@autoforge/contracts").AiAnalysisJob;
+        if (progressive) {
+          const initiatorId = randomUUID();
+          const initiatorUsername = `public-visitor-${suffix}`;
+          await identities.createLocalUser({
+            id: initiatorId,
+            username: initiatorUsername,
+            normalizedUsername: initiatorUsername,
+            displayName: "公开执行验证",
+            passwordHash: "not-a-login-credential",
+            forcePasswordChange: false,
             createdAt: now,
-            updatedAt: now,
-            total: 0,
-            prepared: 0,
-            completed: 0,
-            failed: 0,
-            reason: null,
-            revision: 1,
-          },
-          "full-runtime",
-          progressive ? { followFinalResults: true } : undefined,
-        );
+          });
+          await handle.pool.query(
+            "UPDATE run_batches SET requested_by_username=$1,requested_by_source='local',public_execution_json=$2,policy_json=$3 WHERE id=$4",
+            [
+              initiatorUsername,
+              JSON.stringify({
+                schemaVersion: 1,
+                publisher: { id: actorId, username: `ai-${suffix}`, source: "local" },
+                initiator: { id: initiatorId, username: initiatorUsername, source: "local" },
+                requestKey: randomUUID(),
+              }),
+              JSON.stringify({ aiAnalysisAfterCompletion: true, aiAnalysisExecutionId: batchId }),
+              batchId,
+            ],
+          );
+          const batches = new PostgresRunBatchRepository(handle);
+          const authority = await resolveAutomaticAiAuthority(identities, batches, batchId);
+          expect(authority.actor?.user.id).toBe(actorId);
+          expect(await identities.listSystemRoleBindings([initiatorId])).toEqual([]);
+          const service = new AiAnalysisService(
+            repository,
+            batches,
+            new AesGcmSecretCipher(masterKey),
+            { now: () => new Date() },
+            { next: randomUUID },
+          );
+          job = await service.createAutomatic(authority.actor!, batchId);
+          expect(job.requestedBy).toBe(actorId);
+          expect((await batches.getMetadata(batchId))?.requestedBy?.username).toBe(
+            initiatorUsername,
+          );
+        } else {
+          job = await repository.create(
+            {
+              id: randomUUID(),
+              batchId,
+              projectId: DEFAULT_PROJECT_ID,
+              requestedBy: actorId,
+              attemptId: null,
+              strategy,
+              status: "queued",
+              createdAt: now,
+              updatedAt: now,
+              total: 0,
+              prepared: 0,
+              completed: 0,
+              failed: 0,
+              reason: null,
+              revision: 1,
+            },
+            "full-runtime",
+            progressive ? { followFinalResults: true } : undefined,
+          );
+        }
         const planning = (await repository.claimPlanning(
           "planner",
           now,
@@ -429,7 +479,21 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
               timeout: 60000,
               interval: 500,
             })
-            .toMatchObject({ total: caseCount, completed: caseCount, acceptingFinalResults: true });
+            .toMatchObject({ total: caseCount, completed: caseCount, acceptingFinalResults: true })
+            .catch(async (cause: unknown) => {
+              const view = await repository.view({ batchId, jobId: job.id, limit: 50 });
+              throw new Error(
+                JSON.stringify({
+                  modelCalls,
+                  job: view?.job,
+                  items: view?.items.map((item) => ({ status: item.status, reason: item.reason })),
+                  workerErrors: errors.map((error) =>
+                    error instanceof Error ? error.message : String(error),
+                  ),
+                }),
+                { cause },
+              );
+            });
           expect(
             (await handle.pool.query("SELECT status FROM run_batches WHERE id=$1", [batchId]))
               .rows[0]!.status,

@@ -9,6 +9,16 @@ export function overlappingEnvironmentAddresses(
   ];
 }
 
+/** The full environment pool must match; address order and equivalent IP spellings do not matter. */
+export function sameEnvironmentAddresses(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  const leftKeys = new Set(left.map(environmentAddressKey));
+  const rightKeys = new Set(right.map(environmentAddressKey));
+  return leftKeys.size === rightKeys.size && [...leftKeys].every((key) => rightKeys.has(key));
+}
+
 function environmentAddressKey(address: string): string {
   const value = address.trim().toLowerCase();
   const ipv6Url = `http://[${value.replace(/^\[|\]$/g, "")}]/`;

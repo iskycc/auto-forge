@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changePublicSuiteEnvironmentSchema,
+  terminatePublicSuiteExecutionSchema,
   publicSuiteViewSchema,
   startPublicSuiteExecutionSchema,
 } from "./public-suite-execution";
@@ -24,6 +25,25 @@ describe("public task execution environment", () => {
       revision: 0,
       change: null,
     });
+  });
+  it("accepts typed termination confirmation without trusting client attribution", () => {
+    expect(terminatePublicSuiteExecutionSchema.parse({})).toEqual({});
+    expect(
+      terminatePublicSuiteExecutionSchema.parse({
+        confirmation: { initiatorUsername: " starter ", environmentAddresses: ["10.0.0.1"] },
+      }),
+    ).toMatchObject({ confirmation: { initiatorUsername: "starter" } });
+    for (const input of [
+      { actor: { id: "forged" } },
+      { confirmation: { initiatorUsername: "", environmentAddresses: [] } },
+      {
+        confirmation: {
+          initiatorUsername: "starter",
+          environmentAddresses: Array.from({ length: 129 }, () => "10.0.0.1"),
+        },
+      },
+    ])
+      expect(terminatePublicSuiteExecutionSchema.safeParse(input).success).toBe(false);
   });
   it("keeps saved task defaults when no override is provided", () => {
     expect(startPublicSuiteExecutionSchema.parse({ requestKey })).toEqual({

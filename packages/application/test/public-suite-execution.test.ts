@@ -4,7 +4,6 @@ import {
   PublicSuiteExecutionService,
   type PublicSuiteExecutionRepository,
 } from "../src/public-suite-execution";
-import type { PublicSuiteBatch } from "@autoforge/contracts";
 
 const now = "2026-10-27T02:00:00.000Z";
 const actor = { id: "visitor", username: "no-project-role", source: "local" as const };
@@ -319,8 +318,72 @@ describe("public task execution", () => {
       expect(f.control.terminateBatch).not.toHaveBeenCalled();
     },
   );
+  it("requires another user, including the publisher, to type the initiator and the complete batch IP pool", async () => {
+    f.links.batch.mockResolvedValue({
+      publicExecution: true,
+      initiator: actor,
+      requestedBy: actor.username,
+      environmentAddresses: ["10.0.0.21", "2001:db8::21"],
+    });
+    await expect(
+      f.service.terminate("suite", publisher.id, "batch", publisher),
+    ).rejects.toMatchObject({ code: "PUBLIC_SUITE_TERMINATION_CONFIRMATION_REQUIRED" });
+    for (const confirmation of [
+      { initiatorUsername: "wrong-user", environmentAddresses: ["10.0.0.21", "2001:db8::21"] },
+      { initiatorUsername: actor.username, environmentAddresses: ["10.0.0.21"] },
+      { initiatorUsername: actor.username, environmentAddresses: ["10.0.0.21", "10.0.0.99"] },
+      {
+        initiatorUsername: actor.username,
+        environmentAddresses: ["10.0.0.21", "2001:db8::21", "10.0.0.99"],
+      },
+    ])
+      await expect(
+        f.service.terminate("suite", publisher.id, "batch", publisher, confirmation),
+      ).rejects.toMatchObject({ code: "PUBLIC_SUITE_TERMINATION_CONFIRMATION_MISMATCH" });
+    expect(f.control.terminateBatch).not.toHaveBeenCalled();
+    await expect(
+      f.service.terminate("suite", publisher.id, "batch", publisher, {
+        initiatorUsername: actor.username,
+        environmentAddresses: ["2001:0db8:0:0:0:0:0:21", " 10.0.0.21 "],
+      }),
+    ).resolves.toBe(2);
+    expect(f.control.terminateBatch).toHaveBeenCalledWith(
+      publisher.id,
+      "batch",
+      "从任务公开执行页终止",
+      publisher,
+    );
+  });
+  it("compares immutable actor IDs and explicitly confirms a batch without an environment", async () => {
+    f.links.batch.mockResolvedValue({
+      publicExecution: true,
+      initiator: { ...actor, id: "different-user" },
+      requestedBy: actor.username,
+      environmentAddresses: [],
+    });
+    await expect(f.service.terminate("suite", publisher.id, "batch", actor)).rejects.toMatchObject({
+      code: "PUBLIC_SUITE_TERMINATION_CONFIRMATION_REQUIRED",
+    });
+    await expect(
+      f.service.terminate("suite", publisher.id, "batch", actor, {
+        initiatorUsername: actor.username,
+        environmentAddresses: [],
+      }),
+    ).rejects.toMatchObject({ code: "PUBLIC_SUITE_TERMINATION_CONFIRMATION_MISMATCH" });
+    await expect(
+      f.service.terminate("suite", publisher.id, "batch", actor, {
+        initiatorUsername: actor.username,
+        environmentAddresses: [],
+        noEnvironmentConfirmation: "未配置环境 IP",
+      }),
+    ).resolves.toBe(2);
+  });
   it("records the actual terminator using the existing authoritative cancellation flow", async () => {
-    f.links.batch.mockResolvedValue({ publicExecution: true } as PublicSuiteBatch);
+    f.links.batch.mockResolvedValue({
+      publicExecution: true,
+      initiator: actor,
+      environmentAddresses: [],
+    });
     await expect(f.service.terminate("suite", "maintainer", "batch", actor)).resolves.toBe(2);
     expect(f.control.terminateBatch).toHaveBeenCalledWith(
       actor.id,

@@ -4,6 +4,7 @@ import { Result } from "antd";
 import { isDomainError } from "@autoforge/domain";
 import { PublicSuiteExecution } from "@/components/public-suite-execution";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
+import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -28,10 +29,12 @@ export default async function PublicTaskPage({
       if (isDomainError(cause) && cause.code === "PUBLIC_SUITE_LINK_NOT_FOUND") return null;
       throw cause;
     });
+  const identity = view ? await currentIdentity() : null;
   return view ? (
     <PublicSuiteExecution
       key={`${view.suiteId}:${view.publisher.id}`}
       initial={view}
+      currentUserId={identity?.user.id ?? null}
       baseUrl={services.configurationStore.read().web.publicBaseUrl}
     />
   ) : (

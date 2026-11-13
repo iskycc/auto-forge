@@ -16,14 +16,18 @@ import {
 } from "antd";
 import { Clock3, ExternalLink, Play, RefreshCw, Square, UserRound } from "lucide-react";
 import { useRef, useState } from "react";
-import type { PublicSuiteBatch, PublicSuiteView } from "@autoforge/contracts";
+import type {
+  PublicSuiteBatch,
+  PublicSuiteView,
+  PublicSuiteTerminationConfirmation,
+} from "@autoforge/contracts";
 import { CopyableText } from "./ui/copyable-text";
 import {
   publicSuiteExecutionResultSchema,
   publicSuiteEnvironmentStateSchema,
 } from "@autoforge/contracts";
 import { Button } from "./ui/button";
-import { ActionDialog } from "./action-dialog";
+import { PublicSuiteTerminationDialog } from "./public-suite-termination-dialog";
 import { ColorModeToggle } from "./color-mode-toggle";
 import { JenkinsTaskGuide } from "./jenkins-task-guide";
 import { useLoginDialog } from "./login-dialog-provider";
@@ -41,8 +45,10 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 export function PublicSuiteExecution({
   initial,
   baseUrl,
+  currentUserId,
 }: {
   initial: PublicSuiteView;
+  currentUserId: string | null;
   baseUrl: string | undefined;
 }) {
   const { view, error: refreshError, refresh, applyEnvironment } = usePublicSuite(initial);
@@ -133,7 +139,7 @@ export function PublicSuiteExecution({
       setPending(false);
     }
   }
-  async function terminate() {
+  async function terminate(confirmation?: PublicSuiteTerminationConfirmation) {
     if (!stop || submitting.current) return;
     submitting.current = true;
     setPending(true);
@@ -141,7 +147,11 @@ export function PublicSuiteExecution({
     try {
       const response = await fetch(
         `${endpoint}/executions/${encodeURIComponent(stop.id)}/terminate?${query}`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(confirmation ? { confirmation } : {}),
+        },
       );
       if (!response.ok) await throwApiErrorResponse(response, "终止请求失败，请重试。");
       setStop(null);
@@ -440,40 +450,17 @@ export function PublicSuiteExecution({
         <footer className="text-center text-xs leading-6 text-muted-foreground">
           AutoForge · 任务配置由平台维护 · 请仅向可信人员提供此执行入口
         </footer>
-        <ActionDialog
-          open={!!stop}
-          title="终止任务执行"
-          onClose={() => setStop(null)}
-          closeDisabled={pending}
-          footer={
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setStop(null)}
-              >
-                返回
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                loading={pending}
-                onClick={() => void terminate()}
-              >
-                确认终止
-              </Button>
-            </>
-          }
-        >
-          <Alert
-            type="warning"
-            showIcon
-            title={`确定终止批次 #${stop?.sequenceNumber ?? ""}？`}
-            description="停止后续派发和重跑；已领取的用例会按现有平滑终止规则完成并上传。终止不一定立即结束，操作人会写入执行记录。"
+        {stop ? (
+          <PublicSuiteTerminationDialog
+            key={stop.id}
+            batch={stop}
+            currentUserId={currentUserId}
+            pending={pending}
+            error={error}
+            onClose={() => setStop(null)}
+            onConfirm={(confirmation) => void terminate(confirmation)}
           />
-          {error ? <Alert type="error" title={error} className="mt-4" /> : null}
-        </ActionDialog>
+        ) : null}
       </div>
     </main>
   );

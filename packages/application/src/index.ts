@@ -84,3 +84,5 @@ export * from "./jenkins-dependency-build-ports";
 export * from "./jenkins-dependency-build";
 
 export * from "./observe-deleted-runner-contacts";
+
+export { resolveAutomaticAiAuthority } from "./automatic-ai-authorization";

@@ -66,6 +66,22 @@ export const startPublicSuiteExecutionSchema = z
   })
   .strict();
 
+export const PUBLIC_SUITE_NO_ENVIRONMENT_CONFIRMATION = "未配置环境 IP";
+
+export const publicSuiteTerminationConfirmationSchema = z
+  .object({
+    initiatorUsername: z.string().trim().min(1).max(256),
+    environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses,
+    noEnvironmentConfirmation: z.string().trim().max(64).optional(),
+  })
+  .strict();
+
+export const terminatePublicSuiteExecutionSchema = z
+  .object({
+    confirmation: publicSuiteTerminationConfirmationSchema.optional(),
+  })
+  .strict();
+
 export const publicSuiteLinkQuerySchema = z
   .object({
     PublisherId: z.string().min(1).max(128),
@@ -87,6 +103,7 @@ export const publicSuiteBatchSchema = z.object({
   totalRuns: z.number().int().nonnegative(),
   currentRound: z.number().int().positive(),
   requestedBy: z.string().nullable(),
+  initiator: executionActorSchema.nullable().default(null),
   publisher: z.string().nullable(),
   terminatedBy: z.string().nullable(),
   pauseRequestedAt: z.string().nullable().optional(),
@@ -134,3 +151,7 @@ export type PublicSuiteView = z.infer<typeof publicSuiteViewSchema>;
 
 export type PublicSuiteEnvironmentState = z.infer<typeof publicSuiteEnvironmentStateSchema>;
 export type ChangePublicSuiteEnvironment = z.infer<typeof changePublicSuiteEnvironmentSchema>;
+
+export type PublicSuiteTerminationConfirmation = z.infer<
+  typeof publicSuiteTerminationConfirmationSchema
+>;

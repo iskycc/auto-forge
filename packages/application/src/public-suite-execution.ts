@@ -1,5 +1,8 @@
 import {
   publicSuiteExecutionPath,
+  PUBLIC_SUITE_NO_ENVIRONMENT_CONFIRMATION,
+  publicSuiteTerminationConfirmationSchema,
+  type PublicSuiteTerminationConfirmation,
   changePublicSuiteEnvironmentSchema,
   type PublicSuiteEnvironmentState,
   type ChangePublicSuiteEnvironment,
@@ -11,7 +14,7 @@ import {
   type PublicSuiteView,
   type StartPublicSuiteExecution,
 } from "@autoforge/contracts";
-import { DomainError, assertCaseSuiteLockOwner } from "@autoforge/domain";
+import { DomainError, assertCaseSuiteLockOwner, sameEnvironmentAddresses } from "@autoforge/domain";
 import type {
   CaseSuiteRepository,
   Clock,
@@ -212,12 +215,37 @@ export class PublicSuiteExecutionService {
     publisherId: string,
     batchId: string,
     actor: ExecutionActor,
+    confirmation?: PublicSuiteTerminationConfirmation,
   ): Promise<number> {
     await this.requirePublisher(suiteId, publisherId);
     const batch = await this.links.batch(suiteId, batchId);
     // The grant controls only executions created through this task's public entry.
     if (!batch?.publicExecution)
       throw new DomainError("RUN_BATCH_NOT_FOUND", "该批次不属于此任务的公开执行记录。");
+    if (batch.initiator?.id !== actor.id) {
+      if (!confirmation || !batch.initiator)
+        throw new DomainError(
+          "PUBLIC_SUITE_TERMINATION_CONFIRMATION_REQUIRED",
+          "您不是此批次的拉起人，请填写拉起人账号和本批次全部环境 IP 后再确认终止。",
+        );
+      const validated = publicSuiteTerminationConfirmationSchema.parse(confirmation);
+      const matchesEnvironment = sameEnvironmentAddresses(
+        batch.environmentAddresses,
+        validated.environmentAddresses,
+      );
+      const confirmsEmptyEnvironment =
+        batch.environmentAddresses.length > 0 ||
+        validated.noEnvironmentConfirmation === PUBLIC_SUITE_NO_ENVIRONMENT_CONFIRMATION;
+      if (
+        validated.initiatorUsername !== batch.initiator.username ||
+        !matchesEnvironment ||
+        !confirmsEmptyEnvironment
+      )
+        throw new DomainError(
+          "PUBLIC_SUITE_TERMINATION_CONFIRMATION_MISMATCH",
+          "确认信息不匹配：请核对拉起人账号和该批次实际使用的全部环境 IP；不要填写任务默认 IP 或其他批次的 IP。",
+        );
+    }
     return this.control.terminateBatch(actor.id, batchId, "从任务公开执行页终止", actor);
   }
 

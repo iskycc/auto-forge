@@ -24,6 +24,16 @@
 
 终止复用现有平滑终止：停止后续派发、重跑和轮次恢复，已领取用例继续完成上传。倒计时中的批次尚未派发时可以直接终止。页面明确显示“正在终止”，不把终止请求成功当作全部进程已结束。
 
+### 非拉起人终止确认
+
+公开任务页“终止执行”始终先弹框。若当前个人账号 ID 与批次保存的实际拉起人 ID 一致，沿用原有简单确认；其他人（包括分享人和管理员）必须手动填写拉起人账号和该批次实际使用的完整环境 IP 集合，不能只填写其中一个地址，不能使用任务默认地址或后续执行的共享地址。输入不预填，取消后重新打开清空草稿；不提供记住确认或跳过选项。
+
+多 IP 使用一个地址一个输入框，顺序不限，IPv6 等价写法与 IPv4 映射按既有环境地址规则规范化比较；历史域名地址仍兼容。未配置环境时，仍需输入拉起人账号并键入“未配置环境 IP”，空白不能通过。输入错误时显示原因且禁用确认；提交失败保留输入，等待期间禁止重复提交或关闭。
+
+`POST /api/v1/public/case-suites/:suiteId/executions/:batchId/terminate?PublisherId=…` 接受可选 `confirmation`：`{initiatorUsername,environmentAddresses,noEnvironmentConfirmation?}`。拉起人原有空请求体继续有效；非拉起人缺少确认返回 `PUBLIC_SUITE_TERMINATION_CONFIRMATION_REQUIRED`，不匹配返回 `PUBLIC_SUITE_TERMINATION_CONFIRMATION_MISMATCH`（均为 400），失败不触发终止或成功审计。校验在共享应用服务执行，直接调用接口也必须通过；公开批次投影从不可变上下文返回拉起人身份，不依赖显示名猜测身份。匿名／API Token、同源、有效公开授权和每人每分钟 20 次限流保护仍在入口执行。
+
+核对通过后复用原有权威终止事务，记录实际终止人，不改变暂停、平滑排空、租约与首位终止人幂等规则。任务、批次的配置与拉起人快照不会在终止时更改；后台有权限的管理终止入口保持原有行为。Lite／Full 共享校验，新增字段为兼容投影字段，不新增数据库迁移、平台配置、生产依赖或 Runner 协议。
+
 ## 下一次执行环境 IP
 
 任务概览显示该公开链接当前共享的全部环境地址，尚未修改时使用任务默认值。已登录用户可点击“修改环境 IP”，在列表弹窗中每个输入框填写一个 IPv4 或 IPv6 地址，可添加或删除输入框，最多 128 个，拒绝空列表、无效地址和重复地址；“恢复任务配置”撤销该链接的自定义 IP，并记录恢复人。未启用 Adapter 时不提供修改入口。原任务保存的域名等地址仍可展示并按原配置执行，编辑后的列表要求使用 IP。
@@ -120,3 +130,44 @@ v1.20.22 同时修正版本复制和 DDT 变更提交的既有 HTTP 入口，统
 ## 公开页展示布局
 
 任务摘要先展示项目版本、分享人、执行状态和四项统计；说明超过三行可展开。下方两列把当前与最近执行放在主区域，启动方式、环境 IP、登录与进展链接集中在右侧控制卡片。任务配置说明折叠显示，Jenkins 指导与内置下载保留原入口。当前执行最多 10 条，最近公开执行最多 5 条；复用原有 5 秒刷新、登录会话与幂等提交，不新增轮询或展开全量用例。
+
+## 非拉起人终止验证（2026-11-13）
+
+- 新增回归先复现非拉起人不输入确认信息也能终止。最终 13 个定向测试文件共 245 项通过，覆盖真实 SQLite／PostgreSQL 身份投影、同名不同 ID、分享人无例外、完整 IP 集合与 IPv6 等价形式、未配置环境的显式确认、失败不调用终止、不写成功审计，以及匿名／API Token／限流边界。
+- 浏览器回归发现 Node HTTP 桥接会把原有零字节 POST 表示为空流，原先只检查 `request.body` 是否为空不足以识别；新增有界 `readOptionalJsonBody` 接纳真正零字节内容，严格 JSON 读取仍拒绝空体，非空损坏内容及伪造长度超限仍拒绝。新增真实空流入口测试和边界测试通过。
+- Lite 与 Full 双 Web 各一项完整公开任务 Playwright 场景通过；Full 使用独立 Worker 与真实 PostgreSQL／Redis／NATS／MinIO。包含拉起人原有简单确认、非拉起人错误／部分／默认地址拦截、取消后清空、正确多 IP 反序填写、无环境确认、实际停止人记录及重复终止不覆盖首位停止人。延续公开执行、领取、日志上传、完成上报、暂停／恢复、倒计时、共享 IP 与撤销授权流程。
+- 实际审查 1024×768、1536×960 深浅色正确／错误填写和无环境弹窗截图，输入、提示、滚动主体及固定按钮无溢出或错位。证据在本机 `/var/tmp/autoforge-public-stop-lite-final/` 与 `/var/tmp/autoforge-public-stop-full-ui/`。一次本地注册请求连接重置和一次外层执行会话中断不计为通过；最终各以独立完整运行通过，没有增加场景自动重试或放宽断言。
+- 受影响源文件 Prettier／ESLint、Web／Worker／E2E 类型检查和 Web／Worker 生产构建通过。构建和浏览器按限核方式串行执行；未运行全量 E2E、十万级压力、真实业务 JVM／SSH／Jenkins 或发布流水线，本次不修改这些执行协议和资源。
+
+```sh
+pnpm exec vitest run packages/domain/test/execution-environment-overlap.test.ts packages/application/test/control-executions.test.ts packages/contracts/src/public-suite-execution.test.ts packages/contracts/test/public-suite-execution.test.ts packages/application/test/public-suite-execution.test.ts packages/application/test/schedule-run-batches.test.ts packages/db/test/public-suite-execution.integration.test.ts packages/db/test/public-suite-environment-migration.integration.test.ts packages/db/test/public-suite-migration.integration.test.ts apps/web/src/lib/public-suite-execution-api.test.ts apps/web/src/lib/api-response.test.ts apps/web/src/lib/suite-execution-environment.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm exec playwright test tests/e2e/case-suite-lifecycle.spec.ts --grep 'public task links execute' --workers=1
+pnpm exec playwright test --config playwright.full.config.ts tests/e2e/case-suite-lifecycle.spec.ts --grep 'public task links execute' --workers=1
+```
+
+数据库测试连接由本机私密配置注入，不包含在仓库或命令示例中。
+
+## 公开任务自动 AI 初析授权
+
+任务开启执行后自动 AI 初析时，后台从批次不可变公开执行快照读取分享人的用户 ID，核对分享人当前账号及所属项目的 `analysis.ai.create`、`run.read`、`case.read`、`log.read`；公开入口的实际拉起人无需因此额外具备 AI 权限。分享人改名后仍按原 ID 查找，失效／禁用或权限撤销时记录分享人对应原因，不借用拉起人、任务创建人或管理员权限。
+
+创建的 AI 作业保存分享人作为授权账号，后续 Worker 在取证、模型调用及结论提交前沿用当前权限复核。执行批次的拉起人、分享人和终止人记录不改写；普通任务自动分析、手动发起分析、读取与导出报告继续按原有请求人的权限校验。已有作业的授权归属和失败记录不追溯改写；新执行按新规则创建自动作业，分享人也可按现有入口手动重新发起分析。
+
+Lite／Full 使用同一应用授权函数和后台线程，按候选批次有界读取元数据，不加载全部用例或日志；复用现有 SQLite 队列／Full outbox、NATS、Redis 额度与 MinIO 证据流程。无需数据库迁移、额外配置或新依赖。
+
+### 自动 AI 授权验证（2026-11-13）
+
+- 回归先复现公开批次沿用拉起人授权的问题；单元测试覆盖无 AI 权限拉起人、分享人改名／禁用／删除／撤权、拉起人有权限也不能替代分享人，以及普通历史批次仅存用户名的兼容。手动分析及报告读写仍验证当前请求人。
+- 8 个文件 155 项定向回归通过，真实 SQLite／PostgreSQL 均验证从不可变批次读取分享人、创建 AI 作业归属、原拉起人记录不变及撤权后拒绝，不改写已有 AI 作业归属。范围还包含 AI 证据预算、模型输入处理、自动最终轮次候选及原执行授权。
+- Full 渐进初析专项通过：真实 PostgreSQL、Redis、NATS、MinIO、独立日志库和两个 AI Worker，合成模型完成实际日志读取、初步建议和结论落库；公开执行的拉起人没有系统角色，分享人有 AI 权限，AI 作业保存分享人 ID。原有模型并发、outbox 唤醒、日志隔离及最终轮次补偿断言均保留。其余五个未改动的 Full 矩阵项本轮未运行；合成模型仅验证链路，不评价真实模型准确率。
+- 受影响文件 Prettier／ESLint、Web／测试类型、服务端入口、全部后台线程及独立 Worker 构建通过。首次 Full 准备遗漏线程产物的失败不计为通过，补齐产物后完整专项通过；没有放宽断言或增加自动重试。本轮不修改 UI 布局，沿用上一节已验证页面，不重复完整 UI／离线／真实 Runner 验收，也未发布版本。
+
+```sh
+pnpm exec vitest run packages/application/test/automatic-ai-authorization.test.ts packages/application/test/ai-analysis.test.ts packages/application/test/public-suite-execution.test.ts packages/db/test/public-suite-execution.integration.test.ts packages/db/test/ai-analysis.integration.test.ts packages/db/test/progressive-ai-analysis.integration.test.ts apps/web/server/ai-model-gateway.test.ts apps/web/server/ai-evidence-input.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm --filter @autoforge/web build:server
+pnpm --filter @autoforge/web build:work-thread
+pnpm --filter @autoforge/worker build
+pnpm exec vitest run apps/web/server/ai-full-runtime.integration.test.ts -t 'progressive=true' --maxWorkers=1 --no-file-parallelism
+```
+
+数据库及中间件凭据由本机私密测试配置注入。专项证据日志位于本机 `/var/tmp/autoforge-ai-authority-*.log`。

@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.15 - 2026-11-13
+
+### Added
+
+- 公开任务非拉起人终止批次时，弹框要求手动填写拉起人账号及该批次完整环境 IP；分享人和管理员也需确认，前后端均核对。多 IP 顺序不限，漏填、填错不能终止；未配置 IP 时需明确输入确认，取消后清空草稿，失败时保留输入。
+
+### Fixed
+
+- 公开任务自动 AI 初析改按批次中记录的链接分享人 ID 校验当前 AI 与证据权限，不再要求实际拉起人具备 AI 权限；AI 作业及后续 Worker 使用分享人身份，分享人改名仍可解析，禁用、删除或撤权时不借用其他人的权限。执行记录仍保留实际拉起人，普通执行、历史仅存用户名的批次及手动 AI 分析沿用原规则。
+- 保留拉起人原有终止确认和空请求体调用；正确处理 Node HTTP 桥接产生的零字节请求流，普通 JSON 接口仍严格拒绝空体或损坏内容。终止继续复用原有平滑排空和幂等规则，不覆盖首位停止人。
+
+### Compatibility
+
+- 从 v1.22.14 升级不新增数据库迁移、生产依赖、平台配置或 Runner 协议，无需重装 Agent；Full 同步升级 Web／Worker。
+- 公开终止接口新增可选 `confirmation`。拉起人旧调用继续有效，其他人必须提交匹配账号和完整环境地址；后台有权限的管理终止入口保持原行为。共享 IP、任务默认配置和已创建批次的地址快照不改变。
+- 已有 AI 作业归属与失败记录不追溯改写；历史失败初析可由分享人手动重新发起，或重新执行任务后按新规则创建自动作业。报告读取与导出继续检查当前查看人的权限。
+
+### Verification
+
+- 终止确认范围 245 项、AI 授权范围 155 项定向回归分别通过，两组有交集，不合并为独立总数；包含真实 SQLite／PostgreSQL、身份与完整 IP 比较、空请求兼容、分享人撤权、历史普通执行及实际拉起人记录保留。
+- Lite／Full 公开任务完整 Playwright 场景分别通过；实际审查 1024×768、1536×960 深浅色正确／错误输入及无环境弹窗截图，无新增溢出或错位。Full 双 AI Worker 专项使用真实 PostgreSQL、Redis、NATS、MinIO、独立日志库和合成模型，完成取证、模型调用及结论落库。详见[公开任务验证记录](./docs/architecture/public-task-execution.md)。
+- 受影响文件 Prettier／ESLint、Web／Worker／测试类型检查通过；终止功能完成 Web／Worker 生产构建，AI 修复完成服务端入口、全部后台线程及独立 Worker 构建。
+- 按用户要求走最快路径，仅启动 Release，复用上述验证，不运行完整标准 CI、Release checks 或 Published Release acceptance；保留原生 amd64／arm64 构建、镜像启动、内置资源、SBOM、签名及资产完整性检查。未重跑全量 E2E、十万级压力、真实业务 JVM／SSH／Jenkins、真实模型准确率或完整离线发布验收。
+
 ## 1.22.14 - 2026-11-13
 
 ### Added

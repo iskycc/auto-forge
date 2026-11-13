@@ -5,8 +5,7 @@ import { aiThreadConfigurationSchema } from "./ai-analysis-configuration";
 import {
   AiAnalysisWorker,
   AiAnalysisService,
-  resolveAiActor,
-  normalizeIdentityUsername,
+  resolveAutomaticAiAuthority,
   type AiAnalysisRepository,
   type CachePort,
 } from "@autoforge/application";
@@ -70,27 +69,23 @@ try {
           const candidates = await resources.repository.automaticCandidates(automaticAfter, 20);
           for (const candidate of candidates) {
             automaticAfter = candidate.batchId;
-            if (!candidate.requestedByUsername) {
-              await recordSkipped(candidate, "自动初析未发起：执行快照未记录可授权的拉起人。");
-              continue;
-            }
-            const credential = await resources.identities.findUserByUsername(
-              normalizeIdentityUsername(candidate.requestedByUsername),
+            const authority = await resolveAutomaticAiAuthority(
+              resources.identities,
+              resources.batches,
+              candidate.batchId,
+              candidate.requestedByUsername,
             );
-            const actor = credential
-              ? await resolveAiActor(resources.identities, credential.user.id)
-              : null;
-            if (!actor) {
-              await recordSkipped(candidate, "自动初析未发起：执行拉起账号不存在或已禁用。");
+            if (!authority.actor) {
+              await recordSkipped(candidate, authority.unavailableReason);
               continue;
             }
             try {
-              await service.createAutomatic(actor, candidate.batchId);
+              await service.createAutomatic(authority.actor, candidate.batchId);
             } catch (error) {
               if (isDomainError(error) && error.code === "AUTH_FORBIDDEN")
                 await recordSkipped(
                   candidate,
-                  "自动初析未发起：执行拉起人缺少当前 AI 或证据权限。",
+                  `自动初析未发起：${authority.actorLabel}缺少当前 AI 或证据权限。`,
                 );
               else report(error);
             }
