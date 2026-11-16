@@ -386,6 +386,8 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       const decision = outcomeAfterCompletion({
         outcome: effectiveResult.status,
         attemptNumber: control.attempt_number,
+        retryMode: control.retry_mode,
+        executionRound: control.execution_round,
         retryLimit: Number(control.retry_limit),
         unlimitedRetries: JSON.parse(control.policy_json ?? "{}")?.unlimitedRetries === true,
         cancellationRequested: control.run_cancel_requested_at !== null,
@@ -1820,10 +1822,13 @@ async function expireAttempt(
   const decision = outcomeAfterCompletion({
     outcome: "timed_out",
     attemptNumber: control.attempt_number,
+    retryMode: control.retry_mode,
+    executionRound: control.execution_round,
     retryLimit: Number(control.retry_limit),
     unlimitedRetries: JSON.parse(control.policy_json ?? "{}")?.unlimitedRetries === true,
     cancellationRequested: control.run_cancel_requested_at !== null,
-    retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+    retryableRunnerFailure:
+      control.run_cancel_requested_at === null && isRetryableRunnerFailure(expiration.resultCode),
     runnerFailuresBefore: failureCounts.runner,
     ordinaryFailuresBefore: failureCounts.ordinary,
     retrySuppressed: control.batch_termination_requested_at !== null,
@@ -1833,7 +1838,8 @@ async function expireAttempt(
   const queueTiming = retryQueueTiming({
     runStatus,
     retryMode: control.retry_mode,
-    retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+    retryableRunnerFailure:
+      control.run_cancel_requested_at === null && isRetryableRunnerFailure(expiration.resultCode),
     currentExecutionRound: control.execution_round,
     eligibleAt: recordedAt,
     queueTimeoutMs: control.queue_timeout_ms,
@@ -1857,7 +1863,7 @@ async function expireAttempt(
      WHERE id = $7 AND status IN ('assigned', 'running')`,
     [
       runStatus,
-      runStatus === "queued" ? null : attemptStatus,
+      runStatus === "queued" ? null : runStatus === "cancelled" ? "cancelled" : attemptStatus,
       runStatus === "queued" ? null : expiration.resultCode,
       queueTiming.heldRound,
       queueTiming.queueDeadlineAt,
@@ -1921,12 +1927,29 @@ async function cancelRun(
     id: string;
     batch_id: string;
     status: ExecutionRunStatus;
-  }>("SELECT id, batch_id, status FROM execution_runs WHERE id = $1 FOR NO KEY UPDATE", [
-    input.runId,
-  ]);
+    execution_round: number;
+    attempt_count: number;
+    cancel_requested_at: string | null;
+    retry_mode: "immediate" | "round";
+    retry_limit: number;
+    policy_json: string | null;
+    queue_timeout_ms: number;
+    batch_status: RunBatchStatus;
+    batch_cancel_requested_at: string | null;
+  }>(
+    `SELECT r.id,r.batch_id,r.status,r.execution_round,r.attempt_count,r.cancel_requested_at,
+        b.retry_mode,b.retry_limit,b.policy_json,b.queue_timeout_ms,b.status AS batch_status,
+        b.cancel_requested_at AS batch_cancel_requested_at
+        FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
+        WHERE r.id=$1 FOR NO KEY UPDATE OF r`,
+    [input.runId],
+  );
   const run = result.rows[0];
   if (!run) return false;
   if (isTerminalRunStatus(run.status)) return true;
+  // Keep repeated cancellation requests on their original attempt until a new
+  // assignment atomically clears the marker and starts the next actual attempt.
+  if (run.status === "queued" && run.cancel_requested_at !== null) return true;
   const attemptResult = await client.query<{ id: string; status: RunAttemptStatus }>(
     "SELECT id, status FROM run_attempts WHERE execution_run_id = $1 ORDER BY attempt_number DESC LIMIT 1",
     [input.runId],
@@ -1975,12 +1998,42 @@ async function cancelRun(
       recordedAt: input.requestedAt,
     });
   }
-  const runStatus = transitionExecutionRun(run.status, "cancelled");
+  const decision = outcomeAfterCompletion({
+    outcome: "cancelled",
+    cancellationRequested: true,
+    retryMode: run.retry_mode,
+    executionRound: run.execution_round,
+    attemptNumber: run.attempt_count,
+    retryLimit: Number(run.retry_limit),
+    unlimitedRetries: JSON.parse(run.policy_json ?? "{}")?.unlimitedRetries === true,
+    retrySuppressed:
+      run.batch_cancel_requested_at !== null || isTerminalBatchStatus(run.batch_status),
+  });
+  const runStatus = transitionExecutionRun(run.status, decision.runStatus);
+  const timing = retryQueueTiming({
+    runStatus,
+    retryMode: run.retry_mode,
+    retryableRunnerFailure: false,
+    currentExecutionRound: run.execution_round,
+    eligibleAt: input.requestedAt,
+    queueTimeoutMs: run.queue_timeout_ms,
+  });
   await client.query(
-    `UPDATE execution_runs SET status = $1, terminal_outcome = 'cancelled',
-     terminal_reason_code = 'CANCELLED_BY_USER', cancel_requested_at = $2,
+    `UPDATE execution_runs SET status = $1, terminal_outcome = $4,
+     terminal_reason_code = $5, cancel_requested_at = $2,
+     assigned_runner_id=CASE WHEN $1='queued' THEN NULL ELSE assigned_runner_id END,
+     execution_round=$6,held_round=$7,queue_deadline_at=$8,
      updated_at = $2, version = version + 1 WHERE id = $3`,
-    [runStatus, input.requestedAt, input.runId],
+    [
+      runStatus,
+      input.requestedAt,
+      input.runId,
+      decision.retryScheduled ? null : "cancelled",
+      decision.retryScheduled ? null : "CANCELLED_BY_USER",
+      timing.executionRound,
+      timing.heldRound,
+      timing.queueDeadlineAt,
+    ],
   );
   await updateBatchStatus(client, run.batch_id, input.requestedAt, input.eventId, "run.cancelled");
   return true;

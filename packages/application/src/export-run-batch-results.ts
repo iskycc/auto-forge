@@ -16,8 +16,8 @@ import type { RunBatchRepository } from "./ports";
 
 /**
  * 导出单行数据。blocked 口径：除 adapter 正常成功/失败外的任何非正常结束
- * （超时强杀、未拉起 adapter、adapter 异常、取消等）；从未执行的用例没有终止
- * 结果，不导出。round 为逻辑执行轮次；Runner 基础设施重调度不会新增轮次。
+ * （超时强杀、未拉起 adapter、adapter 异常、取消等）；最终结果中的取消归为失败。
+ * 从未执行的用例没有终止结果，不导出。round 为逻辑执行轮次；Runner 基础设施重调度不会新增轮次。
  */
 export type RunBatchExportRow = {
   attemptId: string | null;
@@ -63,7 +63,9 @@ export type RunBatchExportPageQuery = Pick<RunBatchExportQuery, "batchId" | "sco
 };
 export type RunBatchExportPage = {
   items: Array<{
-    run: Pick<ExecutionRun, "id" | "className" | "displayName"> & Pick<RunBatchExportRow, "ddt">;
+    run: Pick<ExecutionRun, "id" | "className" | "displayName"> &
+      Partial<Pick<ExecutionRun, "status">> &
+      Pick<RunBatchExportRow, "ddt">;
     attempt: Pick<
       RunAttempt,
       | "id"
@@ -109,7 +111,9 @@ export class RunBatchExportService {
           ...(after ? { after } : {}),
         });
         yield page.items.flatMap(({ run, attempt }) =>
-          matchesOutcomeFilter(attempt, outcomes) ? [attemptRow(attempt, run)] : [],
+          matchesOutcomeFilter(attempt, outcomes, query.scope, run.status)
+            ? [attemptRow(attempt, run, query.scope)]
+            : [],
         );
         after = page.next;
       } while (after);
@@ -228,14 +232,14 @@ function finalScopeRows(
   for (const run of details.runs) {
     const attempt = latestAttemptByRun.get(run.id);
     // 从未产生 attempt 的 run 没有任何终止结果，按 blocked 新口径不再导出。
-    if (!attempt || !matchesOutcomeFilter(attempt, outcomes)) continue;
-    rows.push(attemptRow(attempt, run));
+    if (!attempt || !matchesOutcomeFilter(attempt, outcomes, "final", run.status)) continue;
+    rows.push(attemptRow(attempt, run, "final"));
   }
   return rows;
 }
 
 // blocked 口径下 timed_out/cancelled 是 blocked 的细分别名：timed_out 匹配超时类
-// 非正常结束（含 adapter 用例超时），cancelled 匹配取消类；blocked 匹配全部。
+// 非正常结束（含 adapter 用例超时），cancelled 匹配取消类；最终结果的取消归为 failed。
 const TIMEOUT_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([
   "EXECUTION_TIMEOUT",
   "ADAPTER_CASE_TIMEOUT",
@@ -248,14 +252,20 @@ const CANCELLED_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([
 function matchesOutcomeFilter(
   attempt: Pick<RunAttempt, "status" | "outcome" | "resultCode">,
   outcomes: ReadonlySet<ExportOutcomeFilter>,
+  scope: RunBatchExportQuery["scope"] = "round",
+  runStatus?: ExecutionRun["status"],
 ): boolean {
   const outcome = runAttemptOutcome(attempt);
   if (!outcome) return false;
-  const category = classifyAttemptResult({
-    outcome,
-    ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
-  });
+  const category = exportResultCategory(attempt, scope, runStatus);
+  if (!category) return false;
   if (outcomes.has(category)) return true;
+  // Keep the explicit cancellation filter usable while final exports label it failed.
+  if (
+    (outcome === "cancelled" || (scope === "final" && runStatus === "cancelled")) &&
+    outcomes.has("cancelled")
+  )
+    return true;
   if (category === "blocked") {
     const resultCode = attempt.resultCode ?? "";
     if (
@@ -277,14 +287,14 @@ function matchesOutcomeFilter(
 function attemptRow(
   attempt: RunBatchExportPage["items"][number]["attempt"],
   run:
-    (Pick<ExecutionRun, "className" | "displayName"> & Pick<RunBatchExportRow, "ddt">) | undefined,
+    | (Pick<ExecutionRun, "className" | "displayName"> &
+        Partial<Pick<ExecutionRun, "status">> &
+        Pick<RunBatchExportRow, "ddt">)
+    | undefined,
+  scope: RunBatchExportQuery["scope"] = "round",
 ): RunBatchExportRow {
-  const outcome = runAttemptOutcome(attempt);
-  if (!outcome) throw new DomainError("INVALID_OUTCOMES", "进行中的执行尝试不能导出。");
-  const category: AttemptResultCategory = classifyAttemptResult({
-    outcome,
-    ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
-  });
+  const category = exportResultCategory(attempt, scope, run?.status);
+  if (!category) throw new DomainError("INVALID_OUTCOMES", "进行中的执行尝试不能导出。");
   return {
     attemptId: attempt.id,
     executionRunId: attempt.executionRunId,
@@ -299,6 +309,20 @@ function attemptRow(
     durationMs: attempt.durationMs ?? null,
     round: runAttemptExecutionRound(attempt),
   };
+}
+
+function exportResultCategory(
+  attempt: Pick<RunAttempt, "status" | "outcome" | "resultCode">,
+  scope: RunBatchExportQuery["scope"],
+  runStatus?: ExecutionRun["status"],
+): AttemptResultCategory | undefined {
+  const outcome = runAttemptOutcome(attempt);
+  if (!outcome) return undefined;
+  if (scope === "final" && (outcome === "cancelled" || runStatus === "cancelled")) return "failed";
+  return classifyAttemptResult({
+    outcome,
+    ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
+  });
 }
 
 function sortExportRows(rows: RunBatchExportRow[]): RunBatchExportRow[] {

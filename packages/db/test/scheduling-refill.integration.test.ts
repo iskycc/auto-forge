@@ -19,7 +19,7 @@ import type {
   RoundRecoveryRepository,
   RunnerRepository,
 } from "@autoforge/application";
-import { RunBatchSchedulingService } from "@autoforge/application";
+import { RunBatchSchedulingService, RunBatchExportService } from "@autoforge/application";
 import { PlatformConfigurationStore } from "@autoforge/platform-config";
 import {
   createPostgresDatabase,
@@ -414,6 +414,255 @@ async function createOverlappingRound(harness: RefillHarness) {
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it.each(["jenkins", "pause", "final-round"] as const)(
+    "keeps cancelled-case retries behind the %s boundary",
+    async (boundary) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+        harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=? WHERE id=?",
+          [boundary === "final-round" ? 0 : 1, batchId],
+        );
+        if (boundary === "jenkins")
+          await harness.rawQuery(
+            "INSERT INTO run_batch_round_recoveries(batch_id,rule_id,after_round,next_round,jenkins_job_url,api_key_ciphertext,wait_minutes,status,available_at,created_at,updated_at) VALUES (?,'cancel-reset',1,2,'https://jenkins.internal/job/reset/','fixture',0,'idle',?,?,?)",
+            [batchId, now, now, now],
+          );
+        if (boundary === "pause")
+          await harness.executions.changeBatchScheduling({
+            action: "pause",
+            batchId,
+            actorId: "operator",
+            eventId: randomUUID(),
+            requestedAt: now,
+          });
+        const runId = (await harness.batches.get(batchId))!.attempts.find(
+          (attempt) => attempt.id === attempt1Id,
+        )!.executionRunId;
+        await harness.executions.cancelRun({
+          runId,
+          actorId: "operator",
+          reason: "cancel this round",
+          eventId: randomUUID(),
+          requestedAt: now,
+        });
+        for (const [attemptId, token] of [
+          [attempt1Id, lease1TokenHash],
+          [attempt2Id, lease2TokenHash],
+        ]) {
+          const cancelled = attemptId === attempt1Id;
+          const response = await harness.executions.completeAttempt({
+            runnerId: harness.runnerId,
+            attemptId: attemptId!,
+            leaseTokenHash: token!,
+            completionId: randomUUID(),
+            resultDigest: randomUUID(),
+            eventId: randomUUID(),
+            acceptedAt: now,
+            result: {
+              status: cancelled ? "cancelled" : "succeeded",
+              resultCode: cancelled ? "EXECUTION_CANCELLED" : "TESTNG_SUCCEEDED",
+              summary: "cancel boundary",
+              durationMs: 1,
+              artifacts: [],
+            },
+          });
+          if (cancelled) expect(response.retryScheduled).toBe(boundary !== "final-round");
+        }
+        const details = (await harness.batches.get(batchId))!;
+        expect(details.currentRound).toBe(1);
+        expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+        expect(details.runs.find((run) => run.id === runId)).toMatchObject(
+          boundary === "final-round"
+            ? { status: "cancelled" }
+            : { status: "queued", executionRound: 2, heldRound: 2 },
+        );
+        if (boundary === "jenkins") expect(details.roundRecoveries[0]?.status).toBe("pending");
+        if (boundary === "final-round") {
+          const prepared = await new RunBatchExportService(harness.batches).prepare({
+            batchId,
+            scope: "final",
+            outcomes: ["failed"],
+          });
+          const rows = [];
+          for await (const page of prepared.pages) rows.push(...page);
+          expect(rows).toMatchObject([
+            { attemptId: attempt1Id, outcome: "failed", resultCode: "EXECUTION_CANCELLED" },
+          ]);
+        }
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it.each(["cancelled", "succeeded", "failed"] as const)(
+    "retries a manually cancelled case in the next round even when its completion reports %s",
+    async (status) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+        harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      const complete = (
+        attemptId: string,
+        token: string,
+        resultStatus: "cancelled" | "succeeded" | "failed",
+      ) =>
+        harness.executions.completeAttempt({
+          runnerId: harness.runnerId,
+          attemptId,
+          leaseTokenHash: token,
+          completionId: randomUUID(),
+          resultDigest: randomUUID(),
+          eventId: randomUUID(),
+          acceptedAt: now,
+          result: {
+            status: resultStatus,
+            resultCode:
+              resultStatus === "cancelled"
+                ? "EXECUTION_CANCELLED"
+                : resultStatus === "failed"
+                  ? "TESTNG_ASSERTIONS_FAILED"
+                  : "TESTNG_SUCCEEDED",
+            summary: "test result",
+            durationMs: 1,
+            artifacts: [],
+          },
+        });
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=1 WHERE id=?",
+          [batchId],
+        );
+        const runId = (await harness.batches.get(batchId))!.attempts.find(
+          (attempt) => attempt.id === attempt1Id,
+        )!.executionRunId;
+        await harness.executions.cancelRun({
+          runId,
+          actorId: "operator",
+          reason: "cancel this round",
+          eventId: randomUUID(),
+          requestedAt: now,
+        });
+        const completion = await complete(attempt1Id, lease1TokenHash, status);
+        expect(completion).toMatchObject({ retryScheduled: true, batchClosed: false });
+        let details = (await harness.batches.get(batchId))!;
+        expect(details.attempts.find((attempt) => attempt.id === attempt1Id)).toMatchObject({
+          outcome: "cancelled",
+          executionRound: 1,
+        });
+        expect(details.runs.find((run) => run.id === runId)).toMatchObject({
+          status: "queued",
+          executionRound: 2,
+        });
+        await complete(attempt2Id, lease2TokenHash, "succeeded");
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          batchId,
+          harness.runnerId,
+        ]);
+        await prepareRefillExecutions(harness, batchId, [runId], "testng", now);
+        await harness.rawQuery(
+          "UPDATE runners SET last_seen_at=?,metrics_observed_at=?,max_concurrency=4,cpu_utilization_percent=10,memory_utilization_percent=30,logical_cpu_count=4,load_average_1m=0 WHERE id=?",
+          [now, now, harness.runnerId],
+        );
+        await refillSchedulingService(harness, now).schedule(batchId);
+        const [claim] = await harness.executions.claim({
+          runnerId: harness.runnerId,
+          requestId: randomUUID(),
+          availableSlots: 1,
+          labels: ["linux", "java", "testng"],
+          capabilities: [
+            "executor:testng-v1",
+            "isolation:cgroup-v2",
+            "java:21.0.8",
+            "testng:7.11.0",
+          ],
+          now,
+          leaseExpiresAt: "2026-08-10T00:10:00.000Z",
+          leaseSeeds: [
+            {
+              id: randomUUID(),
+              eventId: randomUUID(),
+              tokenHash: "after-cancel",
+              tokenEncrypted: "after-cancel",
+            },
+          ],
+        });
+        expect(claim).toBeTruthy();
+        const next = await complete(claim!.assignment.attemptId, "after-cancel", "succeeded");
+        expect(next).toMatchObject({ retryScheduled: false, batchClosed: true });
+        details = (await harness.batches.get(batchId))!;
+        expect(details.runs.find((run) => run.id === runId)).toMatchObject({
+          status: "succeeded",
+          executionRound: 2,
+        });
+        expect(
+          details.attempts.find((attempt) => attempt.id === claim!.assignment.attemptId),
+        ).toMatchObject({ outcome: "succeeded", executionRound: 2 });
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it.each(["unclaimed", "lease-expired"] as const)(
+    "retains the next round after cancellation through the %s path without advancing it twice",
+    async (path) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id } = harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=2 WHERE id=?",
+          [batchId],
+        );
+        const runId = (await harness.batches.get(batchId))!.attempts.find(
+          (attempt) => attempt.id === attempt1Id,
+        )!.executionRunId;
+        if (path === "unclaimed")
+          await harness.rawQuery(
+            "UPDATE assignment_leases SET status='revoked' WHERE assignment_id IN (SELECT id FROM assignments WHERE attempt_id=?)",
+            [attempt1Id],
+          );
+        const cancel = () =>
+          harness.executions.cancelRun({
+            runId,
+            actorId: "operator",
+            reason: "cancel this round",
+            eventId: randomUUID(),
+            requestedAt: now,
+          });
+        await cancel();
+        if (path === "lease-expired") {
+          await harness.rawQuery(
+            "UPDATE assignment_leases SET expires_at='2026-08-10T00:04:00.000Z' WHERE assignment_id IN (SELECT id FROM assignments WHERE attempt_id=?)",
+            [attempt1Id],
+          );
+          await harness.executions.recoverExpired({
+            now,
+            limit: 10,
+            eventIds: Array.from({ length: 10 }, () => randomUUID()),
+          });
+        }
+        expect(
+          (await harness.batches.get(batchId))!.runs.find((run) => run.id === runId),
+        ).toMatchObject({ status: "queued", executionRound: 2 });
+        await cancel();
+        expect(
+          (await harness.batches.get(batchId))!.runs.find((run) => run.id === runId),
+        ).toMatchObject({ status: "queued", executionRound: 2 });
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
   it("dispatches beyond ten rounds with no retry ceiling, stops on round twelve and skips round thirteen recovery", async () => {
     const harness = await createHarness();
     try {

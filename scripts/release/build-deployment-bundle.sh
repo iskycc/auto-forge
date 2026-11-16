@@ -24,6 +24,7 @@ readonly -a deployment_documentation=(
   "docs/architecture/full-three-host-runtime-audit.md"
   "docs/architecture/full-log-ingestion.md"
   "docs/architecture/postgresql-execution-locks.md"
+  "docs/architecture/round-tail-scheduling.md"
   "docs/architecture/public-task-execution.md"
   "docs/architecture/read-model-snapshots.md"
   "docs/architecture/runtime-input-cache.md"

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 const execute = promisify(execFile);
+const maximumDeploymentBundleBytes = 512 * 1024;
 
 test("builds a versioned deployment bundle with Lite, Full and five-host templates", async () => {
   const outputDirectory = await mkdtemp(resolve(tmpdir(), "autoforge-deploy-output-"));
@@ -22,8 +23,10 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
     );
     const archivePath = resolve(outputDirectory, "autoforge-deploy-1.2.3.tar.gz");
     assert.ok(
-      (await stat(archivePath)).size < 500_000,
-      "deployment bundle must not carry repository design or archive assets",
+      // Versioned operator guides accompany the templates; binary/design exclusions
+      // below remain independent of this bounded compressed-text budget.
+      (await stat(archivePath)).size < maximumDeploymentBundleBytes,
+      "deployment templates and operator guides must fit within 512 KiB",
     );
     await execute("tar", ["-xzf", archivePath, "-C", extractedDirectory]);
 
@@ -81,6 +84,7 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       "docs/architecture/public-task-execution.md",
       "docs/architecture/full-log-ingestion.md",
       "docs/architecture/postgresql-execution-locks.md",
+      "docs/architecture/round-tail-scheduling.md",
       "docs/operations/execution-timeout-diagnostics.md",
     ]) {
       assert((await readFile(resolve(packageDirectory, filename), "utf8")).length > 100);

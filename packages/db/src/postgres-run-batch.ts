@@ -1889,6 +1889,7 @@ export class PostgresRunBatchRepository
         }>(sql`
           UPDATE execution_runs run
           SET status = 'assigned',
+                 cancel_requested_at = NULL,
               assigned_runner_id = decision.runner_id,
               attempt_count = run.attempt_count + 1,
               scheduling_score = decision.score,

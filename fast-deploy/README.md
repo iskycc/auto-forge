@@ -18,11 +18,11 @@
 
 | 主机 | Docker tar 文件                                                                                                                                                                                                |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `autoforge-backend-1.22.19-amd64.docker.tar`                                                                                                                                                                   |
+| A    | `autoforge-backend-1.22.20-amd64.docker.tar`                                                                                                                                                                   |
 | B    | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar`、`autoforge-infra-node-exporter-1.12.1-amd64.docker.tar`                                              |
 | C    | `autoforge-infra-minio-RELEASE.2025-04-22T22-12-26Z-amd64.docker.tar`、`autoforge-infra-minio-client-RELEASE.2025-04-16T18-13-26Z-amd64.docker.tar`、`autoforge-infra-nats-2.14.3-alpine3.22-amd64.docker.tar` |
 
-主平台来自[正式 v1.22.19](https://github.com/iskycc/auto-forge/releases/tag/v1.22.19)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
+主平台来自[正式 v1.22.20](https://github.com/iskycc/auto-forge/releases/tag/v1.22.20)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
 
 Node Exporter 镜像另从 [1.12.1 监控离线包](https://github.com/iskycc/auto-forge/releases/tag/infra-node-exporter-1.12.1-20261102)导入 B；日志数据库所在主机也需导入。模板默认一并启动数据卷监控，主库端口 `19100`、日志库端口 `19101`，仅允许平台主机访问。
 

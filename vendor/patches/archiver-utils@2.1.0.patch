@@ -1,0 +1,28 @@
+diff --git a/index.js b/index.js
+index a825f5b1..44d025fe 100644
+--- a/index.js
++++ b/index.js
+@@ -36,7 +36,7 @@ utils.collectStream = function(source, callback) {
+   });
+ 
+   source.on('end', function() {
+-    var buf = new Buffer(size);
++    var buf = Buffer.alloc(size);
+     var offset = 0;
+ 
+     collection.forEach(function(data) {
+@@ -80,11 +80,12 @@ utils.lazyReadStream = function(filepath) {
+   });
+ };
+ 
++// Explicit Buffer APIs avoid Node 24 deprecations during streaming exports.
+ utils.normalizeInputSource = function(source) {
+   if (source === null) {
+-    return new Buffer(0);
++    return Buffer.alloc(0);
+   } else if (typeof source === 'string') {
+-    return new Buffer(source);
++    return Buffer.from(source);
+   } else if (utils.isStream(source) && !source._readableState) {
+     var normalized = new PassThrough();
+     source.pipe(normalized);

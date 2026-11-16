@@ -24,5 +24,6 @@ minimumReleaseAgeExclude:
   - pg@8.23.0
 
 patchedDependencies:
+  archiver-utils@2.1.0: vendor/patches/archiver-utils@2.1.0.patch
   exceljs@4.4.0: vendor/patches/exceljs@4.4.0.patch
   query-string@7.1.3: vendor/patches/query-string@7.1.3.patch

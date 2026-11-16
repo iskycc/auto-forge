@@ -164,6 +164,8 @@ export function outcomeAfterCompletion(input: {
   attemptNumber: number;
   retryLimit: number;
   unlimitedRetries?: boolean;
+  retryMode?: "immediate" | "round";
+  executionRound?: number;
   cancellationRequested: boolean;
   retryableRunnerFailure?: boolean;
   runnerFailuresBefore?: number;
@@ -172,15 +174,33 @@ export function outcomeAfterCompletion(input: {
 }): { runStatus: "queued" | "succeeded" | "failed" | "cancelled"; retryScheduled: boolean } {
   if (input.outcome === "succeeded") return { runStatus: "succeeded", retryScheduled: false };
   if (input.outcome === "cancelled" || input.cancellationRequested) {
-    return { runStatus: "cancelled", retryScheduled: false };
+    const retryScheduled =
+      input.retryMode === "round" && !input.retrySuppressed && ordinaryRetryAvailable(input);
+    return { runStatus: retryScheduled ? "queued" : "cancelled", retryScheduled };
   }
   if (input.retrySuppressed) return { runStatus: "failed", retryScheduled: false };
   const failuresBefore = Math.max(0, input.attemptNumber - 1);
   const retryScheduled = input.retryableRunnerFailure
     ? (input.runnerFailuresBefore ?? failuresBefore) < MAX_RUNNER_FAILURE_RESCHEDULES
-    : input.unlimitedRetries === true ||
-      (input.ordinaryFailuresBefore ?? failuresBefore) < input.retryLimit;
+    : ordinaryRetryAvailable(input);
   return { runStatus: retryScheduled ? "queued" : "failed", retryScheduled };
+}
+
+function ordinaryRetryAvailable(input: {
+  retryMode?: "immediate" | "round";
+  executionRound?: number;
+  attemptNumber: number;
+  ordinaryFailuresBefore?: number;
+  unlimitedRetries?: boolean;
+  retryLimit: number;
+}): boolean {
+  // Cancellation consumes a logical round; Runner recovery can add physical
+  // attempts without consuming one. Neither may extend a finite round budget.
+  const retriesUsed =
+    input.retryMode === "round" && input.executionRound !== undefined
+      ? input.executionRound - 1
+      : (input.ordinaryFailuresBefore ?? Math.max(0, input.attemptNumber - 1));
+  return input.unlimitedRetries === true || retriesUsed < input.retryLimit;
 }
 
 type BatchRunCompletion = {

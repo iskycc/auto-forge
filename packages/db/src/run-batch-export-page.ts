@@ -1,12 +1,13 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { RunBatchExportPage, RunBatchExportPageQuery } from "@autoforge/application";
-import type { RunAttempt } from "@autoforge/domain";
+import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
 import { ddtCellValueSchema } from "@autoforge/contracts";
 
 type ExportRecord = {
   runId: string;
   className: string;
   displayName: string;
+  runStatus: ExecutionRun["status"];
   caseType: "testng" | "ddt";
   ddtCaseNameJson: string | null;
   ddtSrIdJson: string | null;
@@ -46,7 +47,7 @@ export function runBatchExportPageQuery(
   }
   // Resolve the bounded result page before reading potentially large DDT documents.
   return sql`WITH export_page AS MATERIALIZED (
-    SELECT run.id AS "runId",run.class_name AS "className",run.display_name AS "displayName",
+    SELECT run.id AS "runId",run.class_name AS "className",run.display_name AS "displayName",run.status AS "runStatus",
     run.case_type AS "caseType",run.case_definition_id AS "caseDefinitionId",
     attempt.id AS "attemptId",attempt.attempt_number AS "attemptNumber",${round} AS round,
     attempt.status,attempt.outcome,attempt.result_code AS "resultCode",attempt.result_summary AS summary,
@@ -55,7 +56,7 @@ export function runBatchExportPageQuery(
     WHERE ${sql.join(conditions, sql` AND `)}
     ORDER BY run.class_name,run.display_name,run.id,${round} LIMIT ${Math.min(200, Math.max(1, input.limit)) + 1}
   )
-  SELECT page."runId",page."className",page."displayName",page."caseType",
+  SELECT page."runId",page."className",page."displayName",page."runStatus",page."caseType",
     ${ddtFieldJson("CaseName")} AS "ddtCaseNameJson",${ddtFieldJson("SRID")} AS "ddtSrIdJson",
     page."attemptId",page."attemptNumber",page.round,page.status,page.outcome,page."resultCode",
     page.summary,page."startedAt",page."finishedAt",page."durationMs"
@@ -84,6 +85,7 @@ export function mapRunBatchExportPage(rows: ExportRecord[], limit: number): RunB
         id: row.runId,
         className: row.className,
         displayName: row.displayName,
+        status: row.runStatus,
         ...(row.caseType === "ddt"
           ? {
               ddt: {

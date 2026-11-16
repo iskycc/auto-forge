@@ -4,6 +4,28 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.20 - 2026-11-16
+
+### Fixed
+
+- 整轮重跑任务中，手动取消的用例在尚有后续轮次时进入下一轮，不再永久退出任务；覆盖 Agent 确认取消、取消与完成竞争、未持有有效租约及取消后租约到期的收尾路径。取消按逻辑轮次消耗重跑预算，保留无限重跑、暂停、Jenkins 恢复和相邻两轮窗口的原有约束；最后一轮、命中结束条件或整批终止后不新增重跑。
+- 取消标记在下一次 assignment 创建时原子清理，避免重复取消跳过额外轮次，以及上一轮取消污染下一轮正常结果。
+- 最终结果的标准导出及失败分析清单将最新取消结果计为失败，保留原始结果码、原因及实际轮次；重跑通过后按通过导出。历史轮次、全部轮次及页面原始结果分类保留，从未执行的用例不生成虚构记录，详见[取消与轮次边界](./docs/architecture/round-tail-scheduling.md#单例取消与下一轮)。
+- 修复 ExcelJS 流式导出依赖 `archiver-utils@2.1.0` 使用旧 Buffer 构造器产生的 `DEP0005` 警告，改用 `Buffer.alloc`／`Buffer.from`；保留 UTF-8 中文内容和原有导出样式，通过固定补丁与锁文件交付。
+
+### Compatibility
+
+- 从 v1.22.19 升级不新增数据库迁移、平台配置、Runner Protocol 字段或外部依赖版本。Lite／Full 共用领域和导出规则；Full 同步升级 Web 与全部 Worker，本次无需更新 Agent。
+- 单例取消的重新调度适用于整轮模式，即时模式保留取消即结束的行为。既有取消历史不追溯改写，升级后的最终结果导出按新口径归类。第三方补丁随源码及离线镜像交付，无运行时下载。
+
+### Verification
+
+- 10 个文件的 328 项相关回归通过，包括真实 SQLite／PostgreSQL、取消后的正确轮次与正常执行、重复取消、租约恢复、暂停、Jenkins 屏障、末轮与无限重跑，以及十万条结果的完整分页导出。测试 PostgreSQL 在 0.5 核下曾触及容量场景的原时限；对照新旧查询计划及单页耗时后，使用 2 核在原时限内通过，结束后恢复测试资源配置。
+- 子进程启用 pending deprecation 检查，流式写入并读回中文 Excel，不再出现 `DEP0005`；干净环境的离线冻结安装验证补丁生效，依赖版本保持不变。
+- Lite／Full 各一项 Playwright 控制闭环通过；Full 使用真实 PostgreSQL／Redis／NATS／MinIO、一个 Web 和两个 Worker。领域／应用／数据库／Web／Worker／测试类型检查、Web／Worker 生产构建、全仓格式与许可证及变更 ESLint 检查通过。本次没有修改页面布局。
+- 发布准备的 57 项脚本测试、E2E 覆盖矩阵、全仓格式与许可证和变更 ESLint 检查通过；离线部署包包含本次取消重跑规则。
+- 沿用此前明确的最快发布路径，仅运行 Release；保留原生双架构、镜像启动、内置资源、SBOM、签名与资产完整性检查，结束后恢复临时暂停的验收工作流。未重跑完整标准 CI、用户业务 Java 负载或完整离线发布验收。
+
 ## 1.22.19 - 2026-11-16
 
 ### Fixed

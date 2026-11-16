@@ -18,3 +18,9 @@ applied during dependency installation, including offline Docker builds. ExcelJS
 Keep the patch available before `pnpm fetch` (the Docker dependencies stage already copies
 `vendor/`). On an ExcelJS upgrade, verify the generated worksheet sequence, dropdowns, hyperlink
 targets, styles, pagination, exclusions and cancellation before removing or refreshing the patch.
+
+`patches/archiver-utils@2.1.0.patch` replaces deprecated Buffer constructors in ExcelJS streaming
+exports with `Buffer.alloc` and `Buffer.from`. The string encoding and collected bytes remain
+unchanged. The existing MIT package stays at 2.1.0; the patch and normalized hash are pinned in the
+workspace and lockfile, with no new dependency or runtime download. A subprocess regression runs
+with pending deprecation checks and reads back a streamed workbook containing Chinese CaseIDs.

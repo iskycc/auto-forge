@@ -111,6 +111,68 @@ function attempt(
 }
 
 describe("buildRunBatchExportRows", () => {
+  it("exports the final cancelled attempt as failed while retaining the cancellation reason and round history", () => {
+    const details = makeDetails({
+      runs: [run("run-a", "cancelled")],
+      attempts: [
+        attempt("cancelled", "run-a", 2, "cancelled", {
+          resultCode: "CANCELLED_BY_USER",
+          resultSummary: "手动中断",
+        }),
+      ],
+    });
+    expect(
+      buildRunBatchExportRows(details, { scope: "final", outcomes: ["failed"] }),
+    ).toMatchObject([
+      {
+        attemptId: "cancelled",
+        outcome: "failed",
+        resultCode: "CANCELLED_BY_USER",
+        summary: "手动中断",
+        round: 2,
+      },
+    ]);
+    expect(
+      buildRunBatchExportRows(details, { scope: "round", round: 2, outcomes: ["blocked"] })[0]
+        ?.outcome,
+    ).toBe("blocked");
+    expect(
+      buildRunBatchExportRows(details, { scope: "all", outcomes: ["blocked"] })[0]?.outcome,
+    ).toBe("blocked");
+  });
+
+  it("omits an earlier cancellation when a later retry passed", () => {
+    const details = makeDetails({
+      runs: [run("run-a", "succeeded")],
+      attempts: [
+        attempt("cancelled", "run-a", 1, "cancelled", { resultCode: "CANCELLED_BY_USER" }),
+        attempt("passed", "run-a", 2, "succeeded"),
+      ],
+    });
+    expect(buildRunBatchExportRows(details, { scope: "final", outcomes: ["failed"] })).toEqual([]);
+  });
+
+  it("exports a cancellation finalized by lease recovery as failed while retaining its timeout evidence", () => {
+    const details = makeDetails({
+      runs: [run("run-a", "cancelled", { terminalOutcome: "cancelled" })],
+      attempts: [
+        attempt("expired", "run-a", 2, "timed_out", {
+          resultCode: "LEASE_EXPIRED",
+          resultSummary: "lease expired after cancellation",
+        }),
+      ],
+    });
+    expect(
+      buildRunBatchExportRows(details, { scope: "final", outcomes: ["failed"] }),
+    ).toMatchObject([
+      {
+        attemptId: "expired",
+        outcome: "failed",
+        resultCode: "LEASE_EXPIRED",
+        summary: "lease expired after cancellation",
+      },
+    ]);
+  });
   it("exports round-scoped attempts of the requested round only", () => {
     const rows = buildRunBatchExportRows(makeDetails(), {
       scope: "round",
@@ -213,7 +275,7 @@ describe("buildRunBatchExportRows", () => {
       outcomes: ["cancelled"],
     });
     expect(cancelled.map((row) => row.attemptId)).toEqual(["attempt-x1"]);
-    expect(cancelled.every((row) => row.outcome === "blocked")).toBe(true);
+    expect(cancelled.every((row) => row.outcome === "failed")).toBe(true);
   });
 
   it("rejects round scope without a positive integer round", () => {

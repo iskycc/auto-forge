@@ -1790,6 +1790,7 @@ export class SqliteRunBatchRepository
           .prepare(
             `UPDATE execution_runs
              SET status = 'assigned',
+                 cancel_requested_at = NULL,
                  assigned_runner_id = decision.column2,
                  attempt_count = attempt_count + 1,
                  scheduling_score = decision.column3,

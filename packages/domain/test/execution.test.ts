@@ -100,6 +100,57 @@ describe("execution state machine", () => {
     ).toThrow("租约版本已变化");
   });
 
+  it.each([
+    { executionRound: 1, retryLimit: 2, retryScheduled: true },
+    { executionRound: 2, retryLimit: 2, retryScheduled: true },
+    { executionRound: 3, retryLimit: 2, retryScheduled: false },
+  ])(
+    "retries a cancelled case only before its final logical round ($executionRound)",
+    ({ executionRound, retryLimit, retryScheduled }) => {
+      expect(
+        outcomeAfterCompletion({
+          outcome: "cancelled",
+          attemptNumber: executionRound + 5,
+          executionRound,
+          retryMode: "round",
+          retryLimit,
+          cancellationRequested: true,
+        }),
+      ).toEqual({ runStatus: retryScheduled ? "queued" : "cancelled", retryScheduled });
+    },
+  );
+
+  it("counts cancelled logical rounds against later ordinary failures without extending the retry limit", () => {
+    expect(
+      outcomeAfterCompletion({
+        outcome: "failed",
+        attemptNumber: 3,
+        executionRound: 3,
+        retryMode: "round",
+        retryLimit: 2,
+        cancellationRequested: false,
+        ordinaryFailuresBefore: 0,
+      }),
+    ).toEqual({ runStatus: "failed", retryScheduled: false });
+  });
+
+  it("retries unlimited cancelled rounds but never retries a terminating batch", () => {
+    const policy = {
+      outcome: "cancelled" as const,
+      attemptNumber: 100,
+      executionRound: 100,
+      retryMode: "round" as const,
+      unlimitedRetries: true,
+      retryLimit: 0,
+      cancellationRequested: true,
+    };
+    expect(outcomeAfterCompletion(policy)).toEqual({ runStatus: "queued", retryScheduled: true });
+    expect(outcomeAfterCompletion({ ...policy, retrySuppressed: true })).toEqual({
+      runStatus: "cancelled",
+      retryScheduled: false,
+    });
+  });
+
   it("retries only failures and derives batch status from authoritative runs", () => {
     expect(
       outcomeAfterCompletion({

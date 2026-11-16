@@ -388,6 +388,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           const decision = outcomeAfterCompletion({
             outcome: effectiveResult.status,
             attemptNumber: control.attempt_number,
+            retryMode: control.retry_mode,
+            executionRound: control.execution_round,
             retryLimit: Number(control.retry_limit),
             unlimitedRetries: JSON.parse(control.policy_json ?? "{}")?.unlimitedRetries === true,
             cancellationRequested: control.run_cancel_requested_at !== null,
@@ -1337,10 +1339,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     const decision = outcomeAfterCompletion({
       outcome: "timed_out",
       attemptNumber: control.attempt_number,
+      retryMode: control.retry_mode,
+      executionRound: control.execution_round,
       retryLimit: Number(control.retry_limit),
       unlimitedRetries: JSON.parse(control.policy_json ?? "{}")?.unlimitedRetries === true,
       cancellationRequested: control.run_cancel_requested_at !== null,
-      retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+      retryableRunnerFailure:
+        control.run_cancel_requested_at === null && isRetryableRunnerFailure(expiration.resultCode),
       runnerFailuresBefore: failureCounts.runner,
       ordinaryFailuresBefore: failureCounts.ordinary,
       retrySuppressed: control.batch_termination_requested_at !== null,
@@ -1350,7 +1355,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     const queueTiming = retryQueueTiming({
       runStatus,
       retryMode: control.retry_mode,
-      retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+      retryableRunnerFailure:
+        control.run_cancel_requested_at === null && isRetryableRunnerFailure(expiration.resultCode),
       currentExecutionRound: control.execution_round,
       eligibleAt: recordedAt,
       queueTimeoutMs: control.queue_timeout_ms,
@@ -1378,7 +1384,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       )
       .run(
         runStatus,
-        runStatus === "queued" ? null : attemptStatus,
+        runStatus === "queued" ? null : runStatus === "cancelled" ? "cancelled" : attemptStatus,
         runStatus === "queued" ? null : expiration.resultCode,
         queueTiming.executionRound,
         queueTiming.heldRound,
@@ -1432,10 +1438,33 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     requestedAt: string;
   }): boolean {
     const run = this.handle.client
-      .prepare("SELECT id, batch_id, status FROM execution_runs WHERE id = ?")
-      .get(input.runId) as { id: string; batch_id: string; status: ExecutionRunStatus } | undefined;
+      .prepare(
+        `SELECT r.id,r.batch_id,r.status,r.execution_round,r.attempt_count,r.cancel_requested_at,
+        b.retry_mode,b.retry_limit,b.policy_json,b.queue_timeout_ms,b.status AS batch_status,
+        b.cancel_requested_at AS batch_cancel_requested_at
+        FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id WHERE r.id=?`,
+      )
+      .get(input.runId) as
+      | {
+          id: string;
+          batch_id: string;
+          status: ExecutionRunStatus;
+          execution_round: number;
+          attempt_count: number;
+          cancel_requested_at: string | null;
+          retry_mode: "immediate" | "round";
+          retry_limit: number;
+          policy_json: string | null;
+          queue_timeout_ms: number;
+          batch_status: RunBatchStatus;
+          batch_cancel_requested_at: string | null;
+        }
+      | undefined;
     if (!run) return false;
     if (isTerminalRunStatus(run.status)) return true;
+    // A repeated request for the cancelled attempt must not skip another round.
+    // Assignment creation clears this marker for the next actual attempt.
+    if (run.status === "queued" && run.cancel_requested_at !== null) return true;
     const attempt = this.handle.client
       .prepare(
         "SELECT id, status FROM run_attempts WHERE execution_run_id = ? ORDER BY attempt_number DESC LIMIT 1",
@@ -1489,14 +1518,46 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         recordedAt: input.requestedAt,
       });
     }
-    const runStatus = transitionExecutionRun(run.status, "cancelled");
+    const decision = outcomeAfterCompletion({
+      outcome: "cancelled",
+      cancellationRequested: true,
+      retryMode: run.retry_mode,
+      executionRound: run.execution_round,
+      attemptNumber: run.attempt_count,
+      retryLimit: Number(run.retry_limit),
+      unlimitedRetries: JSON.parse(run.policy_json ?? "{}")?.unlimitedRetries === true,
+      retrySuppressed:
+        run.batch_cancel_requested_at !== null || isTerminalBatchStatus(run.batch_status),
+    });
+    const runStatus = transitionExecutionRun(run.status, decision.runStatus);
+    const timing = retryQueueTiming({
+      runStatus,
+      retryMode: run.retry_mode,
+      retryableRunnerFailure: false,
+      currentExecutionRound: run.execution_round,
+      eligibleAt: input.requestedAt,
+      queueTimeoutMs: run.queue_timeout_ms,
+    });
     this.handle.client
       .prepare(
-        `UPDATE execution_runs SET status = ?, terminal_outcome = 'cancelled',
-         terminal_reason_code = 'CANCELLED_BY_USER', cancel_requested_at = ?,
+        `UPDATE execution_runs SET status = ?, terminal_outcome = ?,
+         terminal_reason_code = ?, cancel_requested_at = ?,
+         assigned_runner_id=CASE WHEN ?='queued' THEN NULL ELSE assigned_runner_id END,
+         execution_round=?,held_round=?,queue_deadline_at=?,
          updated_at = ?, version = version + 1 WHERE id = ?`,
       )
-      .run(runStatus, input.requestedAt, input.requestedAt, input.runId);
+      .run(
+        runStatus,
+        decision.retryScheduled ? null : "cancelled",
+        decision.retryScheduled ? null : "CANCELLED_BY_USER",
+        input.requestedAt,
+        runStatus,
+        timing.executionRound,
+        timing.heldRound,
+        timing.queueDeadlineAt,
+        input.requestedAt,
+        input.runId,
+      );
     this.updateBatchStatus(run.batch_id, input.requestedAt, input.eventId, "run.cancelled");
     return true;
   }
