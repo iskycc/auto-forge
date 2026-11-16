@@ -5,6 +5,7 @@ import { DomainError } from "@autoforge/domain";
 import { mapApiError, rejectRateLimited } from "./api-error-mapping";
 import { refillRunnerAfterCompletion } from "./refill-runner-after-completion";
 import { getPlatformServices } from "./services";
+import { admitRunnerProtocolResource } from "./runner-protocol-admission";
 
 /**
  * 组合根执行机协议快路径的业务桥接器。传输层（server/runner-fast-path.ts）
@@ -33,8 +34,6 @@ interface RunnerFastPathBridge {
 }
 
 const RATE_WINDOW_MS = 60_000;
-const COMPLETE_RATE_LIMIT = 300;
-const LOGS_RATE_LIMIT = 600;
 
 const globalHandles = globalThis as typeof globalThis & {
   __autoforgeRunnerFastPath?: RunnerFastPathBridge;
@@ -78,12 +77,11 @@ async function execute(
     case "renew-lease": {
       if (!route.runnerId || !route.leaseId)
         throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机或租约标识。");
-      rejectRateLimited(
-        await services.runnerRequestLimiter.allow(
-          `runner:lease:v1:${route.runnerId}`,
-          600,
-          RATE_WINDOW_MS,
-        ),
+      await admitRunnerProtocolResource(
+        services.runnerRequestLimiter,
+        "renew-lease",
+        route.runnerId,
+        route.leaseId,
       );
       return services.runnerProtocol.renewLease(
         route.runnerId,
@@ -110,14 +108,8 @@ async function execute(
     }
     case "logs": {
       const runnerId = requireRunnerHeader(context);
-      rejectRateLimited(
-        await services.runnerRequestLimiter.allow(
-          `runner:logs:v1:${runnerId}`,
-          LOGS_RATE_LIMIT,
-          RATE_WINDOW_MS,
-        ),
-      );
       const attemptId = requireAttemptId(route);
+      await admitRunnerProtocolResource(services.runnerRequestLimiter, "logs", runnerId, attemptId);
       const input = uploadLogChunksInputSchema.parse(parseJsonBody(context.rawBody));
       const result = await services.runnerProtocol.uploadLogs(
         runnerId,
@@ -130,14 +122,13 @@ async function execute(
     }
     case "complete": {
       const runnerId = requireRunnerHeader(context);
-      rejectRateLimited(
-        await services.runnerRequestLimiter.allow(
-          `runner:complete:v1:${runnerId}`,
-          COMPLETE_RATE_LIMIT,
-          RATE_WINDOW_MS,
-        ),
-      );
       const attemptId = requireAttemptId(route);
+      await admitRunnerProtocolResource(
+        services.runnerRequestLimiter,
+        "complete",
+        runnerId,
+        attemptId,
+      );
       const result = await services.runnerProtocol.complete(
         runnerId,
         context.bearerToken,

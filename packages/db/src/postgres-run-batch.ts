@@ -161,7 +161,6 @@ import {
   pgCaseSuites,
   pgRunBatchStatusEvents,
   pgRunners,
-  pgProjects,
   pgProjectAdapterConfigurations,
   pgProjectVersionRuntimeAssets,
   pgProjectRuntimeAssets,
@@ -1522,7 +1521,7 @@ export class PostgresRunBatchRepository
         .select({ currentRound: pgRunBatches.currentRound, policyJson: pgRunBatches.policyJson })
         .from(pgRunBatches)
         .where(eq(pgRunBatches.id, input.batchId))
-        .for("update");
+        .for("no key update");
       if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       const [storedRow] = await transaction
         .select()
@@ -1706,6 +1705,16 @@ export class PostgresRunBatchRepository
   ): Promise<ReserveAssignmentsOutcome> {
     await this.ready();
     return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      // Wait for the shared quota before owning a batch. Otherwise another
+      // task's reservation also blocks this batch's claim, completion and pause.
+      // NO KEY UPDATE still serializes quota writers while allowing foreign-key
+      // references from task creation, audit events and background snapshots.
+      const project = await transaction.execute<{ id: string }>(sql`
+        SELECT p.id FROM projects p JOIN run_batches b ON b.project_id=p.id
+        WHERE b.id=${input.batchId} FOR NO KEY UPDATE OF p
+      `);
+      if (project.rows.length === 0)
+        throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       const [lockedBatch] = await transaction
         .select({
           projectId: pgRunBatches.projectId,
@@ -1723,7 +1732,7 @@ export class PostgresRunBatchRepository
         })
         .from(pgRunBatches)
         .where(eq(pgRunBatches.id, input.batchId))
-        .for("update");
+        .for("no key update");
       if (!lockedBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       if (lockedBatch.terminationRequestedAt || lockedBatch.pauseRequestedAt)
         return { reserved: 0, acceptedAttemptIds: [] };
@@ -1732,11 +1741,6 @@ export class PostgresRunBatchRepository
         input.expectedCurrentRound !== lockedBatch.currentRound
       )
         return { reserved: 0, acceptedAttemptIds: [] };
-      await transaction
-        .select({ id: pgProjects.id })
-        .from(pgProjects)
-        .where(eq(pgProjects.id, lockedBatch.projectId))
-        .for("update");
       const [projectActive, batchActive] = await Promise.all([
         transaction
           .select({ value: count() })
@@ -2086,7 +2090,7 @@ export class PostgresRunBatchRepository
         .select({ status: pgRunBatches.status, version: pgRunBatches.version })
         .from(pgRunBatches)
         .where(eq(pgRunBatches.id, input.batchId))
-        .for("update");
+        .for("no key update");
       if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       transitionRunBatch(batchState.status, status);
       const nextVersion = batchState.version + 1;

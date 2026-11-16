@@ -1,4 +1,9 @@
 import { advanceSqliteSchedulingRound } from "./sqlite-round-dispatch";
+import {
+  attemptTimeoutEvidenceSql,
+  summarizeAttemptTimeout,
+  type AttemptTimeoutEvidenceRow,
+} from "./attempt-timeout-evidence";
 import type {
   AttemptRecoveryReason,
   ClaimedAssignmentRecord,
@@ -1323,6 +1328,11 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     const control = this.findAttemptControl(attemptId);
     if (!control || isTerminalAttemptStatus(control.status)) return null;
     const expiration = attemptExpiration(expirationReason);
+    if (expirationReason === "execution_timeout") {
+      const evidence = this.handle.client.prepare(attemptTimeoutEvidenceSql("?")).get(attemptId) as
+        AttemptTimeoutEvidenceRow | undefined;
+      if (evidence) expiration.summary = summarizeAttemptTimeout(evidence, recordedAt);
+    }
     const failureCounts = this.failureCounts(control.execution_run_id);
     const decision = outcomeAfterCompletion({
       outcome: "timed_out",

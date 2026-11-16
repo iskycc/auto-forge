@@ -1,4 +1,5 @@
 import { DeletedRunnerContactService } from "@autoforge/application";
+import { createRunnerProtocolAdmission } from "./runner-protocol-admission";
 import {
   JenkinsDependencyBuildService,
   type JenkinsDependencyRepository,
@@ -250,8 +251,12 @@ async function createPlatformServices() {
   let webhookRepository: WebhookRepository;
   let jenkinsDependencyRepository: JenkinsDependencyRepository;
   let closeDatabase: () => Promise<void>;
-  let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
+  // Per-attempt limits need more short-lived keys than the old per-node quota.
+  let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter(100_000);
   let infrastructure: RuntimeInfrastructure | undefined;
+  let logIngestion: import("@autoforge/application").LogIngestionPort | undefined;
+  let logWritePoolSnapshot = () => ({ pools: 0, connections: 0, idle: 0, waiting: 0 });
+  let protocolAdmission = createRunnerProtocolAdmission(runnerRequestLimiter);
   let databaseReady: () => Promise<void>;
   let logWriteAdmission: import("@autoforge/application").ExecutionLogWriteAdmission | undefined;
   let diagnosticProviders: Record<"database" | "objectStore" | "queue" | "cache", string>;
@@ -430,6 +435,9 @@ async function createPlatformServices() {
       poolMax: config.databasePoolMax,
     });
     logWriteAdmission = new PostgresLogWriteAdmission(database);
+    const minioStore = new MinioObjectStore(config.minio);
+    objectStore = minioStore;
+    objectStoreUsage = () => minioStore.readUsage();
     databaseReady = async () => {
       await database.pool.query("SELECT 1");
     };
@@ -505,7 +513,14 @@ async function createPlatformServices() {
         const sample = await readPostgresInfrastructureUsage(database.pool, now, () =>
           monitoring.capacity({ kind: "primary" }, now),
         );
-        const logs = logRegistry.connectionPoolSnapshot();
+        const readPools = logRegistry.connectionPoolSnapshot();
+        const writePools = logWritePoolSnapshot();
+        const logs = {
+          pools: readPools.pools + writePools.pools,
+          connections: readPools.connections + writePools.connections,
+          idle: readPools.idle + writePools.idle,
+          waiting: readPools.waiting + writePools.waiting,
+        };
         return {
           ...sample,
           metrics: [
@@ -586,11 +601,32 @@ async function createPlatformServices() {
       runnerRequestLimiter = new RedisRequestLimiter((script, options) =>
         awaitRedisReply(redis.eval(script, options)),
       );
+      protocolAdmission = createRunnerProtocolAdmission(runnerRequestLimiter, {
+        requests: 1_000,
+        windowMs: 1_000,
+      });
+      const { createFullLogIngestion } = await import("./full-log-ingestion");
+      const ingestion = await createFullLogIngestion({
+        databaseUrl: config.databaseUrl,
+        migrationsFolder: config.migrationsFolder,
+        dataDirectory: config.dataDirectory,
+        masterKey: config.masterKey,
+        objects: objectStore,
+        connection: nats,
+        reportError: (error) =>
+          logServerError(error, "log-ingestion", "Full log ingestion operation failed"),
+      }).catch(async (cause: unknown) => {
+        await Promise.allSettled([fullQueue.close(), nats.close(), redis.close()]);
+        throw cause;
+      });
+      logIngestion = ingestion;
+      logWritePoolSnapshot = () => ingestion.connectionPoolSnapshot();
       infrastructure = {
         ready: async () => {
           await Promise.all([jobQueue.ready(), awaitRedisReply(redis.ping())]);
         },
         close: async () => {
+          await ingestion.close();
           await Promise.allSettled([
             jobQueue.close(),
             cache.close(),
@@ -625,9 +661,6 @@ async function createPlatformServices() {
     // 完成请求服务端 p50 从 42ms 降到 28ms，但执行阶段墙钟由客户端驱动未改善，
     // 领取/批次创建反而因车道连接池争用回退；仅补位调度经 runScheduling 交给
     // 工作线程。
-    const minioStore = new MinioObjectStore(config.minio);
-    objectStore = minioStore;
-    objectStoreUsage = () => minioStore.readUsage();
     const { PostgresLogArchiveRepository } = await import("@autoforge/db/postgres");
     logArchiveRepository = new PostgresLogArchiveRepository(database);
     attemptLogs = new ArchivedAttemptLogStore(attemptLogs, logArchiveRepository, objectStore);
@@ -1011,6 +1044,8 @@ async function createPlatformServices() {
     batches,
     runScheduling,
     deletedRunnerContacts,
+    protocolAdmission,
+    logIngestion,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
   const runBatchExport = new RunBatchExportService(batches);

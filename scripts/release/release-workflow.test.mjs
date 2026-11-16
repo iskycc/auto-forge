@@ -136,6 +136,7 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
       "tests/e2e/platform-operations.spec.ts",
       "tests/e2e/scheduling-refill.spec.ts",
       "tests/e2e/memory-admission.spec.ts",
+      "tests/e2e/timeout-diagnostics.spec.ts",
     ].sort(),
   );
   for (let shard = 1; shard <= 3; shard += 1) {

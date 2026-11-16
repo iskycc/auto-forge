@@ -1,3 +1,4 @@
+import { admitRunnerProtocolResource } from "@/lib/runner-protocol-admission";
 import { redactLogChunks } from "@autoforge/application";
 import {
   attemptLogQuerySchema,
@@ -7,7 +8,7 @@ import {
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
-import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
+import { apiErrorResponse, bearerToken, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
@@ -45,9 +46,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     if (!runnerId) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机标识。");
     const { attemptId } = await context.params;
     const services = await getPlatformServices();
-    rejectRateLimited(
-      await services.runnerRequestLimiter.allow(`runner:logs:v1:${runnerId}`, 600, 60_000),
-    );
+    await admitRunnerProtocolResource(services.runnerRequestLimiter, "logs", runnerId, attemptId);
     const input = uploadLogChunksInputSchema.parse(
       await readJsonBody(request, RUNNER_LOG_UPLOAD_BODY_LIMIT_BYTES),
     );

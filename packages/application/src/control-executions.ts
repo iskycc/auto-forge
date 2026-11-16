@@ -30,6 +30,8 @@ import { buildAttemptCompletionEvents } from "./completion-scheduling-events";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
 import { normalizeTestNgCompletion } from "./normalize-testng-completion";
+import type { RunnerProtocolAdmissionPort } from "./runner-protocol-budget";
+import type { LogIngestionPort } from "./log-ingestion";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
@@ -51,6 +53,8 @@ export class ExecutionControlService {
     private readonly batches: RunBatchRepository,
     private readonly scheduling: RunBatchSchedulingPort,
     private readonly deletedRunnerContacts?: { observe(runnerId: string): Promise<void> },
+    private readonly protocolAdmission?: RunnerProtocolAdmissionPort,
+    private readonly logIngestion?: LogIngestionPort,
   ) {}
 
   async claim(
@@ -187,6 +191,11 @@ export class ExecutionControlService {
 
   async renewLease(runnerId: string, credential: string, leaseId: string, input: RenewLeaseInput) {
     const runner = await this.authenticateRunner(runnerId, credential);
+    await this.protocolAdmission?.assertAllowed({
+      operation: "renew-lease",
+      runnerId,
+      maximumConcurrency: runner.maxConcurrency,
+    });
     const now = this.clock.now();
     const renewed = await this.executions.renewLease({
       runnerId,
@@ -212,7 +221,12 @@ export class ExecutionControlService {
     attemptId: string,
     input: CompleteAttemptInput,
   ) {
-    await this.authenticateRunner(runnerId, credential);
+    const runner = await this.authenticateRunner(runnerId, credential);
+    await this.protocolAdmission?.assertAllowed({
+      operation: "complete",
+      runnerId,
+      maximumConcurrency: runner.maxConcurrency,
+    });
     const result = await this.enrichSummaryFromFailureLog(
       attemptId,
       normalizeTestNgCompletion(input.result),
@@ -243,7 +257,9 @@ export class ExecutionControlService {
     attemptId: string,
     result: CompletionResult,
   ): Promise<CompletionResult> {
-    if (result.status !== "failed" && result.status !== "timed_out") return result;
+    // Watchdog evidence is authoritative for the timeout. An earlier assertion
+    // in stdout must not replace its timing, upload counters or JVM snapshot.
+    if (result.status !== "failed") return result;
     // 重启/取消协调重放的结果码：日志属于被强杀的旧进程，从中提取的"失败原因"
     // 会误导排查；保留上报方自带的摘要，让原因码作为 blocked 的主展示信息。
     if (RECONCILED_COMPLETION_RESULT_CODES.has(result.resultCode ?? "")) return result;
@@ -362,9 +378,33 @@ export class ExecutionControlService {
     attemptId: string,
     input: UploadLogChunksInput,
   ) {
-    await this.authenticateRunner(runnerId, credential);
+    const runner = await this.authenticateRunner(runnerId, credential);
+    await this.protocolAdmission?.assertAllowed({
+      operation: "logs",
+      runnerId,
+      maximumConcurrency: runner.maxConcurrency,
+    });
     const leaseTokenHash = this.credentials.hash(input.leaseToken);
     const now = this.clock.now().toISOString();
+    if (this.logIngestion) {
+      if (!this.executions.authorizeLogUpload)
+        throw new Error("The execution repository cannot authorize queued log uploads.");
+      const { batchId, runId } = await this.executions.authorizeLogUpload({
+        runnerId,
+        attemptId,
+        leaseTokenHash,
+        receivedAt: now,
+      });
+      const acknowledgedSequence = await this.logIngestion.persist({
+        schemaVersion: 1,
+        batchId,
+        runId,
+        attemptId,
+        receivedAt: now,
+        chunks: redactLogChunks(input.chunks, []),
+      });
+      return { schemaVersion: 1 as const, acknowledgedSequence };
+    }
     return this.executions.appendLogChunks({
       runnerId,
       attemptId,
@@ -404,7 +444,12 @@ export class ExecutionControlService {
     attemptId: string,
     input: DeclareArtifactsInput,
   ) {
-    await this.authenticateRunner(runnerId, credential);
+    const runner = await this.authenticateRunner(runnerId, credential);
+    await this.protocolAdmission?.assertAllowed({
+      operation: "artifacts",
+      runnerId,
+      maximumConcurrency: runner.maxConcurrency,
+    });
     const projectId = await this.requiredAttemptProjectId(attemptId);
     const artifacts = await this.executions.declareArtifacts({
       runnerId,

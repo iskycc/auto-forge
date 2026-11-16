@@ -5,6 +5,13 @@ import { MemoryRequestLimiter, RedisRequestLimiter } from "./request-limiter";
 afterEach(() => vi.restoreAllMocks());
 
 describe("MemoryRequestLimiter", () => {
+  it("allows a separate bounded key capacity for per-attempt Runner quotas", async () => {
+    const limiter = new MemoryRequestLimiter(2);
+    expect(await limiter.allow("attempt-1", 2, 60000)).toBe(true);
+    expect(await limiter.allow("attempt-2", 2, 60000)).toBe(true);
+    expect(await limiter.allow("attempt-3", 2, 60000)).toBe(false);
+    expect(await limiter.allow("attempt-1", 2, 60000)).toBe(true);
+  });
   it("enforces and resets a fixed request window", async () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
     const limiter = new MemoryRequestLimiter();

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renewLeaseInputSchema } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
+import { MemoryRequestLimiter } from "./request-limiter";
 import {
   registerRunnerFastPathBridge,
   type RunnerFastPathContext,
@@ -13,11 +14,12 @@ const calls = vi.hoisted(() => ({
   complete: vi.fn(),
   refill: vi.fn(),
   scheduleBatch: vi.fn(),
+  upload: vi.fn(),
 }));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
     runnerRequestLimiter: { allow: calls.allow },
-    runnerProtocol: { renewLease: calls.renew, complete: calls.complete },
+    runnerProtocol: { renewLease: calls.renew, complete: calls.complete, uploadLogs: calls.upload },
     runScheduling: { scheduleForRunner: calls.refill, schedule: calls.scheduleBatch },
   }),
 }));
@@ -52,11 +54,47 @@ beforeEach(() => {
   calls.complete.mockReset();
   calls.refill.mockReset().mockResolvedValue(0);
   calls.scheduleBatch.mockReset();
+  calls.upload.mockReset().mockResolvedValue({ schemaVersion: 1 });
   calls.renew.mockReset().mockImplementation(async (_runnerId, _credential, _leaseId, value) => ({
     ...renewLeaseInputSchema.parse(value),
     instruction: "continue",
   }));
   registerRunnerFastPathBridge();
+});
+
+it("allows ten concurrent attempts to each upload twice per second for a minute", async () => {
+  const limiter = new MemoryRequestLimiter();
+  calls.allow.mockImplementation((...args: Parameters<typeof limiter.allow>) =>
+    limiter.allow(...args),
+  );
+  for (let tick = 0; tick < 120; tick++) {
+    for (let slot = 0; slot < 10; slot++) {
+      const response = await runtime.__autoforgeRunnerFastPath!.dispatch(
+        { kind: "logs", attemptId: `attempt-${slot}` },
+        {
+          ...context(
+            Buffer.from(
+              JSON.stringify({
+                schemaVersion: 1,
+                requestId: `logs-${tick}-${slot}`,
+                leaseToken: "a".repeat(32),
+                chunks: [
+                  {
+                    stream: "stdout",
+                    sequence: tick,
+                    content: "progress\n",
+                    recordedAt: "2026-11-13T14:00:00.000Z",
+                  },
+                ],
+              }),
+            ),
+          ),
+          runnerIdHeader: "runner",
+        },
+      );
+      expect(response.status, `slot ${slot}, tick ${tick}`).toBe(200);
+    }
+  }
 });
 
 describe("completion fast path shares released capacity across tasks", () => {
@@ -104,7 +142,11 @@ describe("lease renewal fast path preserves protocol boundaries", () => {
       payload: { instruction: "continue", leaseVersion: 2 },
     });
     expect(calls.renew).toHaveBeenCalledWith("runner", "runner-credential", "lease", input);
-    expect(calls.allow).toHaveBeenCalledWith("runner:lease:v1:runner", 600, 60_000);
+    expect(calls.allow).toHaveBeenCalledWith(
+      "runner:renew-lease:resource:v2:runner:lease",
+      600,
+      60_000,
+    );
   });
   it("rejects rate limiting and oversized bodies before renewing any lease", async () => {
     calls.allow.mockResolvedValue(false);

@@ -22,7 +22,7 @@ export async function advancePostgresSchedulingRound(
     }>(
       `SELECT current_round, queue_timeout_ms, policy_json FROM run_batches
     WHERE id=$1 AND retry_mode='round' AND status IN ('queued','dispatching','scheduled','running')
-    AND pause_requested_at IS NULL AND cancel_requested_at IS NULL FOR UPDATE`,
+    AND pause_requested_at IS NULL AND cancel_requested_at IS NULL FOR NO KEY UPDATE`,
       [batchId],
     )
   ).rows[0];

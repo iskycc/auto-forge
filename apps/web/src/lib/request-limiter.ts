@@ -21,15 +21,17 @@ type WindowCounter = {
 export class MemoryRequestLimiter implements RequestLimiter {
   private readonly counters = new Map<string, WindowCounter>();
 
+  constructor(private readonly maximumKeys = MAXIMUM_MEMORY_KEYS) {}
+
   async allow(key: string, limit: number, windowMs: number): Promise<boolean> {
     const now = Date.now();
     const current = this.counters.get(key);
     if (!current || current.resetAt <= now) {
-      if (!current && this.counters.size >= MAXIMUM_MEMORY_KEYS) {
+      if (!current && this.counters.size >= this.maximumKeys) {
         for (const [candidateKey, counter] of this.counters) {
           if (counter.resetAt <= now) this.counters.delete(candidateKey);
         }
-        if (this.counters.size >= MAXIMUM_MEMORY_KEYS) return false;
+        if (this.counters.size >= this.maximumKeys) return false;
       }
       this.counters.set(key, { count: 1, resetAt: now + windowMs });
       return true;

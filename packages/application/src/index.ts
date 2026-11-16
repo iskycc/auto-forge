@@ -11,6 +11,8 @@ export * from "./import-ddt";
 export * from "./inspect-round-recovery";
 export * from "./completion-scheduling-events";
 export * from "./control-executions";
+export * from "./runner-protocol-budget";
+export * from "./log-ingestion";
 export * from "./manage-case-definitions";
 export * from "./manage-case-sources";
 export * from "./manage-case-suites";

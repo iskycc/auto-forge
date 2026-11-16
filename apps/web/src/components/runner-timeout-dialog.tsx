@@ -9,6 +9,7 @@ import { loadExecutionCasePage } from "@/lib/execution-case-page-client";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { ActionDialog } from "./action-dialog";
 import { Button } from "./ui";
+import { TimeoutDiagnosticsButton } from "./timeout-diagnostics-button";
 
 const TIMEOUT_LABELS: Readonly<Record<string, string>> = {
   ASSIGNMENT_CLAIM_TIMEOUT: "领取超时",
@@ -147,7 +148,8 @@ export function RunnerTimeoutDialog({
                               "历史记录未提供详细原因，可进一步查看用例日志与调度日志。"}
                           </p>
                           {canReadLogs ? (
-                            <div>
+                            <div className="flex flex-wrap gap-2">
+                              <TimeoutDiagnosticsButton attemptId={attempt.id} />
                               <Button size="compact" onClick={() => onOpenLogs(attempt)}>
                                 查看用例日志
                               </Button>

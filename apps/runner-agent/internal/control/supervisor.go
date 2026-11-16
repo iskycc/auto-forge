@@ -31,24 +31,25 @@ const (
 )
 
 type attemptSupervisor struct {
-	client        *Client
-	identity      Identity
-	identityMutex sync.RWMutex
-	configuration config.Config
-	store         attemptStore
-	logSpool      *logSpool
-	artifactSpool *artifactSpool
-	batches       *batchRegistry
-	diagnostics   io.Writer
-	draining      atomic.Bool
-	busy          atomic.Int32
-	waitGroup     sync.WaitGroup
-	mutex         sync.Mutex
-	cancellations map[string]context.CancelFunc
-	memoryScopes  map[string]struct{}
-	claimCancel   context.CancelFunc
-	claimWake     chan struct{}
-	runExecution  func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
+	client                *Client
+	identity              Identity
+	identityMutex         sync.RWMutex
+	configuration         config.Config
+	store                 attemptStore
+	logSpool              *logSpool
+	artifactSpool         *artifactSpool
+	batches               *batchRegistry
+	diagnostics           io.Writer
+	draining              atomic.Bool
+	busy                  atomic.Int32
+	waitGroup             sync.WaitGroup
+	mutex                 sync.Mutex
+	cancellations         map[string]context.CancelFunc
+	memoryScopes          map[string]struct{}
+	claimCancel           context.CancelFunc
+	claimWake             chan struct{}
+	timeoutDiagnosticBusy atomic.Bool
+	runExecution          func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
 }
 
 func newAttemptSupervisor(client *Client, identity Identity, configuration config.Config, diagnostics io.Writer) *attemptSupervisor {
@@ -453,6 +454,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 		nil,
 	)
 	processLogs := newAsynchronousLogSink(collector.Write)
+	timeoutDiagnostics := &attemptTimeoutDiagnostics{}
 	_ = collector.Write(executor.LogChunk{
 		Stream:     "agent",
 		Content:    "AutoForge Runner Agent started the attempt.\n",
@@ -466,6 +468,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 			claimed,
 			liveLogUploadInterval,
 			collector.firstOutput,
+			timeoutDiagnostics.observeUpload,
 		)
 	}()
 	streamedWatermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
@@ -501,9 +504,13 @@ func (supervisor *attemptSupervisor) runTestNG(
 			if err := persistProcess(identity); err != nil {
 				return err
 			}
+			supervisor.startTimeoutDiagnostics(timeoutDiagnostics, identity, claimed, collector, startupStartedAt)
 			return recordAttemptStartupStage(collector, "process_created", startupStartedAt)
 		},
-		LogSink: processLogs.Write,
+		LogSink: func(chunk executor.LogChunk) error {
+			timeoutDiagnostics.observeOutput(chunk)
+			return processLogs.Write(chunk)
+		},
 		PrepareWorkspace: func(workspace string) error {
 			memoryScopeName = executor.ResourceScopeName(workspace)
 			supervisor.mutex.Lock()
@@ -540,7 +547,24 @@ func (supervisor *attemptSupervisor) runTestNG(
 			return recordAttemptStartupStage(collector, "workspace_ready", startupStartedAt)
 		},
 	})
+	timeoutDiagnostics.close()
+	uploadPhaseStarted := false
+	var phaseErr error
+	if runErr == nil && result.Termination == "completed" && result.ExitCode != adapterCaseTimeoutExitCode && ctx.Err() == nil {
+		// Java has stopped. Log flush and report handling must use the upload
+		// deadline even when no artifacts were requested, not the JVM deadline.
+		phaseContext, cancelPhase := context.WithTimeout(ctx, 3*time.Second)
+		_, phaseErr = supervisor.client.DeclareArtifacts(phaseContext, supervisor.currentIdentity(), claimed.Assignment.AttemptID, claimed.Lease.Token, []artifactDeclaration{})
+		cancelPhase()
+		uploadPhaseStarted = phaseErr == nil
+	}
 	processLogErr := processLogs.Close()
+	if phaseErr != nil {
+		message := fmt.Sprintf("Java 已结束，但平台上传阶段登记失败：%v；继续保留并上报日志。\n", phaseErr)
+		if diagnosticErr := collector.WriteDiagnostic(message, time.Now().UTC()); diagnosticErr != nil {
+			fmt.Fprintf(supervisor.diagnostics, "persist upload-phase diagnostic for %s: %v\n", claimed.Assignment.AttemptID, errors.Join(phaseErr, diagnosticErr))
+		}
+	}
 	if closeErr := errors.Join(
 		processLogErr,
 		collector.Close(time.Now().UTC().Format(time.RFC3339Nano)),
@@ -597,16 +621,20 @@ func (supervisor *attemptSupervisor) runTestNG(
 	// 保持实时上传协程运行到报告解析和产物扫描结束，利用这些本地 I/O 时间
 	// 提前排空日志；最终仍执行一次权威 flush，完成契约与断线重传语义不变。
 	stopLiveLogs()
-	watermarks, uploadErr := supervisor.flushAttemptLogs(
+	watermarks, uploadErr := supervisor.uploadAttemptLogs(
 		ctx,
 		claimed,
 		time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+		timeoutDiagnostics.observeUpload,
 	)
 	if uploadErr != nil {
 		return platformFailure("LOG_UPLOAD_FAILED", uploadErr)
 	}
 	watermarks = mergeLogWatermarks(streamedWatermarks, watermarks)
 	mapped := mapExecutionResult(result)
+	if mapped.Status == "timed_out" {
+		mapped.Summary = boundedSummary(mapped.Summary + "\n" + timeoutDiagnostics.describe(executionSpec.TimeoutMs))
+	}
 	if reportErr != nil {
 		mapped.Status = "failed"
 		mapped.ResultCode = "TESTNG_REPORT_INVALID"
@@ -653,19 +681,21 @@ func (supervisor *attemptSupervisor) runTestNG(
 		_ = supervisor.artifactSpool.removeAttempt(claimed.Assignment.AttemptID)
 		return platformFailure("RESULT_SPOOL_WRITE_FAILED", err)
 	}
-	if err := supervisor.uploadArtifacts(
-		ctx,
-		claimed,
-		uploads,
-		time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
-		func(updated []artifactUploadState) error { return persistProgress(mapped, updated) },
-	); err != nil {
-		code := "OPTIONAL_ARTIFACT_UPLOAD_FAILED"
-		var transferError *artifactTransferError
-		if errors.As(err, &transferError) && transferError.required {
-			code = "REQUIRED_ARTIFACT_UPLOAD_FAILED"
+	if len(uploads) > 0 || !uploadPhaseStarted {
+		if err := supervisor.uploadArtifacts(
+			ctx,
+			claimed,
+			uploads,
+			time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+			func(updated []artifactUploadState) error { return persistProgress(mapped, updated) },
+		); err != nil {
+			code := "OPTIONAL_ARTIFACT_UPLOAD_FAILED"
+			var transferError *artifactTransferError
+			if errors.As(err, &transferError) && transferError.required {
+				code = "REQUIRED_ARTIFACT_UPLOAD_FAILED"
+			}
+			return platformFailure(code, err)
 		}
-		return platformFailure(code, err)
 	}
 	return mapped
 }
@@ -761,6 +791,10 @@ func hasRequiredArtifact(artifacts []artifactDeclaration) bool {
 }
 
 func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claimed ClaimedAssignment, timeout time.Duration) (logWatermark, error) {
+	return supervisor.uploadAttemptLogs(ctx, claimed, timeout, nil)
+}
+
+func (supervisor *attemptSupervisor) uploadAttemptLogs(ctx context.Context, claimed ClaimedAssignment, timeout time.Duration, observe func(error)) (logWatermark, error) {
 	watermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
 	uploadContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -786,6 +820,9 @@ func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claim
 			chunks,
 		)
 		uploadAttempts++
+		if observe != nil {
+			observe(uploadErr)
+		}
 		if uploadErr == nil {
 			watermarks = response.AcknowledgedSequence
 			if err := supervisor.logSpool.acknowledge(claimed.Assignment.AttemptID, watermarks); err != nil {
@@ -818,6 +855,7 @@ func (supervisor *attemptSupervisor) streamAttemptLogs(
 	claimed ClaimedAssignment,
 	interval time.Duration,
 	firstOutput <-chan struct{},
+	observeUpload func(error),
 ) logWatermark {
 	watermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
 	ticker := time.NewTicker(interval)
@@ -831,7 +869,7 @@ func (supervisor *attemptSupervisor) streamAttemptLogs(
 			firstOutput = nil
 			ticker.Reset(interval)
 		}
-		uploaded, err := supervisor.flushAttemptLogs(ctx, claimed, 5*time.Second)
+		uploaded, err := supervisor.uploadAttemptLogs(ctx, claimed, 5*time.Second, observeUpload)
 		if err != nil {
 			if ctx.Err() == nil {
 				fmt.Fprintf(supervisor.diagnostics, "stream attempt logs for %s: %v\n", claimed.Assignment.AttemptID, err)

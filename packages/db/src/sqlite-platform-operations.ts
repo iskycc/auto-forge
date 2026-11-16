@@ -902,6 +902,10 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     });
   }
 
+  async tryRebuildAnalyticsFacts(limit: number) {
+    return { status: "updated" as const, count: await this.rebuildAnalyticsFacts(limit) };
+  }
+
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(10_000);
     return this.handle.client.transaction(() => this.readAnalyticsSnapshot(input)).deferred();

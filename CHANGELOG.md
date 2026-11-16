@@ -4,6 +4,34 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.19 - 2026-11-16
+
+### Fixed
+
+- Full 多任务执行改用与外键引用兼容的 PostgreSQL 非键更新锁，等待项目额度时不持有批次锁，跨批次领取保持一致锁顺序；上一轮统计写入不再阻塞下一轮完成与取消。完成上报对临时锁冲突有限重试，保留持久回执，避免重复结果和重复重跑。
+- 后台分析事实重建发现已有发布者时直接退让，不再因正常竞争反复产生 `analytics.rebuildFacts / 55P03` 保护提示；真实数据库错误保留具体失败阶段，准确读取和导出继续校验完整统计。
+- 日志、续租、完成与产物采用独立额度；Lite 的日志总额度按已认证节点槽位数计算，修复正常并发上传误触发 429。Java 结束后先登记上传阶段，避免日志排空等待误计入执行超时。
+- 日志暂存、入队及回执等待采用完整四秒期限；关闭时及时返回可重试结果，未结束的 I/O 继续占用有界容量。已有日志流配置不兼容时明确拒绝启动，不降为内存存储或淘汰未处理消息。
+
+### Added
+
+- Full 日志使用 Redis 共享的每秒 1,000 请求准入，MinIO 暂存正文、独立 JetStream 持久消费者及 Web／Worker 日志连接池完成写入；正文和主库水位提交后才确认，保留重复、乱序、冲突、归档保护和断线重传规则。
+- 超时摘要增加计时来源、执行期限、续租及心跳证据；Agent 在接近期限时有界采集 JVM 线程快照，记录最后输出、上传失败和 429。公开日志页与节点超时记录提供现有日志终端的诊断入口，完整 Agent 诊断仍需登录及项目日志权限。
+
+### Compatibility
+
+- 从 v1.22.18 升级没有新增数据库迁移、平台配置、外部生产依赖或 Runner Protocol 字段。Full 同步升级 Web 和全部 Worker；NATS 账号需允许创建日志流／消费者及发布、订阅内部日志 subject。Lite 保留本地日志存储，不要求外部中间件。
+- 更新执行节点 Agent 后才具有线程快照及上传阶段提前登记能力；旧 Agent 保持协议兼容，但不能补出历史诊断。线程快照要求执行所用 JDK 提供可用 `jstack`，不联网下载工具。既有执行结果不追溯改写。
+- 每秒 1,000 次为共享请求准入额度，并非任意硬件、正文大小下的吞吐保证；暂存、队列和数据库繁忙时明确重试，未确认日志仍由 Agent 保留。部署包随附[Full 日志上传](./docs/architecture/full-log-ingestion.md)、[PostgreSQL 执行锁竞争](./docs/architecture/postgresql-execution-locks.md)和[超时诊断](./docs/operations/execution-timeout-diagnostics.md)说明。
+
+### Verification
+
+- 17 个文件的 289 项相关回归通过，包含真实 PostgreSQL 锁竞争、完成与按日日志库，SQLite／PostgreSQL 调度与统计一致性，Redis 共享额度及 JetStream 持久化；随后四个文件的 56 项补充检查通过，两批存在重叠。新增故障场景先复现失败再验证修正。
+- Full 一个 Web、两个 Worker 及真实 PostgreSQL／Redis／NATS／MinIO 的日志、带水位完成、即时补槽、暂停恢复与终止闭环通过；Lite 两项 Playwright 控制及超时诊断权限场景通过。实际查看 1024×768、1536×960 深浅色诊断终端及无权限页面截图，没有新增溢出或变形。
+- queue、数据库、Web、Worker、E2E 类型检查，Web／Worker 生产构建及变更格式／ESLint 通过；Runner 全包测试、相关竞态检查、Go vet、真实 JVM 取栈及双架构静态构建已通过，详见上述诊断记录。
+- 发布准备通过全仓格式与许可证检查、变更 ESLint、57 项发布脚本测试及 E2E 覆盖矩阵检查；修正矩阵中已更名的 Agent 卸载测试引用，并将新增回归接入常规 Lite／Full 验收。
+- 按此前明确的最快路径发布，仅启动 Release，保留原生 amd64／arm64、内置资源、镜像启动、SBOM、签名及完整资产检查，结束后恢复临时暂停的发布后验收工作流。不将未运行的完整标准 CI、持续每秒一千请求压测、用户真实 Java 负载或完整离线验收声明为通过。
+
 ## 1.22.18 - 2026-11-13
 
 ### Changed

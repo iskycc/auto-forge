@@ -79,6 +79,9 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       "docs/operations/system-information.md",
       "docs/operations/log-archives.md",
       "docs/architecture/public-task-execution.md",
+      "docs/architecture/full-log-ingestion.md",
+      "docs/architecture/postgresql-execution-locks.md",
+      "docs/operations/execution-timeout-diagnostics.md",
     ]) {
       assert((await readFile(resolve(packageDirectory, filename), "utf8")).length > 100);
     }

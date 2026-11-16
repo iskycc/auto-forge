@@ -78,6 +78,7 @@ export function AttemptLogViewer({
   canRetryRuns,
   onClose,
   logEndpoint,
+  initialStream = "stdout",
 }: {
   attemptId: string;
   attemptStatus: RunAttempt["status"];
@@ -86,8 +87,9 @@ export function AttemptLogViewer({
   onClose: () => void;
   /** A scoped, read-only log source; execution and live-stream endpoints stay unchanged. */
   logEndpoint?: string;
+  initialStream?: LogStream;
 }) {
-  const [stream, setStream] = useState<LogStream>("stdout");
+  const [stream, setStream] = useState<LogStream>(initialStream);
   const [query, setQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
   const [recordedAfter, setRecordedAfter] = useState("");

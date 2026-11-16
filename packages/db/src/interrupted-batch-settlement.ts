@@ -30,5 +30,5 @@ export function interruptedBatchSettlementSql(
       : `((${terminating}) OR (${finalized}) OR (${roundTail}))`;
   return `SELECT b.id,b.cancel_requested_at AS termination_requested_at FROM run_batches b
     WHERE b.status IN ('queued','dispatching','scheduled','running') AND (${eligible})
-    ORDER BY b.updated_at,b.id LIMIT ${limit}${dialect === "postgres" ? " FOR UPDATE OF b SKIP LOCKED" : ""}`;
+    ORDER BY b.updated_at,b.id LIMIT ${limit}${dialect === "postgres" ? " FOR NO KEY UPDATE OF b SKIP LOCKED" : ""}`;
 }

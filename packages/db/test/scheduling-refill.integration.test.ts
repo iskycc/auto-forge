@@ -1209,6 +1209,176 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
+  it("keeps round six running when the last round-five case reaches its own 600-second deadline", async () => {
+    const harness = await createHarness();
+    try {
+      await harness.rawQuery("UPDATE run_batches SET execution_timeout_ms=600000 WHERE id=?", [
+        harness.completion.batchId,
+      ]);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET execution_timeout_ms=600000 WHERE batch_id=?",
+        [harness.completion.batchId],
+      );
+      const trace = await createOverlappingRound(harness);
+      expect(trace.second.claim.assignment.executionSpec.timeoutMs).toBe(600_000);
+      const batchId = trace.batchId;
+      const slowAttemptId = harness.completion.attempt2Id;
+      // Preserve the real completion and claim paths, then move the same two-round
+      // window to the reported fifth/sixth-round boundary without waiting ten minutes.
+      await harness.rawQuery("UPDATE run_batches SET current_round=6,retry_limit=10 WHERE id=?", [
+        batchId,
+      ]);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET execution_round=execution_round+4 WHERE batch_id=?",
+        [batchId],
+      );
+      await harness.rawQuery(
+        "UPDATE run_attempts SET execution_round=execution_round+4 WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+        [batchId],
+      );
+      await harness.rawQuery("UPDATE run_attempts SET started_at=? WHERE id=?", [
+        "2026-08-10T00:00:00.000Z",
+        slowAttemptId,
+      ]);
+      await harness.rawQuery(
+        "UPDATE run_batch_round_concurrencies SET execution_round=execution_round+4 WHERE batch_id=?",
+        [batchId],
+      );
+      await harness.executions.renewLease({
+        runnerId: harness.runnerId,
+        leaseId: trace.second.claim.lease.id,
+        tokenHash: trace.second.token,
+        expectedVersion: 1,
+        now: "2026-08-10T00:09:59.000Z",
+        expiresAt: "2026-08-10T00:20:00.000Z",
+      });
+
+      const expired = await harness.executions.recoverExpired({
+        now: "2026-08-10T00:10:01.000Z",
+        limit: 10,
+        eventIds: Array.from({ length: 10 }, () => randomUUID()),
+      });
+      expect(expired.filter((entry) => entry.batchId === batchId)).toMatchObject([
+        { attemptId: slowAttemptId, reason: "execution_timeout", retryScheduled: true },
+      ]);
+      const details = (await harness.batches.get(batchId))!;
+      expect(details.currentRound).toBe(6);
+      expect(
+        details.attempts.find((attempt) => attempt.id === trace.second.claim.assignment.attemptId),
+      ).toMatchObject({ status: "running", executionRound: 6 });
+      expect(details.attempts.find((attempt) => attempt.id === slowAttemptId)).toMatchObject({
+        status: "timed_out",
+        executionRound: 5,
+        resultSummary: expect.stringContaining("平台超时恢复"),
+      });
+      expect(details.runs.find((run) => run.id === trace.retry.id)).toMatchObject({
+        status: "running",
+        executionRound: 6,
+      });
+      expect(details.runs.filter((run) => run.status === "queued")).toMatchObject([
+        { executionRound: 6 },
+      ]);
+      expect(details.runs.find((run) => run.status === "queued")?.heldRound ?? 0).toBe(0);
+
+      // Pause/resume is a scheduling fence, not a new execution clock. An
+      // already running round-six attempt keeps its original start time.
+      for (const action of ["pause", "resume"] as const) {
+        await expect(
+          harness.executions.changeBatchScheduling({
+            batchId,
+            action,
+            actorId: "fixture-operator",
+            requestedAt: "2026-08-10T00:10:02.000Z",
+            eventId: randomUUID(),
+          }),
+        ).resolves.toBe(true);
+      }
+      const resumed = (await harness.batches.get(batchId))!;
+      expect(resumed.currentRound).toBe(6);
+      expect(
+        resumed.attempts.find((attempt) => attempt.id === trace.second.claim.assignment.attemptId),
+      ).toMatchObject({
+        status: "running",
+        executionRound: 6,
+        startedAt: details.attempts.find(
+          (attempt) => attempt.id === trace.second.claim.assignment.attemptId,
+        )!.startedAt,
+      });
+
+      await expect(
+        harness.executions.completeAttempt({
+          ...trace.completion(slowAttemptId, harness.completion.lease2TokenHash, "succeeded"),
+          acceptedAt: "2026-08-10T00:10:02.000Z",
+        }),
+      ).resolves.toMatchObject({ disposition: "late", retryScheduled: false });
+      expect(
+        (await harness.batches.get(batchId))!.attempts.find(
+          (attempt) => attempt.id === slowAttemptId,
+        )?.status,
+      ).toBe("timed_out");
+      await expect(
+        harness.executions.completeAttempt({
+          ...trace.completion(
+            trace.second.claim.assignment.attemptId,
+            trace.second.token,
+            "succeeded",
+          ),
+          acceptedAt: "2026-08-10T00:10:03.000Z",
+        }),
+      ).resolves.toMatchObject({ disposition: "accepted", retryScheduled: false });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("uses the upload deadline after Java finishes even when there are no artifacts", async () => {
+    const harness = await createHarness();
+    try {
+      const trace = await createOverlappingRound(harness);
+      const attemptId = trace.second.claim.assignment.attemptId;
+      await harness.rawQuery(
+        "UPDATE execution_runs SET execution_timeout_ms=600000,upload_timeout_ms=60000 WHERE id=?",
+        [trace.retry.id],
+      );
+      await harness.executions.renewLease({
+        runnerId: harness.runnerId,
+        leaseId: trace.second.claim.lease.id,
+        tokenHash: trace.second.token,
+        expectedVersion: 1,
+        now: "2026-08-10T00:09:59.000Z",
+        expiresAt: "2026-08-10T00:20:00.000Z",
+      });
+      await harness.executions.declareArtifacts({
+        runnerId: harness.runnerId,
+        attemptId,
+        leaseTokenHash: trace.second.token,
+        artifacts: [],
+        declaredAt: "2026-08-10T00:14:59.000Z",
+      });
+      const recover = (now: string) =>
+        harness.executions.recoverExpired({
+          now,
+          limit: 10,
+          eventIds: Array.from({ length: 10 }, () => randomUUID()),
+        });
+      expect(
+        (await recover("2026-08-10T00:15:01.000Z")).some((entry) => entry.attemptId === attemptId),
+      ).toBe(false);
+      expect(
+        (await recover("2026-08-10T00:16:01.000Z")).find((entry) => entry.attemptId === attemptId),
+      ).toMatchObject({ reason: "upload_timeout" });
+      expect(
+        (await harness.batches.get(trace.batchId))!.attempts.find(
+          (attempt) => attempt.id === attemptId,
+        ),
+      ).toMatchObject({ resultCode: "UPLOAD_TIMEOUT" });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it.each(["paused", "adaptive", "normal"] as const)(
     "guards the %s tail and never starts an empty retry round",
     async (guard) => {

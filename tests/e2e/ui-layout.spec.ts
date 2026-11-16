@@ -496,6 +496,18 @@ test("batch runner panel separates round attempts from resource snapshots and co
   }
   await panel.getByRole("button", { name: "超时记录 (1)", exact: true }).click();
   const timeoutDialog = page.getByRole("dialog", { name: "执行机超时记录", exact: true });
+  const diagnosticRead = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname.endsWith("/logs") && url.searchParams.get("stream") === "agent";
+  });
+  const diagnosticButton = timeoutDialog.getByRole("button", { name: "查看超时诊断", exact: true });
+  await diagnosticButton.click();
+  expect((await diagnosticRead).status()).toBe(200);
+  const diagnosticLog = page.getByRole("dialog", { name: /执行日志.*Agent 诊断/ });
+  await expect(diagnosticLog).toBeVisible();
+  await diagnosticLog.getByRole("button", { name: "关闭日志终端", exact: true }).click();
+  await expect(timeoutDialog).toBeVisible();
+  await expect(diagnosticButton).toBeFocused();
   await timeoutDialog.getByRole("button", { name: "查看用例日志", exact: true }).click();
   await expect(timeoutDialog).not.toBeVisible();
   await expect(page.getByRole("button", { name: "关闭日志终端", exact: true })).toBeVisible();

@@ -539,6 +539,13 @@ export interface ExecutionControlRepository {
     | { kind: "inline"; content: Uint8Array; sizeBytes: number; sha256: string; mediaType: string }
     | { kind: "url"; url: string; sizeBytes: number; sha256: string; mediaType: string }
   >;
+  authorizeLogUpload?(input: {
+    runnerId: string;
+    attemptId: string;
+    leaseTokenHash: string;
+    receivedAt: string;
+  }): Promise<{ batchId: string; runId: string }>;
+
   appendLogChunks(input: {
     runnerId: string;
     attemptId: string;
@@ -2546,6 +2553,9 @@ export type ApiTokenAuthentication = {
   effectiveScopes: Permission[];
 };
 
+export type AnalyticsFactRefreshResult =
+  { status: "updated"; count: number } | { status: "deferred" };
+
 export interface PlatformOperationsRepository {
   readOperationalMetrics(): Promise<{
     activeLeases: number;
@@ -2682,6 +2692,7 @@ export interface PlatformOperationsRepository {
   }): Promise<void>;
 
   rebuildAnalyticsFacts(limit: number): Promise<number>;
+  tryRebuildAnalyticsFacts(limit: number): Promise<AnalyticsFactRefreshResult>;
   readAnalytics(input: {
     filter: AnalyticsFilter;
     projectIds?: readonly string[];

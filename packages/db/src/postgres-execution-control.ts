@@ -1,5 +1,14 @@
 import { advancePostgresSchedulingRound } from "./postgres-round-dispatch";
-import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
+import {
+  attemptTimeoutEvidenceSql,
+  summarizeAttemptTimeout,
+  type AttemptTimeoutEvidenceRow,
+} from "./attempt-timeout-evidence";
+import {
+  runPostgresTransaction,
+  runPostgresIdempotentSession,
+  retryPostgresWrite,
+} from "./postgres-transaction";
 import type { NodeAttemptLogStore } from "./node-attempt-log-store";
 import { hasBusinessLogWatermarks } from "./archived-attempt-log-store";
 import type {
@@ -215,8 +224,10 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       // 批次状态推进放在事务最后：批次行锁只在提交前短暂持有。通用“先锁再聚合”
       // 更新会让同批次的并发领取互相排队（锁持有跨越多条语句与客户端往返），
       // 领取只会把 run 置为 running，用单语句条件迁移替代。
-      for (const [batchId, eventId] of claimedBatchEvents) {
-        await markBatchActiveOnClaim(client, batchId, input.now, eventId);
+      // Two nodes can claim the same batches in opposite assignment orders.
+      // Keep batch lock order stable across both transactions.
+      for (const batchId of [...claimedBatchEvents.keys()].sort()) {
+        await markBatchActiveOnClaim(client, batchId, input.now, claimedBatchEvents.get(batchId)!);
       }
       return claimed;
     });
@@ -267,13 +278,15 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     completionEvents?: Parameters<ExecutionControlRepository["completeAttempt"]>[1],
   ): Promise<CompleteAttemptResponse> {
     await this.handle.ready;
-    // 完成上报是高并发最热写路径，手动管理客户端而不用通用事务包装：BEGIN 并入
+    // 完成上报是高并发最热写路径，保留自身事务边界：BEGIN 并入
     // 首个多语句束；写事务的 COMMIT 与提交后的在途聚合合并为单次往返，快路径
     // 完全不持有批次行锁（旧“先锁再聚合”使全部完成上报在批次行上串行，
     // pg_stat_statements 中单条 FOR UPDATE 累计数十秒锁等待）。只有批次最后
     // 一个完成上报触发的终态迁移/轮次收尾才在独立小事务中加锁完成。
-    const client = await this.handle.pool.connect();
-    try {
+    // A transient lock failure can happen before result commit or during final
+    // batch settlement. Receipts make the latter safe to replay; release the
+    // client before the shared bounded contention backoff.
+    return runPostgresIdempotentSession(this.handle, async (client) => {
       const result = await this.completeAttemptTransaction(client, input, completionEvents);
       if (!result.committed) {
         await client.query("COMMIT");
@@ -282,12 +295,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         throw new DomainError("ATTEMPT_COMPLETION_CONFLICT", "该执行尝试已收到不同的完成结果。");
       }
       return result.response;
-    } catch (error) {
-      await rollbackQuietly(client);
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   private async completeAttemptTransaction(
@@ -602,6 +610,20 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     };
   }
 
+  async authorizeLogUpload(input: {
+    runnerId: string;
+    attemptId: string;
+    leaseTokenHash: string;
+    receivedAt: string;
+  }) {
+    await this.handle.ready;
+    const context = await authorizedTransferContext(this.handle.pool, {
+      ...input,
+      now: input.receivedAt,
+    });
+    return { batchId: context.batchId, runId: context.assignment.execution_run_id };
+  }
+
   async appendLogChunks(
     input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
@@ -611,7 +633,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       ...input,
       now: input.receivedAt,
     });
-    // 日志内容写入每批次独立 SQLite 文件；PG 主库不再保存日志行。
+    // Payload storage is injected: Full uses the routed PostgreSQL log databases.
     const acknowledgedSequence = await this.attemptLogs.appendChunks({
       batchId,
       attemptId: input.attemptId,
@@ -944,7 +966,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
            AND (b.queue_resumed_at IS NULL OR b.queue_resumed_at::timestamptz + b.queue_timeout_ms * interval '1 millisecond' <= $1::timestamptz)
            AND b.status IN ('queued','dispatching','scheduled','running')
          ORDER BY r.queue_deadline_at::timestamptz, r.id
-         LIMIT $2 FOR UPDATE OF b,r SKIP LOCKED`,
+         LIMIT $2 FOR NO KEY UPDATE OF b,r SKIP LOCKED`,
         [input.now, input.limit],
       );
       let recovered = 0;
@@ -1066,7 +1088,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         terminationRequestedAt: string | null;
         pauseRequestedAt: string | null;
       }>(
-        'SELECT status,cancel_requested_at AS "terminationRequestedAt",pause_requested_at AS "pauseRequestedAt" FROM run_batches WHERE id=$1 FOR UPDATE',
+        'SELECT status,cancel_requested_at AS "terminationRequestedAt",pause_requested_at AS "pauseRequestedAt" FROM run_batches WHERE id=$1 FOR NO KEY UPDATE',
         [input.batchId],
       );
       const batch = result.rows[0];
@@ -1113,9 +1135,10 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         status: RunBatchStatus;
         version: number;
         cancel_requested_at: string | null;
-      }>("SELECT status, version, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE", [
-        input.batchId,
-      ]);
+      }>(
+        "SELECT status, version, cancel_requested_at FROM run_batches WHERE id = $1 FOR NO KEY UPDATE",
+        [input.batchId],
+      );
       const batchState = batch.rows[0];
       if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       if (isTerminalBatchStatus(batchState.status)) return 0;
@@ -1343,6 +1366,8 @@ type CompletionReceiptRow = {
  * 单语句取回完成上报所需的全部上下文（attempt、run、batch、assignment、最新
  * lease、run 的最新 attempt 号）。完成上报是最高频的执行机请求，拆成多次串行
  * 查询会在高并发下被 Node 事件循环间隔逐条放大延迟。
+ * run 的键不会被修改；其非键写锁允许上一轮分析事实的外键引用，同时仍与
+ * 下一轮完成、取消和其他状态写入互斥。attempt 的执行权锁保持不变。
  */
 const COMPLETION_OPENING_SELECT = `SELECT
        a.id AS attempt_id, a.execution_run_id, a.runner_id AS attempt_runner_id,
@@ -1374,7 +1399,7 @@ const COMPLETION_OPENING_SELECT = `SELECT
        ORDER BY created_at DESC LIMIT 1
      ) l ON true
      WHERE a.id = $1
-     FOR UPDATE OF a, r`;
+     FOR UPDATE OF a FOR NO KEY UPDATE OF r`;
 
 function completionOpeningBundleSql(attemptLiteral: string): string {
   const openingSelect = COMPLETION_OPENING_SELECT.replace("$1", attemptLiteral);
@@ -1785,6 +1810,12 @@ async function expireAttempt(
   const control = await findAttemptControl(client, attemptId);
   if (!control || isTerminalAttemptStatus(control.status)) return null;
   const expiration = attemptExpiration(expirationReason);
+  if (expirationReason === "execution_timeout") {
+    const evidence = (
+      await client.query<AttemptTimeoutEvidenceRow>(attemptTimeoutEvidenceSql("$1"), [attemptId])
+    ).rows[0];
+    if (evidence) expiration.summary = summarizeAttemptTimeout(evidence, recordedAt);
+  }
   const failureCounts = await executionFailureCounts(client, control.execution_run_id);
   const decision = outcomeAfterCompletion({
     outcome: "timed_out",
@@ -1885,11 +1916,14 @@ async function cancelRun(
     requestedAt: string;
   },
 ): Promise<boolean> {
+  // Previous-round facts may still reference this run while its next attempt runs.
   const result = await client.query<{
     id: string;
     batch_id: string;
     status: ExecutionRunStatus;
-  }>("SELECT id, batch_id, status FROM execution_runs WHERE id = $1 FOR UPDATE", [input.runId]);
+  }>("SELECT id, batch_id, status FROM execution_runs WHERE id = $1 FOR NO KEY UPDATE", [
+    input.runId,
+  ]);
   const run = result.rows[0];
   if (!run) return false;
   if (isTerminalRunStatus(run.status)) return true;
@@ -2212,7 +2246,7 @@ async function markBatchActiveOnClaim(
               EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'queued') AS queued
      ),
      locked AS (
-       SELECT status FROM run_batches WHERE id = $1 FOR UPDATE
+       SELECT status FROM run_batches WHERE id = $1 FOR NO KEY UPDATE
      ),
      decision AS (
        SELECT locked.status AS old_status,
@@ -2285,7 +2319,7 @@ async function updateBatchStatus(
     cancel_requested_at: string | null;
     pause_requested_at: string | null;
   }>(
-    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at, pause_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
+    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at, pause_requested_at FROM run_batches WHERE id = $1 FOR NO KEY UPDATE",
     [batchId],
   );
   const batchState = lockedBatch.rows[0];

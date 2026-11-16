@@ -312,6 +312,7 @@ run_adapter_tests() {
       packages/db/test/ddt-change-requests.integration.test.ts \
       packages/db/test/ddt-change-migrations.integration.test.ts \
       packages/db/test/postgres-transaction.integration.test.ts \
+      packages/db/test/postgres-scheduling-locks.integration.test.ts \
       packages/db/test/api-token-contention.integration.test.ts \
       packages/db/test/authorization-scope.integration.test.ts \
       packages/db/test/ddt-value-search.integration.test.ts \
@@ -336,7 +337,9 @@ run_adapter_tests() {
       packages/db/test/batch-scheduling-pause-migration.integration.test.ts \
       packages/object-store/test/minio-object-store.integration.test.ts \
       packages/object-store/test/platform-infrastructure-check.integration.test.ts \
-      packages/queue/test/jetstream-job-queue.integration.test.ts
+      packages/queue/test/jetstream-job-queue.integration.test.ts \
+      packages/queue/test/jetstream-log-ingestion.integration.test.ts \
+      apps/web/src/lib/runner-protocol-admission.integration.test.ts
 }
 
 run_distributed_contract_tests() {
@@ -362,6 +365,8 @@ run_distributed_contract_tests() {
       packages/db/test/analytics-snapshot-consistency.integration.test.ts \
       packages/queue/test/sqlite-job-queue.integration.test.ts \
       packages/queue/test/jetstream-job-queue.integration.test.ts \
+      packages/queue/test/jetstream-log-ingestion.integration.test.ts \
+      apps/web/src/lib/runner-protocol-admission.integration.test.ts \
       apps/web/server/log-stream-relay.integration.test.ts
 }
 

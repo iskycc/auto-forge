@@ -246,7 +246,8 @@
         ".github/workflows/ci.yml",
         ".github/workflows/release-checks.yml",
         "tests/e2e/management-operations.spec.ts",
-        "apps/web/src/lib/runner-agent-installer-uninstall.test.ts",
+        "apps/web/src/lib/runner-agent-installer.test.ts",
+        "apps/web/src/lib/runner-agent-uninstall.test.ts",
         "apps/runner-agent/internal/installation/uninstall_test.go",
         "packages/db/test/runner-uninstall.integration.test.ts"
       ],

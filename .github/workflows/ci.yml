@@ -145,7 +145,7 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: operations-runtime
-            specs: tests/e2e/runner-telemetry.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/memory-admission.spec.ts
+            specs: tests/e2e/runner-telemetry.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/memory-admission.spec.ts tests/e2e/timeout-diagnostics.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: ui-1

@@ -172,6 +172,7 @@ export function prioritizedExecutionControlRepository(
     "reconcile",
     "completeAttempt",
     "appendLogChunks",
+    "authorizeLogUpload",
     "declareArtifacts",
     "recoverExpired",
     "terminateBatch",

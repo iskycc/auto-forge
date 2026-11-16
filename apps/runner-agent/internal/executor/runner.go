@@ -143,7 +143,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 		return Result{}, fmt.Errorf("start executable %q: %w", effectiveCommand.Executable, err)
 	}
 	if options.ProcessStarted != nil {
-		identity, identityErr := captureProcessIdentity(command.Process.Pid)
+		identity, identityErr := ReadProcessIdentity(command.Process.Pid)
 		if identityErr == nil {
 			identityErr = options.ProcessStarted(identity)
 		} else if errors.Is(identityErr, os.ErrNotExist) {

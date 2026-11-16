@@ -128,7 +128,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
       // 同轮步骤可以在不同 Web/Worker 实例上同时到期。锁定批次可避免两个
       // 最后步骤互相看不到未提交结果，导致全部 succeeded 却无人释放下一轮。
       const batch = await client.query<{ current_round: number }>(
-        "SELECT current_round FROM run_batches WHERE id = $1 FOR UPDATE",
+        "SELECT current_round FROM run_batches WHERE id = $1 FOR NO KEY UPDATE",
         [input.batchId],
       );
       const currentRound = batch.rows[0]?.current_round;
@@ -283,7 +283,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         [input.updatedAt, input.batchId],
       );
       const locked = await client.query<{ status: RunBatchStatus; version: number }>(
-        "SELECT status, version FROM run_batches WHERE id = $1 FOR UPDATE",
+        "SELECT status, version FROM run_batches WHERE id = $1 FOR NO KEY UPDATE",
         [input.batchId],
       );
       const batch = locked.rows[0];

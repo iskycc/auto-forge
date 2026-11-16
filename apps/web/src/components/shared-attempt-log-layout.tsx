@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 
 import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
+import { TimeoutDiagnosticsButton } from "./timeout-diagnostics-button";
 import { SessionLoginButton } from "@/components/session-login-button";
 import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
@@ -132,7 +133,7 @@ export function SharedAttemptLogLayout({
                   {view.resultCode ? <code>{view.resultCode}</code> : null}
                 </ShareFact>
                 {view.summary ? (
-                  <ShareFact label="错误描述">
+                  <ShareFact label={view.outcome === "timed_out" ? "超时诊断" : "错误描述"}>
                     <pre
                       className={cn(
                         "share-log-summary",
@@ -141,6 +142,13 @@ export function SharedAttemptLogLayout({
                     >
                       {view.summary}
                     </pre>
+                    {view.outcome === "timed_out" ? (
+                      rerunAccess === "login" ? (
+                        <SessionLoginButton label="登录查看超时诊断" variant="secondary" />
+                      ) : rerunAccess !== "forbidden" ? (
+                        <TimeoutDiagnosticsButton attemptId={view.attemptId} />
+                      ) : null
+                    ) : null}
                   </ShareFact>
                 ) : null}
                 <ShareFact label="执行开始时间">

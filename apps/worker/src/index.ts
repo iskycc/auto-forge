@@ -30,6 +30,8 @@ import {
   logStoragePlatformId,
   PostgresLogWriteAdmission,
   PostgresRoutedAttemptLogStore,
+  ArchivedAttemptLogStore,
+  PostgresLogArchiveRepository,
   createNodeLogTransport,
   PostgresCaseSuiteRepository,
   PostgresRunBatchRepository,
@@ -41,6 +43,7 @@ import {
 import { uuidV7 } from "@autoforge/ids";
 import { MinioObjectStore } from "@autoforge/object-store/minio";
 import { JetStreamJobQueue } from "@autoforge/queue/jetstream";
+import { JetStreamLogIngestion } from "@autoforge/queue/log-ingestion";
 import { PostgresOutboxRelay } from "@autoforge/queue/outbox";
 import { connect } from "nats";
 
@@ -152,6 +155,8 @@ const logRegistry = new PostgresLogDatabaseRepository(
   new AesGcmSecretCipher(config.masterKey),
   logStoragePlatformId(config.masterKey),
   join(config.migrationsFolder, "../log-postgresql"),
+  undefined,
+  8,
 );
 if (config.logServer)
   await logRegistry.initializeDaily(config.logServer, ids.next(), clock.now().toISOString());
@@ -161,6 +166,21 @@ const platformOperationsRepository = new PostgresPlatformOperationsRepository(
   attemptLogs,
 );
 const objectStore = new MinioObjectStore(config.minio);
+const guardedLogWriter = new ArchivedAttemptLogStore(
+  attemptLogs,
+  new PostgresLogArchiveRepository(database),
+  objectStore,
+);
+const logIngestion = await JetStreamLogIngestion.create({
+  connection: nats,
+  objects: objectStore,
+  persist: (input) => guardedLogWriter.appendChunks(input),
+  concurrency: 8,
+  reportError: (error) =>
+    logger.error("Full log ingestion operation failed", {
+      error: error instanceof Error ? error.message : "Unknown log persistence failure",
+    }),
+});
 const platformOperations = new PlatformOperationsService(
   platformOperationsRepository,
   clock,
@@ -407,6 +427,7 @@ await withGracePeriod(loops, config.shutdownGraceMs, logger);
 clearInterval(pressureMonitor);
 eventLoopDelay.disable();
 await clock.close();
+await logIngestion.close();
 await Promise.allSettled([
   queue.close(),
   nats.drain(),

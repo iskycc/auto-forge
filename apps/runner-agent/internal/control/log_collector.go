@@ -1,6 +1,7 @@
 package control
 
 import (
+	"errors"
 	"regexp"
 	"sort"
 	"strings"
@@ -65,6 +66,25 @@ func (collector *attemptLogCollector) Write(chunk executor.LogChunk) error {
 		return collector.flushStream(chunk.Stream, chunk.RecordedAt.UTC().Format(time.RFC3339Nano), true)
 	}
 	return collector.flushStream(chunk.Stream, chunk.RecordedAt.UTC().Format(time.RFC3339Nano), false)
+}
+
+func (collector *attemptLogCollector) WriteDiagnostic(content string, recordedAt time.Time) error {
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	// One atomic chunk keeps an optional diagnostic from leaving partial data
+	// or a sequence gap when its payload exceeds the remaining spool budget.
+	if len(content) > maximumLogChunkBytes {
+		return errors.New("diagnostic exceeds the single log chunk budget")
+	}
+	if collector.pending["agent"] != "" {
+		return errors.New("an earlier Agent log is still awaiting persistence")
+	}
+	collector.pending["agent"] = content
+	if err := collector.flushStream("agent", recordedAt.UTC().Format(time.RFC3339Nano), true); err != nil {
+		collector.pending["agent"] = ""
+		return err
+	}
+	return nil
 }
 
 func (collector *attemptLogCollector) Close(recordedAt string) error {

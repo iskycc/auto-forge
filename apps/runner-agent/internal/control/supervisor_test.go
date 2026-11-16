@@ -373,7 +373,7 @@ func TestStreamAttemptLogsUploadsWhileAttemptIsRunning(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			completed := make(chan logWatermark, 1)
-			go func() { completed <- supervisor.streamAttemptLogs(ctx, claimed, scenario.interval, firstOutput) }()
+			go func() { completed <- supervisor.streamAttemptLogs(ctx, claimed, scenario.interval, firstOutput, nil) }()
 			select {
 			case <-uploaded:
 			case <-time.After(time.Second):

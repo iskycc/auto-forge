@@ -1,3 +1,5 @@
+import type { AnalyticsFactRefreshResult } from "@autoforge/application";
+
 const ACTIVE_INTERVAL_MS = 1_000;
 const MAXIMUM_IDLE_INTERVAL_MS = 30_000;
 
@@ -7,7 +9,7 @@ export class AnalyticsFactRefresh {
   private idleIntervalMs = ACTIVE_INTERVAL_MS;
 
   constructor(
-    private readonly rebuild: () => Promise<number>,
+    private readonly rebuild: () => Promise<AnalyticsFactRefreshResult>,
     private readonly reportError: (error: unknown) => void,
     private readonly now: () => number = () => performance.now(),
   ) {}
@@ -16,7 +18,10 @@ export class AnalyticsFactRefresh {
     if (this.now() < this.nextRefreshAt) return;
     let producedFacts = false;
     try {
-      producedFacts = (await this.rebuild()) > 0;
+      const result = await this.rebuild();
+      // Another generator owns this page. It is neither an empty scan nor a
+      // database incident; its committed facts remain available to readers.
+      producedFacts = result.status === "updated" && result.count > 0;
     } catch (error) {
       // A failed fact scan must not prevent an independent cold page from being built.
       this.reportError(error);

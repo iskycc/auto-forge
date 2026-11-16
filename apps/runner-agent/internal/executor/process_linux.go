@@ -35,7 +35,7 @@ func KillPersistedProcessGroup(identity ProcessIdentity) (bool, error) {
 	if identity.ProcessID <= 0 || identity.StartTimeTicks == 0 {
 		return false, errors.New("persisted process identity is invalid")
 	}
-	current, err := captureProcessIdentity(identity.ProcessID)
+	current, err := ReadProcessIdentity(identity.ProcessID)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -73,7 +73,9 @@ func KillPersistedProcessGroup(identity ProcessIdentity) (bool, error) {
 	return true, fmt.Errorf("persisted process group %d did not exit after SIGKILL", identity.ProcessID)
 }
 
-func captureProcessIdentity(processID int) (ProcessIdentity, error) {
+// ReadProcessIdentity lets diagnostic callers verify that a PID still belongs
+// to their original attempt before inspecting it.
+func ReadProcessIdentity(processID int) (ProcessIdentity, error) {
 	identity, _, err := readProcessStat(processID)
 	return identity, err
 }

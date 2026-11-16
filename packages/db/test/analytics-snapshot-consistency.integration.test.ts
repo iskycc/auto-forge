@@ -80,6 +80,19 @@ for (const mode of ["sqlite", "postgres"] as const) {
       });
     });
 
+    it("distinguishes a completed empty background scan from an updated fact page", async () => {
+      await fixture.seedMixedOutcomes();
+      await expect(fixture.repository.tryRebuildAnalyticsFacts(10)).resolves.toEqual({
+        status: "updated",
+        count: 6,
+      });
+      await expect(fixture.repository.tryRebuildAnalyticsFacts(10)).resolves.toEqual({
+        status: "updated",
+        count: 0,
+      });
+      expect(await fixture.factCount()).toBe(7);
+    });
+
     it.each(["overview", "complete"] as const)(
       "keeps the %s snapshot consistent while a different connection publishes facts",
       async (scope) => {
@@ -152,6 +165,60 @@ describe.skipIf(!postgresUrl)("PostgreSQL analytics fact publication", () => {
       await fixture.reader.query("RESET lock_timeout");
     }
     expect(await fixture.repository.rebuildAnalyticsFacts(10)).toBe(1);
+  });
+
+  it("lets background peers yield without queueing a blocking advisory lock or suppressing the authoritative reader", async () => {
+    await fixture.writer.query("DELETE FROM analytics_facts");
+    await fixture.reader.query("SET lock_timeout=25");
+    await fixture.writer.query("BEGIN");
+    try {
+      await fixture.writer.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('autoforge:analytics-facts:v4:' || 'analytics_facts'::regclass::oid::text,0))",
+      );
+      await expect(fixture.repository.tryRebuildAnalyticsFacts(10)).resolves.toEqual({
+        status: "deferred",
+      });
+      expect(await fixture.factCount()).toBe(0);
+      await expect(fixture.repository.rebuildAnalyticsFacts(10)).rejects.toMatchObject({
+        code: "55P03",
+        runtimeContext: { operation: "analytics.facts.wait-owner" },
+      });
+    } finally {
+      await fixture.writer.query("ROLLBACK");
+      await fixture.reader.query("RESET lock_timeout");
+    }
+    await expect(fixture.repository.tryRebuildAnalyticsFacts(10)).resolves.toEqual({
+      status: "updated",
+      count: 1,
+    });
+    await expect(fixture.repository.readAnalytics(analyticsQuery)).resolves.toMatchObject({
+      sampleCount: 1,
+      passed: 1,
+    });
+  });
+
+  it("preserves a real fact-write lock failure and its stage instead of silently declaring ownership contention", async () => {
+    await fixture.writer.query("DELETE FROM analytics_facts");
+    await fixture.reader.query("SET lock_timeout=25");
+    await fixture.writer.query("BEGIN");
+    try {
+      await fixture.writer.query(
+        "SELECT id FROM execution_runs WHERE id='analytics-snapshot-run' FOR UPDATE",
+      );
+      await expect(fixture.repository.tryRebuildAnalyticsFacts(10)).rejects.toMatchObject({
+        code: "55P03",
+        runtimeContext: { operation: "analytics.facts.write-facts" },
+        cause: expect.objectContaining({ code: "55P03" }),
+      });
+      expect(await fixture.factCount()).toBe(0);
+    } finally {
+      await fixture.writer.query("ROLLBACK");
+      await fixture.reader.query("RESET lock_timeout");
+    }
+    await expect(fixture.repository.tryRebuildAnalyticsFacts(10)).resolves.toEqual({
+      status: "updated",
+      count: 1,
+    });
   });
 
   it("protects selected completions from retention until facts are committed", async () => {

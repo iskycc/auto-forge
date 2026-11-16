@@ -35,10 +35,13 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
           );
     // Both metadata writes happen after the independent payload transaction committed. A crash
     // before this point is repaired by the same idempotent Agent upload, never acknowledged early.
-    await this.registry.database.pool.query(
-      "UPDATE run_batch_log_storage SET stored_bytes=GREATEST(stored_bytes,$2) WHERE batch_id=$1",
-      [input.batchId, persisted.storedBytes],
-    );
+    // Daily storage already publishes the authoritative total. Writing zero
+    // again would serialize every upload of a large batch on the same row.
+    if (binding.storage_mode !== "daily")
+      await this.registry.database.pool.query(
+        "UPDATE run_batch_log_storage SET stored_bytes=GREATEST(stored_bytes,$2) WHERE batch_id=$1 AND stored_bytes<$2",
+        [input.batchId, persisted.storedBytes],
+      );
     await this.recordWatermarks({
       ...input,
       watermarks: persisted.watermarks,

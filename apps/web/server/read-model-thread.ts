@@ -70,7 +70,7 @@ const worker = new ReadModelSnapshotWorker(
 );
 let nextCleanupAt = performance.now() + 60_000;
 const factRefresh = new AnalyticsFactRefresh(
-  () => resources.operations.rebuildAnalyticsFacts(100),
+  () => resources.operations.tryRebuildAnalyticsFacts(100),
   (error) => reportRefreshError(error, undefined, "analytics.rebuildFacts"),
 );
 try {

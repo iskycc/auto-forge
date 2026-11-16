@@ -6,6 +6,7 @@
   "exports": {
     "./sqlite": "./src/sqlite.ts",
     "./jetstream": "./src/jetstream.ts",
+    "./log-ingestion": "./src/jetstream-log-ingestion.ts",
     "./outbox": "./src/postgres-outbox-relay.ts"
   },
   "scripts": {
@@ -14,6 +15,7 @@
   "dependencies": {
     "@autoforge/application": "workspace:*",
     "@autoforge/contracts": "workspace:*",
+    "@autoforge/domain": "workspace:*",
     "@autoforge/db": "workspace:*",
     "nats": "2.29.3"
   },

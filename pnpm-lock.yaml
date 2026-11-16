@@ -425,6 +425,9 @@ importers:
       "@autoforge/db":
         specifier: workspace:*
         version: link:../db
+      "@autoforge/domain":
+        specifier: workspace:*
+        version: link:../domain
       nats:
         specifier: 2.29.3
         version: 2.29.3

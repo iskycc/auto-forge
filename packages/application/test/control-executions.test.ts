@@ -903,6 +903,39 @@ describe("failure summary log fallback", () => {
     },
   };
 
+  it("preserves timeout evidence instead of replacing it with an earlier log exception", async () => {
+    const { service, executions, listLogChunks } = buildService({
+      probe: { items: [], acknowledgedSequence: 1, truncated: false },
+      tail: {
+        items: [
+          {
+            stream: "stderr",
+            sequence: 1,
+            content: "java.lang.AssertionError: earlier assertion\n",
+          },
+        ],
+        acknowledgedSequence: 1,
+        truncated: false,
+      },
+    });
+    const summary =
+      "TestNG exceeded the configured execution timeout.\n日志上传：90 次，429 限流 12 次。\n线程证据：业务线程正在等待 Java 锁。";
+    await service.complete("runner-1", "credential", "attempt-1", {
+      ...completionInput,
+      result: {
+        ...completionInput.result,
+        status: "timed_out",
+        resultCode: "EXECUTION_TIMEOUT",
+        summary,
+      },
+    });
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ result: expect.objectContaining({ summary }) }),
+      expect.any(Function),
+    );
+    expect(listLogChunks).not.toHaveBeenCalled();
+  });
+
   it("replaces the summary with the last exception line from stderr when no structured result exists", async () => {
     const { service, executions } = buildService({
       probe: { items: [], acknowledgedSequence: 12, truncated: false },

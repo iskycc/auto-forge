@@ -18,6 +18,12 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 
 ## 当前已实现
 
+- Full 日志上传使用 Redis 共享的每秒 1,000 次准入，MinIO 暂存正文、JetStream 独立日志消费者持久化；正文及连续水位提交后才确认，Web 与独立 Worker 自动协作，保留 Lite 原路径。资源边界与部署要求见[Full 日志上传](./docs/architecture/full-log-ingestion.md)。
+
+- 执行超时保留判定来源、配置期限、计时与续租／心跳证据；Agent 在接近期限时限时采集 JVM 线程快照，并记录最后输出和上传限流次数。日志页及节点超时记录提供“查看超时诊断”；正常日志上传额度随已认证节点槽位数增长，Java 结束即进入上传计时，详见[执行超时与日志上传诊断](./docs/operations/execution-timeout-diagnostics.md)。
+
+- Full 多任务调度使用与外键引用兼容的非键更新锁；等待项目额度时不持有批次锁，上一轮统计引用不会阻塞下一轮完成及取消。后台分析事实重建遇到已有发布者时直接退让，真正的数据库错误保留具体阶段；完成上报遇到临时锁冲突时有限退避，并通过持久回执避免重复写入。排查及验证边界见[PostgreSQL 执行锁竞争](./docs/architecture/postgresql-execution-locks.md)。
+
 - 执行节点安装／更新先释放上传会话再启动远程命令，兼容单 SSH 会话限制；失败按 SFTP、目录、上传、命令启动等阶段显示远端原因，详见[SSH 安装与更新诊断](./docs/architecture/runner-agent.md#ssh-安装与更新诊断)。
 
 - 用例任务支持无业务次数上限的有限重跑，以及按指定轮次的剩余数量／累计通过率／本轮通过率条件结束的无限重跑；Jenkins 环境恢复支持 `7,10,13` 多轮次共用配置，详见[不限次数重跑](./docs/architecture/unlimited-task-retries.md)。

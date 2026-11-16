@@ -40,6 +40,7 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     private readonly platformId: string,
     private readonly migrationsFolder: string,
     private readonly capacityProbe?: (id: string, now: Date) => Promise<PostgresStorageCapacity>,
+    private readonly payloadPoolMax = 2,
   ) {
     this.daily = new PostgresDailyLogDatabases({
       database,
@@ -335,10 +336,10 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
         this.pools.delete(idle[0]);
         await Promise.all([idle[1].pool.end(), idle[1].lockPool.end()]);
       }
-      const pool = this.createPool(connection.url, 2);
+      const pool = this.createPool(connection.url, this.payloadPoolMax);
       const entry = {
         pool,
-        lockPool: this.createPool(connection.url, 2),
+        lockPool: this.createPool(connection.url, this.payloadPoolMax),
         users: 1,
         encryptedConnection: connection.cacheKey,
       };

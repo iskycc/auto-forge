@@ -75,6 +75,73 @@ for (const mode of ["lite", "full"] as const) {
   );
 }
 
+it.skipIf(!process.env.AUTOFORGE_TEST_POSTGRES_URL)(
+  "keeps three production snapshot threads responsive while another analytics publisher owns the guard",
+  async () => {
+    const harness = await createFullHarness();
+    const owner = createPostgresDatabase({
+      connectionString: harness.configuration.databaseUrl,
+      migrationsFolder: harness.configuration.migrationsFolder,
+      poolMax: 1,
+    });
+    const peers: Worker[] = [];
+    const diagnostics: string[] = [];
+    const errors: Error[] = [];
+    try {
+      await owner.ready;
+      await owner.pool.query("BEGIN");
+      await owner.pool.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('autoforge:analytics-facts:v4:' || 'analytics_facts'::regclass::oid::text,0))",
+      );
+      for (let index = 0; index < 3; index += 1) {
+        const prioritySignal = new SharedArrayBuffer(8);
+        const worker = new Worker(new URL("../dist/read-model-thread.js", import.meta.url), {
+          workerData: { ...harness.configuration, prioritySignal },
+          stderr: true,
+        });
+        peers.push(worker);
+        worker.on("error", (error: Error) => errors.push(error));
+        worker.stderr.on("data", (chunk: Buffer) => diagnostics.push(chunk.toString()));
+        const id = randomUUID();
+        await harness.snapshots.request(
+          id,
+          { kind: "public_statistics", projectId: DEFAULT_PROJECT_ID, refreshSeconds: 3600 },
+          new Date().toISOString(),
+        );
+        await vi.waitFor(
+          async () => {
+            expect(errors, diagnostics.join("")).toEqual([]);
+            expect((await harness.snapshots.get(id))?.generatedAt).toEqual(expect.any(String));
+          },
+          { timeout: 10_000 },
+        );
+        // Pause this peer only after its publication. The next cold snapshot
+        // must be built by the new peer, rather than a previously warmed one.
+        Atomics.store(new Int32Array(prioritySignal), 0, 1);
+      }
+      // Fact refresh precedes each cold snapshot. All three real threads must
+      // yield ownership without sending a false database-contention incident.
+      expect(diagnostics).toEqual([]);
+      expect(errors).toEqual([]);
+    } finally {
+      try {
+        await Promise.all(peers.map((worker) => worker.terminate()));
+      } finally {
+        try {
+          try {
+            await owner.pool.query("ROLLBACK");
+          } finally {
+            await owner.close();
+          }
+        } finally {
+          await harness.close();
+        }
+      }
+    }
+  },
+  40_000,
+);
+
 async function createHarness(mode: "lite" | "full") {
   if (mode === "lite") {
     const directory = await mkdtemp(join(tmpdir(), "autoforge-snapshot-bundle-"));
@@ -93,6 +160,10 @@ async function createHarness(mode: "lite" | "full") {
       },
     };
   }
+  return createFullHarness();
+}
+
+async function createFullHarness() {
   const migrationsFolder = join(repositoryRoot, "packages/db/drizzle/postgresql");
   const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL!;
   const admin = createPostgresDatabase({ connectionString, migrationsFolder, poolMax: 1 });
@@ -105,7 +176,12 @@ async function createHarness(mode: "lite" | "full") {
     const url = new URL(connectionString);
     url.pathname = `/${databaseName}`;
     url.searchParams.delete("options");
-    const configuration = { mode, databaseUrl: url.toString(), migrationsFolder, poolMax: 1 };
+    const configuration = {
+      mode: "full" as const,
+      databaseUrl: url.toString(),
+      migrationsFolder,
+      poolMax: 1,
+    };
     const handle = createPostgresDatabase({ ...configuration, connectionString: url.toString() });
     try {
       await handle.ready;

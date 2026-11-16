@@ -1,8 +1,9 @@
+import { admitRunnerProtocolResource } from "@/lib/runner-protocol-admission";
 import { RUNNER_COMPLETE_BODY_LIMIT_BYTES } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
-import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
+import { apiErrorResponse, bearerToken, readJsonBody } from "@/lib/api-response";
 import { refillRunnerAfterCompletion } from "@/lib/refill-runner-after-completion";
 import { getPlatformServices } from "@/lib/services";
 
@@ -14,8 +15,11 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     if (!runnerId) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机标识。");
     const { attemptId } = await context.params;
     const services = await getPlatformServices();
-    rejectRateLimited(
-      await services.runnerRequestLimiter.allow(`runner:complete:v1:${runnerId}`, 300, 60_000),
+    await admitRunnerProtocolResource(
+      services.runnerRequestLimiter,
+      "complete",
+      runnerId,
+      attemptId,
     );
     const response = await services.runnerProtocol.complete(
       runnerId,
