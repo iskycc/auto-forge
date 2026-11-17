@@ -421,11 +421,14 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             if (kind === "ddt")
               expect(spec.adapter?.ddtScope).toEqual({ ...scope, debug: fixture.debugAccess });
             else {
-              if (adapterEnabled) {
-                expect(spec.adapter).toBeDefined();
-                expect(spec.adapter).not.toHaveProperty("ddtScope");
-                expect(spec.adapter).not.toHaveProperty("caseId");
-              } else expect(spec.adapter).toBeUndefined();
+              expect(spec.adapter).toMatchObject({
+                suiteName: "Debug",
+                testName: "V1 SIT",
+                environmentAddress: "127.0.0.1",
+              });
+              expect(spec.adapter).not.toHaveProperty("ddtScope");
+              expect(spec.adapter).not.toHaveProperty("caseId");
+              expect(spec.requiredCapabilities).toContain("adapter:cotest-testng-v1");
               expect(spec.requiredCapabilities).not.toContain("adapter:ddt-insight-url-v1");
             }
           }
@@ -497,7 +500,14 @@ for (const dialect of ["sqlite", "postgres"] as const) {
                 testStageId: "wrong-stage",
                 kind: "testng",
                 caseDefinitionId: classId,
-                execution: { runnerIds: [runnerId] },
+                execution: {
+                  runnerIds: [runnerId],
+                  adapter: {
+                    suiteName: "Debug",
+                    testName: "V1 SIT",
+                    environmentAddresses: ["127.0.0.1"],
+                  },
+                },
               }),
             ),
           ).rejects.toMatchObject({ code: "CASE_DEFINITION_NOT_FOUND" });

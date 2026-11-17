@@ -19,6 +19,15 @@ import {
 import { expectUiIntegrity } from "./support/ui-guard";
 import { insertConcurrencyDiagnosticsFixture } from "./support/concurrency-diagnostics-fixture";
 
+const testngRunnerCapabilities = [
+  "executor:testng-v1",
+  "isolation:cgroup-v2",
+  "java:21.0.8",
+  "testng:7.11.0",
+  "adapter:cotest-testng-v1",
+  "runtime:project-assets-v1",
+];
+
 /**
  * 即时补槽调度验收：一个批次 5 个用例、执行机并发 2。验证：
  * - 初始领取占满 2 个并发槽后，没有空闲槽时领不到新任务；
@@ -251,7 +260,7 @@ async function claimOnce(
         requestId: `e2e-refill-claim-${randomUUID()}`,
         availableSlots,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: testngRunnerCapabilities,
         waitSeconds: 0,
       },
     },
@@ -482,7 +491,7 @@ test("completion immediately refills free runner slots without waiting for the w
       schemaVersion: 1,
       name: "E2E Refill Runner",
       labels: ["linux", "java", "testng"],
-      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+      capabilities: testngRunnerCapabilities,
       maxConcurrency: 2,
       os: "linux",
       architecture: "amd64",
@@ -503,7 +512,7 @@ test("completion immediately refills free runner slots without waiting for the w
         schemaVersion: 1,
         busySlots: 0,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: testngRunnerCapabilities,
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: false,
@@ -546,7 +555,7 @@ test("completion immediately refills free runner slots without waiting for the w
         schemaVersion: 1,
         busySlots: 2,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: testngRunnerCapabilities,
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: false,
@@ -691,12 +700,7 @@ test("completion immediately refills free runner slots without waiting for the w
           schemaVersion: 1,
           busySlots: 0,
           labels: ["linux", "java", "testng"],
-          capabilities: [
-            "executor:testng-v1",
-            "isolation:cgroup-v2",
-            "java:21.0.8",
-            "testng:7.11.0",
-          ],
+          capabilities: testngRunnerCapabilities,
           maxConcurrency: 2,
           agentVersion: "0.2.0",
           terminalEnabled: false,

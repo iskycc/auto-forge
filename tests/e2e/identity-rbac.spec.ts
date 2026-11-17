@@ -628,7 +628,8 @@ test("administrator unlocks and disables a locked user and manages a custom role
     has: page.getByRole("button", { name: "保存角色" }),
   });
   await editor.getByLabel("角色名称").fill(`${roleName} 已更新`);
-  await editor.locator('input[name="permissions"][value="artifact.read"]').check();
+  await expect(editor.locator('input[name="permissions"][value="artifact.read"]')).toHaveCount(0);
+  await editor.locator('input[name="permissions"][value="log.read"]').check();
   await editor.getByRole("button", { name: "保存角色" }).click();
   await expect(page.getByText("角色定义已更新，受影响用户的旧会话已撤销。")).toBeVisible();
 

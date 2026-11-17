@@ -13,6 +13,15 @@ import {
 } from "./support/session";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 
+const testngRunnerCapabilities = [
+  "executor:testng-v1",
+  "isolation:cgroup-v2",
+  "java:21.0.8",
+  "testng:7.11.0",
+  "adapter:cotest-testng-v1",
+  "runtime:project-assets-v1",
+];
+
 const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
 
 test("project member cannot observe another project's assets through pages or direct IDs", async ({
@@ -261,7 +270,7 @@ async function registerRunner(page: Page, suffix: string): Promise<string> {
       schemaVersion: 1,
       name: `Isolation Runner ${suffix}`,
       labels: ["linux", "java", "testng", "isolation"],
-      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+      capabilities: testngRunnerCapabilities,
       maxConcurrency: 4,
       os: "linux",
       architecture: "amd64",
@@ -280,7 +289,7 @@ async function registerRunner(page: Page, suffix: string): Promise<string> {
         schemaVersion: 1,
         busySlots: 0,
         labels: ["linux", "java", "testng", "isolation"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: testngRunnerCapabilities,
         maxConcurrency: 4,
         agentVersion: "0.3.3-e2e",
         terminalEnabled: false,

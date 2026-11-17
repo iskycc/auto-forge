@@ -17,6 +17,7 @@ import { browserJson, ensureAdministrator } from "./support/session";
 import { startBackgroundLoad } from "./support/background-load";
 import { expectUiIntegrity } from "./support/ui-guard";
 import { readExportedWorkbookText } from "./support/export-workbook";
+import { configureTaskExecution } from "./support/task-execution";
 
 const CASE_COUNT = 500;
 const RUNNER_COUNT = 8;
@@ -25,7 +26,14 @@ const CLIENT_REQUEST_CONCURRENCY = 40;
 const RUNNER_REGISTRATION_MAXIMUM_ATTEMPTS = 15;
 const RUNNER_REGISTRATION_RETRY_DELAY_MS = 5_000;
 const CLASS_PREFIX = "ConcurrencyProbe";
-const CAPABILITIES = ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"];
+const CAPABILITIES = [
+  "executor:testng-v1",
+  "isolation:cgroup-v2",
+  "java:21.0.8",
+  "testng:7.11.0",
+  "adapter:cotest-testng-v1",
+  "runtime:project-assets-v1",
+];
 const LABELS = ["linux", "java", "testng"];
 
 type RunnerIdentity = { runnerId: string; credential: string };
@@ -94,31 +102,11 @@ test("two active tasks refill concurrently without schedule-batch database warni
         })
       ).status,
     ).toBe(200);
-    const saved = await browserJson<{ revision: number; policy: Record<string, unknown> }>(
-      page,
-      `/api/v1/case-suites/${suite.body.id}`,
-    );
-    expect(
-      (
-        await browserJson(page, `/api/v1/case-suites/${suite.body.id}`, {
-          method: "PATCH",
-          body: {
-            expectedRevision: saved.body.revision,
-            policy: {
-              ...saved.body.policy,
-              concurrency: suiteConcurrency,
-              retryLimit: 0,
-              adapter: {
-                ...(saved.body.policy.adapter as Record<string, unknown>),
-                enabled: false,
-              },
-              runnerIds: identities.map((identity) => identity.runnerId),
-              runnerGroupId: "",
-            },
-          },
-        })
-      ).status,
-    ).toBe(200);
+    await configureTaskExecution(page, suite.body.id, identities[0]!.runnerId, {
+      concurrency: suiteConcurrency,
+      retryLimit: 0,
+      runnerIds: identities.map((identity) => identity.runnerId),
+    });
     suiteIds.push(suite.body.id);
   }
   const startedAt = new Date().toISOString();
@@ -236,25 +224,11 @@ test("control plane completes 500 concurrent protocol slots without blocking rea
   });
   expect(added.status).toBe(200);
 
-  const suiteDetails = await browserJson<{
-    revision: number;
-    policy: Record<string, unknown>;
-  }>(page, `/api/v1/case-suites/${suite.body.id}`);
-  const configured = await browserJson(page, `/api/v1/case-suites/${suite.body.id}`, {
-    method: "PATCH",
-    body: {
-      policy: {
-        ...suiteDetails.body.policy,
-        concurrency: CASE_COUNT,
-        retryLimit: 0,
-        projectVersionId: hierarchy.versionId,
-        runnerIds: identities.map((identity) => identity.runnerId),
-        runnerGroupId: "",
-      },
-      expectedRevision: suiteDetails.body.revision,
-    },
+  await configureTaskExecution(page, suite.body.id, identities[0]!.runnerId, {
+    concurrency: CASE_COUNT,
+    retryLimit: 0,
+    runnerIds: identities.map((identity) => identity.runnerId),
   });
-  expect(configured.status).toBe(200);
 
   const { durations, readLatenciesMs } = await observeExecutionRecordReads(page, async () => {
     const finishBackground =

@@ -13,6 +13,7 @@ type SuitePolicyOverrides = {
   claimTimeoutMs?: number;
   uploadTimeoutMs?: number;
   runnerLabels?: string[];
+  runnerIds?: string[];
   adapter?: {
     enabled: boolean;
     suiteName: string;
@@ -77,6 +78,9 @@ export async function configureTaskExecution(
     String(suite.body.policy.projectVersionId),
   );
   const adapter = suite.body.policy.adapter as SuitePolicyOverrides["adapter"];
+  // Legacy protocol fixtures disabled Adapter to avoid preparing a runtime.
+  // They now use the shared CoTest defaults; explicit enabled configurations retain their inputs.
+  const adapterOverrides = overrides.adapter?.enabled === false ? undefined : overrides.adapter;
   const updated = await browserJson(page, `/api/v1/case-suites/${encodeURIComponent(suiteId)}`, {
     method: "PATCH",
     body: {
@@ -92,7 +96,7 @@ export async function configureTaskExecution(
           environmentAddresses: adapter?.environmentAddresses.length
             ? adapter.environmentAddresses
             : ["10.0.0.21"],
-          ...overrides.adapter,
+          ...adapterOverrides,
         },
       },
       expectedRevision: suite.body.revision,

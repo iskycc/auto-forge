@@ -2106,7 +2106,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         createdAt: "2026-08-09T00:04:00.000Z",
       });
       await expect(batches.get(batchId)).resolves.toMatchObject({
-        policy: { concurrency: 2, runnerLabels: ["gpu"], artifactPatterns: ["reports/**"] },
+        policy: { concurrency: 2, runnerLabels: ["gpu"], artifactPatterns: [] },
       });
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);

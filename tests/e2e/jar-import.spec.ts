@@ -40,6 +40,15 @@ import {
   selectProjectContext,
 } from "./support/session";
 
+const testngRunnerCapabilities = [
+  "executor:testng-v1",
+  "isolation:cgroup-v2",
+  "java:21.0.8",
+  "testng:7.11.0",
+  "adapter:cotest-testng-v1",
+  "runtime:project-assets-v1",
+];
+
 async function captureUi(page: Page, name: string, fullPage = true): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!screenshotDirectory) return;
@@ -1185,7 +1194,7 @@ public class MixedVisibleTest {
       schemaVersion: 1,
       name: "E2E Runner",
       labels: ["linux", "java", "testng"],
-      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+      capabilities: testngRunnerCapabilities,
       maxConcurrency: 2,
       os: "linux",
       architecture: "amd64",
@@ -1204,7 +1213,7 @@ public class MixedVisibleTest {
         schemaVersion: 1,
         busySlots: 1,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: testngRunnerCapabilities,
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: true,
@@ -1606,13 +1615,14 @@ public class MixedVisibleTest {
   await closeExecutionCaseDetails(page);
   await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
   await openExecutionCaseDetails(page);
-  // 需求5后单用例不再自动展开，需显式点击详情才能看到产物列表。
+  // Structured results remain available after execution artifact collection is retired.
   await page
     .getByRole("row", { name: taskCase.displayName })
     .getByRole("button", { name: "详情" })
     .click();
-  await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
-  await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "结构化执行详情", exact: true })).toBeVisible();
+  await expect(page.getByText("reports/testng/e2e-report.txt")).toHaveCount(0);
+  await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toHaveCount(0);
   await expectUiConsistency(page);
 
   await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
@@ -1790,6 +1800,8 @@ public class MixedVisibleTest {
 
   // The simulated Runner has no periodic heartbeat during the visual audit.
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  // This scenario checks a terminal cancellation; remaining round retries now correctly reschedule it.
+  await configureTaskExecution(page, dailySuiteId, identity.runnerId, { retryLimit: 0 });
   const cancellationBatch = await createTaskRun(page, dailySuiteId);
   // Claim before cancelling so the UI deterministically represents an executed attempt.
   // A never-claimed case is intentionally displayed as not executed.
@@ -2490,12 +2502,7 @@ async function claimAssignment(page: Page, identity: RunnerIdentity): Promise<Cl
           requestId: `e2e-claim-${requestNumber}-${randomUUID()}`,
           availableSlots: 1,
           labels: ["linux", "java", "testng"],
-          capabilities: [
-            "executor:testng-v1",
-            "isolation:cgroup-v2",
-            "java:21.0.8",
-            "testng:7.11.0",
-          ],
+          capabilities: testngRunnerCapabilities,
           waitSeconds: 0,
         },
       },
@@ -2568,7 +2575,7 @@ async function postHeartbeat(page: Page, identity: RunnerIdentity, busySlots: nu
         schemaVersion: 1,
         busySlots,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: testngRunnerCapabilities,
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: true,

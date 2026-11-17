@@ -90,19 +90,48 @@ func TestCapturesARealJavaLockWaitWithoutStoppingTheProcess(t *testing.T) {
 	}
 	directory := t.TempDir()
 	source := filepath.Join(directory, "TimeoutDiagnosticFixture.java")
+	// JVMs enumerate threads differently. Give the lock holder a separate class
+	// so only the blocked entry point matches the business class under inspection.
 	program := `import java.util.concurrent.CountDownLatch;
 public class TimeoutDiagnosticFixture {
- public static void main(String[] args) throws Exception {
-  Object lock=new Object(); CountDownLatch held=new CountDownLatch(1);
-  Thread holder=new Thread(() -> { synchronized(lock) { held.countDown(); try { System.in.read(); } catch(java.io.IOException failure) { throw new RuntimeException(failure); } } });
-  holder.start(); held.await(); System.out.println("READY");
-  synchronized(lock) { System.out.println("unexpected completion"); }
- }
+    public static void main(String[] args) throws Exception {
+        Object lock = new Object();
+        CountDownLatch held = new CountDownLatch(1);
+        new Thread(new DiagnosticLockHolder(lock, held)).start();
+        held.await();
+        System.out.println("READY");
+        synchronized (lock) {
+            System.out.println("unexpected completion");
+        }
+    }
+}`
+	lockHolderSource := filepath.Join(directory, "DiagnosticLockHolder.java")
+	lockHolderProgram := `import java.util.concurrent.CountDownLatch;
+class DiagnosticLockHolder implements Runnable {
+    private final Object lock;
+    private final CountDownLatch held;
+    DiagnosticLockHolder(Object lock, CountDownLatch held) {
+        this.lock = lock;
+        this.held = held;
+    }
+    public void run() {
+        synchronized (lock) {
+            held.countDown();
+            try {
+                System.in.read();
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        }
+    }
 }`
 	if err := os.WriteFile(source, []byte(program), 0600); err != nil {
 		t.Fatal(err)
 	}
-	javac := exec.Command(filepath.Join(filepath.Dir(resolved), "javac"), source)
+	if err := os.WriteFile(lockHolderSource, []byte(lockHolderProgram), 0600); err != nil {
+		t.Fatal(err)
+	}
+	javac := exec.Command(filepath.Join(filepath.Dir(resolved), "javac"), source, lockHolderSource)
 	if output, err := javac.CombinedOutput(); err != nil {
 		t.Fatalf("compile JVM fixture: %v %s", err, output)
 	}

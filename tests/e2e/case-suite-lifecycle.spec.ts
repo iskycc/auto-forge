@@ -22,6 +22,7 @@ import { selectJarForInspection } from "./support/jar-import";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
 import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
+import { openHistoryFixtureConnection } from "./support/history-fixture-connection";
 
 const lifecycleRunnerCapabilities = [
   "runtime:project-assets-v1",
@@ -762,6 +763,8 @@ test("public task links execute with login only, share live status, record actor
       { method: "POST", body: { requestKey: crypto.randomUUID(), delaySeconds: 3600 } },
     );
     expect(noEnvironmentStart.status, JSON.stringify(noEnvironmentStart.body)).toBe(201);
+    // Current CoTest execution requires an IP; retain coverage of historical batches without one.
+    await clearHistoricalBatchEnvironment(page, noEnvironmentStart.body.batchId);
     await page.goto(noEnvironmentLink.body.url);
     await page.getByRole("button", { name: "终止执行", exact: true }).click();
     const noEnvironmentDialog = page.getByRole("dialog", { name: "终止任务执行", exact: true });
@@ -1178,7 +1181,7 @@ test("locked tasks allow one-execution environment editing from task pages and t
       lockedBy: locked.body.lockedBy,
     });
     expect(unchanged.body.policy.adapter.environmentAddresses).toEqual(defaults);
-    // A newly disabled Adapter must not submit an older in-page environment draft.
+    // CoTest remains enabled when legacy configuration requests otherwise; keep the in-page IP.
     await environment.getByRole("button", { name: "修改下次执行 IP", exact: true }).click();
     await fillEnvironmentAddressList(edit, ["10.99.0.4"]);
     await edit.getByRole("button", { name: "使用这些 IP", exact: true }).click();
@@ -1196,21 +1199,27 @@ test("locked tasks allow one-execution environment editing from task pages and t
       .locator(".page-hero")
       .getByRole("button", { name: "立即执行", exact: true })
       .click();
-    await expect(run.getByRole("region", { name: "本次执行环境" })).toContainText("未启用 Adapter");
+    await expect(run.getByRole("region", { name: "本次执行环境" })).toContainText("10.99.0.4");
     await refreshRunnerHeartbeat(other, runner);
-    const noAdapterResponse = other.waitForResponse(
+    const legacyConfigurationResponse = other.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === "/api/v1/run-batches",
     );
     await run.getByRole("button", { name: "确认并开始执行", exact: true }).click();
-    const noAdapter = await noAdapterResponse;
-    expect(noAdapter.status()).toBe(201);
-    expect(noAdapter.request().postDataJSON()).toEqual({ suiteId: suite.id, delaySeconds: 0 });
-    const noAdapterClaim = await claimDeletionAttempt(other, runner);
-    expect(noAdapterClaim.assignment.executionSpec.adapter).toBeUndefined();
-    await uploadDeletionLog(other, runner, noAdapterClaim, "Adapter disabled as configured.\n");
-    await completeDeletionAttempt(other, runner, noAdapterClaim, "succeeded");
+    const legacyConfiguration = await legacyConfigurationResponse;
+    expect(legacyConfiguration.status()).toBe(201);
+    expect(legacyConfiguration.request().postDataJSON()).toEqual({
+      suiteId: suite.id,
+      delaySeconds: 0,
+      environmentAddresses: ["10.99.0.4"],
+    });
+    const legacyConfigurationClaim = await claimDeletionAttempt(other, runner);
+    expect(legacyConfigurationClaim.assignment.executionSpec.adapter?.environmentAddress).toBe(
+      "10.99.0.4",
+    );
+    await uploadDeletionLog(other, runner, legacyConfigurationClaim, "CoTest remains enabled.\n");
+    await completeDeletionAttempt(other, runner, legacyConfigurationClaim, "succeeded");
   } finally {
     await context.close();
   }
@@ -1595,6 +1604,7 @@ test("task deletion preserves history, public logs, analysis and in-flight execu
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await page.unroute(`**${taskPath}`);
 
+  await trigger().click();
   const beforeUpdate = await browserJson<{ revision: number }>(page, taskPath);
   expect(
     (
@@ -1607,7 +1617,6 @@ test("task deletion preserves history, public logs, analysis and in-flight execu
       })
     ).status,
   ).toBe(200);
-  await trigger().click();
   await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
   const conflict = page.getByRole("dialog", { name: "用例任务已被其他人修改", exact: true });
   await expect(conflict).toBeVisible();
@@ -1795,6 +1804,26 @@ test("newly created tasks can be deleted immediately without reappearing after r
 
 type DeletionClaim = ClaimAssignmentsResponse["assignments"][number];
 type DeletionRunner = { id: string; credential: string };
+
+async function clearHistoricalBatchEnvironment(page: Page, batchId: string): Promise<void> {
+  const batch = await browserJson<{ policy: Record<string, unknown> }>(
+    page,
+    `/api/v1/run-batches/${batchId}`,
+  );
+  expect(batch.status).toBe(200);
+  const postgresUrl = process.env.AUTOFORGE_E2E_POSTGRES_URL;
+  const database = await openHistoryFixtureConnection(
+    postgresUrl ? { postgresUrl } : { directory: process.env.AUTOFORGE_E2E_DATA_DIR },
+  );
+  try {
+    await database.execute(
+      "UPDATE run_batches SET policy_json=?, adapter_runtime_json=NULL WHERE id=?",
+      [JSON.stringify({ ...batch.body.policy, environmentAddresses: [] }), batchId],
+    );
+  } finally {
+    await database.close();
+  }
+}
 
 async function claimDeletionAttempt(page: Page, runner: DeletionRunner): Promise<DeletionClaim> {
   let claim: DeletionClaim | undefined;
@@ -3409,7 +3438,33 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
   await importDialog
     .getByLabel("粘贴用例路径", { exact: true })
     .fill(`用例路径\n${removeClass}\n${outsideClass}`);
+  const projectionResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      /\/api\/v1\/read-models\/[^/]+\/directory$/.test(url.pathname) &&
+      url.searchParams.get("query") === "" &&
+      url.searchParams.get("outcome") === "all" &&
+      !url.searchParams.has("missingSuiteId")
+    );
+  });
   await importDialog.getByRole("button", { name: "解析并预览", exact: true }).click();
+  const projection = await projectionResponse;
+  const ready = (payload: {
+    status: { generation: string | null };
+    manifest: unknown;
+    synchronized?: boolean;
+  }) => Boolean(payload.status.generation && payload.manifest && payload.synchronized !== false);
+  if (!ready(await projection.json())) {
+    // Import deliberately reads the unfiltered scope, which can still be rebuilding after exclusion.
+    await expect
+      .poll(async () => {
+        const refreshed = await page.request.get(projection.url());
+        expect(refreshed.status()).toBe(200);
+        return ready(await refreshed.json());
+      })
+      .toBe(true);
+    await importDialog.getByRole("button", { name: "解析并预览", exact: true }).click();
+  }
   await expect(importDialog).toContainText("匹配 2 个 · 未匹配 0 个");
   await importDialog.getByRole("button", { name: "勾选匹配用例", exact: true }).click();
   await exclude.click();
