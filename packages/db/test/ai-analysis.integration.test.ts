@@ -288,6 +288,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           const configuration = aiModelConfigurationSchema.parse({
             baseUrl: "http://model/v1",
             modelId: "test",
+            reasoningEffort: "high",
             concurrency: 1,
             requestsPerMinute: 2,
           });
@@ -322,6 +323,18 @@ for (const dialect of ["sqlite", "postgres"] as const) {
               old.revision,
             ),
           ).toBe(false);
+          expect((await repository.configuration()).configuration?.reasoningEffort).toBe("high");
+          const { reasoningEffort, ...legacyConfiguration } = configuration;
+          expect(reasoningEffort).toBe("high");
+          await execute(
+            "UPDATE ai_model_configuration SET configuration_json=? WHERE id='default'",
+            [JSON.stringify(legacyConfiguration)],
+          );
+          expect((await repository.configuration()).configuration?.reasoningEffort).toBe("default");
+          await execute(
+            "UPDATE ai_model_configuration SET configuration_json=? WHERE id='default'",
+            [JSON.stringify(configuration)],
+          );
           const reserve = (token: string) =>
             repository.reserveModel({
               token,

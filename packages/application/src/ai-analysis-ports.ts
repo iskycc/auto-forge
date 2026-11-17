@@ -198,6 +198,21 @@ export class AiModelRequestError extends Error {
     this.name = "AiModelRequestError";
   }
 }
+
+/** Web routes and background bundles can contain different copies of this error class. */
+export function isAiModelRequestError(error: unknown): error is AiModelRequestError {
+  return (
+    error instanceof Error &&
+    error.name === "AiModelRequestError" &&
+    "retryable" in error &&
+    typeof error.retryable === "boolean" &&
+    (!("retryAfterMs" in error) ||
+      error.retryAfterMs === undefined ||
+      (typeof error.retryAfterMs === "number" &&
+        Number.isFinite(error.retryAfterMs) &&
+        error.retryAfterMs >= 0))
+  );
+}
 export class AiResourceDeferral extends Error {
   constructor(options?: ErrorOptions) {
     super("平台资源繁忙，AI 已暂时退避。", options);

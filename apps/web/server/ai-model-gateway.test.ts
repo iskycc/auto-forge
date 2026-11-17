@@ -17,6 +17,63 @@ import { AiResourceDeferral } from "@autoforge/application";
 import { DomainError } from "@autoforge/domain";
 
 describe("AI model boundary", () => {
+  it.each(["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"])(
+    "sends reasoning effort %s with the compatible completion budget",
+    async (reasoningEffort) => {
+      const transport = vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+        }),
+      );
+      await new OpenAiCompatibleGateway(transport).complete({
+        configuration: aiModelConfigurationSchema.parse({
+          baseUrl: "http://model/v1",
+          modelId: "model",
+          reasoningEffort,
+        }),
+        apiKey: "test-key",
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+      const body = JSON.parse(String(transport.mock.calls[0]![1]!.body));
+      if (reasoningEffort === "default") {
+        expect(body).not.toHaveProperty("reasoning_effort");
+        expect(body).toHaveProperty("max_tokens", 2048);
+        expect(body).not.toHaveProperty("max_completion_tokens");
+      } else {
+        expect(body).toHaveProperty("reasoning_effort", reasoningEffort);
+        expect(body).toHaveProperty("max_completion_tokens", 2048);
+        expect(body).not.toHaveProperty("max_tokens");
+      }
+      expect(body).toMatchObject({ tool_choice: "required", parallel_tool_calls: false });
+      expect(transport).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("reports unsupported reasoning without silently dropping it or leaking provider details", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("reasoning_effort: unsupported value; internal-key=private-value", {
+        status: 400,
+      }),
+    );
+    await expect(
+      new OpenAiCompatibleGateway(transport).complete({
+        configuration: aiModelConfigurationSchema.parse({
+          baseUrl: "http://model/v1",
+          modelId: "model",
+          reasoningEffort: "high",
+        }),
+        apiKey: "test-key",
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({
+      retryable: false,
+      message: expect.stringContaining("思考强度"),
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
   it("sends the stdout tail and business input without generic result codes, stderr or Agent diagnostics", async () => {
     const objects = new Map<string, Uint8Array>();
     const store = new AiEvidenceStore(

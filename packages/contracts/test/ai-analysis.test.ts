@@ -6,6 +6,32 @@ import {
 } from "../src/ai-analysis";
 
 describe("AI analysis contracts", () => {
+  it("keeps existing model configurations on provider-default reasoning", () => {
+    expect(
+      aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "model" }),
+    ).toHaveProperty("reasoningEffort", "default");
+  });
+  it.each(["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"])(
+    "preserves the selected reasoning effort %s",
+    (reasoningEffort) => {
+      expect(
+        aiModelConfigurationSchema.parse({
+          baseUrl: "http://model/v1",
+          modelId: "model",
+          reasoningEffort,
+        }),
+      ).toHaveProperty("reasoningEffort", reasoningEffort);
+    },
+  );
+  it.each(["ultra", "", null, 1])("rejects an invalid reasoning effort %s", (reasoningEffort) => {
+    expect(
+      aiModelConfigurationSchema.safeParse({
+        baseUrl: "http://model/v1",
+        modelId: "model",
+        reasoningEffort,
+      }).success,
+    ).toBe(false);
+  });
   it("bounds new conclusions to one preliminary category and short reason/evidence", () => {
     const draft = {
       recommendation: "case_change_likely",

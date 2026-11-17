@@ -134,6 +134,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
       let peak = 0;
       let modelCalls = 0;
       const modelEvidence: string[] = [];
+      const reasoningEfforts: Array<string | undefined> = [];
       let releaseInitialPair: () => void = () => {};
       const initialPair = new Promise<void>((resolvePair) => {
         releaseInitialPair = resolvePair;
@@ -142,6 +143,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        reasoningEfforts.push(body.reasoning_effort);
         const read = body.messages.findLast((message: { role: string }) => message.role === "tool");
         modelEvidence.push(read.content);
         const ref = JSON.parse(read.content).evidenceId;
@@ -252,6 +254,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           enabled: true,
           baseUrl: `http://127.0.0.1:${address.port}/v1`,
           modelId: "fixture",
+          reasoningEffort: strategy === "legacy" ? "default" : "high",
           contextTokens: 200000,
           concurrency: 2,
           requestsPerMinute: 1000,
@@ -525,6 +528,9 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
             ? caseCount * 2
             : caseCount;
         expect(modelCalls).toBe(expectedCalls);
+        expect(new Set(reasoningEfforts)).toEqual(
+          new Set([strategy === "legacy" ? undefined : "high"]),
+        );
         if (databaseLogs) {
           const delivered = modelEvidence.join("\n");
           for (let member = 0; member < caseCount; member++) {

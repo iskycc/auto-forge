@@ -52,7 +52,12 @@ export class OpenAiCompatibleGateway implements AiModelGatewayPort {
           tools: input.tools,
           tool_choice: "required",
           parallel_tool_calls: false,
-          max_tokens: input.configuration.outputTokens,
+          ...(input.configuration.reasoningEffort === "default"
+            ? { max_tokens: input.configuration.outputTokens }
+            : {
+                reasoning_effort: input.configuration.reasoningEffort,
+                max_completion_tokens: input.configuration.outputTokens,
+              }),
           stream: false,
         }),
         signal: input.signal,
@@ -72,8 +77,16 @@ export class OpenAiCompatibleGateway implements AiModelGatewayPort {
         );
       const text = await boundedText(response, 65536);
       const quota = /insufficient_quota|billing|quota_exceeded/iu.test(text);
+      const unsupportedReasoning =
+        input.configuration.reasoningEffort !== "default" &&
+        [400, 422].includes(response.status) &&
+        /reasoning_effort/iu.test(text);
       throw new AiModelRequestError(
-        quota ? "模型额度或计费不足，请联系管理员。" : `模型请求失败（HTTP ${response.status}）。`,
+        quota
+          ? "模型额度或计费不足，请联系管理员。"
+          : unsupportedReasoning
+            ? "模型端点不支持所选思考强度，请选择该模型支持的强度，或改为“模型默认”后检查连接。"
+            : `模型请求失败（HTTP ${response.status}）。`,
         !quota && (response.status === 429 || response.status === 408 || response.status >= 500),
         retry,
       );

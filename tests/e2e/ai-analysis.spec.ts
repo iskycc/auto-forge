@@ -16,6 +16,131 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("AI reasoning effort persists and reaches connection checks with consistent desktop layout", async ({
+  page,
+}, testInfo) => {
+  const requests: Array<{
+    reasoning_effort?: string;
+    max_tokens?: number;
+    max_completion_tokens?: number;
+  }> = [];
+  const model = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    requests.push(body);
+    response.setHeader("content-type", "application/json");
+    if (body.reasoning_effort === "max") {
+      response.writeHead(400);
+      response.end(JSON.stringify({ error: { message: "unsupported reasoning_effort" } }));
+      return;
+    }
+    response.end(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "check",
+                  type: "function",
+                  function: { name: "connection_check", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise<void>((resolveListen) => model.listen(0, "127.0.0.1", resolveListen));
+  try {
+    const address = model.address();
+    if (!address || typeof address === "string") throw new Error("Model fixture did not listen.");
+    await ensureAdministrator(page);
+    await page.goto("/settings/platform?section=ai");
+    await page
+      .getByLabel("API 根地址", { exact: true })
+      .fill(`http://127.0.0.1:${address.port}/v1`);
+    await page.getByLabel("模型 ID", { exact: true }).fill("reasoning-fixture");
+    const effort = page.getByRole("combobox", { name: /思考强度$/u });
+    await effort.click();
+    await page.getByRole("option", { name: "最高（max）", exact: true }).click();
+    await page.getByRole("button", { name: "检查连接", exact: true }).click();
+    await expect(page.getByText(/模型端点不支持所选思考强度/u)).toBeVisible();
+    await expect(page.getByRole("button", { name: "检查连接", exact: true })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+    expect(requests.at(-1)).toMatchObject({ reasoning_effort: "max", max_completion_tokens: 2048 });
+    await effort.click();
+    await page.getByRole("option", { name: "模型默认", exact: true }).click();
+    await page.getByRole("button", { name: "检查连接", exact: true }).click();
+    await expect(page.getByText("模型连接与工具调用检查通过。", { exact: true })).toBeVisible();
+    expect(requests.at(-1)).not.toHaveProperty("reasoning_effort");
+    expect(requests.at(-1)).toHaveProperty("max_tokens", 512);
+    await effort.click();
+    await page.getByRole("option", { name: "高（high）", exact: true }).click();
+    await page.getByRole("button", { name: "保存配置", exact: true }).click();
+    await expect(page.getByText("已保存；新分析请求立即使用此配置，无需重启。")).toBeVisible();
+    await page.reload();
+    await expect(page.getByText("高（high）", { exact: true })).toBeVisible();
+    const saved = await browserJson<{ configuration: { reasoningEffort: string } }>(
+      page,
+      "/api/v1/ai-analysis/configuration",
+    );
+    expect(saved.body.configuration.reasoningEffort).toBe("high");
+    await page.getByRole("button", { name: "检查连接", exact: true }).click();
+    await expect(page.getByText("模型连接与工具调用检查通过。", { exact: true })).toBeVisible();
+    expect(requests.at(-1)).toMatchObject({
+      reasoning_effort: "high",
+      max_completion_tokens: 2048,
+    });
+    const screenshots =
+      process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+    await mkdir(screenshots, { recursive: true });
+    for (const theme of ["light", "dark"] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+        ]);
+      await page.goto("/settings/platform?section=ai");
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: resolve(screenshots, `ai-reasoning-${theme}-${width}.png`),
+          fullPage: true,
+          animations: "disabled",
+        });
+        // Full-page capture temporarily resizes the viewport; settle its resize events before opening the popup.
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolveFrame) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame()));
+            }),
+        );
+        await effort.click();
+        await expect(page.getByRole("option", { name: "最高（max）", exact: true })).toBeVisible();
+        await page.screenshot({
+          path: resolve(screenshots, `ai-reasoning-options-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+        await page.keyboard.press("Escape");
+      }
+    }
+  } finally {
+    await new Promise<void>((resolveClose, reject) =>
+      model.close((error) => (error ? reject(error) : resolveClose())),
+    );
+  }
+});
+
 test("AI model settings keep a compact switch with an aligned handle in both themes", async ({
   page,
 }, testInfo) => {
@@ -82,6 +207,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
 }, testInfo) => {
   let attempts = 0;
   const receivedTools: string[][] = [];
+  const reasoningEfforts: string[] = [];
   const inferenceRequests: Array<{
     stage: string;
     partId?: string;
@@ -94,6 +220,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    reasoningEfforts.push(input.reasoning_effort);
     const tools = input.tools.map(
       (tool: { function: { name: string } }) => tool.function.name,
     ) as string[];
@@ -188,6 +315,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
           enabled: true,
           baseUrl: `http://127.0.0.1:${address.port}/v1`,
           modelId: "offline-fixture",
+          reasoningEffort: "high",
           contextTokens: 32768,
           outputTokens: 2048,
           concurrency: 2,
@@ -204,6 +332,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     await page.goto("/settings/platform?section=ai");
     const enabled = page.getByRole("switch", { name: "启用 AI 初步分析", exact: true });
     await expect(enabled).toBeChecked();
+    await expect(page.getByText("高（high）", { exact: true })).toBeVisible();
     await enabled.click();
     await expect(enabled).not.toBeChecked();
     await enabled.click();
@@ -716,6 +845,8 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     expect(progressiveResult.body.job).toMatchObject({ total: 4, completed: 4 });
     expect(progressiveResult.body.groups).toEqual([expect.objectContaining({ memberCount: 4 })]);
     expect(new Set(progressiveResult.body.items.map((item) => item.conclusion)).size).toBe(1);
+    expect(reasoningEfforts.length).toBeGreaterThan(1);
+    expect(new Set(reasoningEfforts)).toEqual(new Set(["high"]));
   } finally {
     await new Promise<void>((resolveClose, reject) =>
       model.close((error) => (error ? reject(error) : resolveClose())),

@@ -444,6 +444,7 @@ export const executionGuides: readonly DocumentationArticle[] = [
       "AI",
       "智能",
       "大模型",
+      "思考强度",
       "初步分析",
       "堆栈",
       "日志全文",
@@ -458,7 +459,7 @@ export const executionGuides: readonly DocumentationArticle[] = [
       nodes: [
         { title: "选择失败", detail: "批次或单个用例" },
         { title: "采集证据", detail: "堆栈与业务日志" },
-        { title: "模型初析", detail: "进度 · 等待 · 重试" },
+        { title: "模型初析", detail: "思考强度 · 进度 · 重试" },
         { title: "人工确认", detail: "认领与正式结论" },
       ],
     },
@@ -469,6 +470,31 @@ export const executionGuides: readonly DocumentationArticle[] = [
         paragraphs: [
           "管理员在平台设置的模型配置中登记兼容端点、模型、凭据和上下文等参数，并启用分析。使用者需要相应的分析与日志读取权限。",
           "模型会读取失败业务日志，应按组织要求使用合适的端点。平台只授权读取绑定证据和维护 AI 初步结论，不授予执行命令、修改任务或人工分析数据的权限。",
+        ],
+      },
+      {
+        id: "reasoning-effort",
+        title: "设置思考强度",
+        steps: [
+          {
+            title: "打开配置",
+            detail:
+              "由具有 settings.manage 权限的管理员打开“平台设置 → 模型配置”，选择“思考强度”。",
+          },
+          {
+            title: "选择并检查",
+            detail:
+              "“模型默认”保持既有请求方式；也可选择关闭、极低、低、中、高、极高或最高。各模型支持的档位不同，先点击“检查连接”验证当前选择，再保存配置。",
+          },
+          {
+            title: "保存生效",
+            detail:
+              "批次、单例和自动初析的后续模型请求使用新强度，无需重启；已经发送的请求保留原配置。查看设置需 settings.read 权限。",
+          },
+        ],
+        paragraphs: [
+          "思考与最终答案共用输出预算；较高强度可能需要更多 Token 和时间，可同时调整输出预算及单次响应期限。明确指定强度时，连接检查也使用这两个预算。",
+          "不支持所选档位时，连接检查或分析会显示失败原因，不会自动降级并悄悄换用其他强度。可选择该模型支持的档位，或恢复“模型默认”。",
         ],
       },
       {

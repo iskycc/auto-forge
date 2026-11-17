@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.23 - 2026-11-18
+
+### Added
+
+- AI 模型配置增加思考强度，支持模型默认及 `none / minimal / low / medium / high / xhigh / max`；保存后对批次、单例和自动初析的后续请求实时生效，无需重启。旧配置保持原请求行为，无新增迁移或依赖。
+- 明确选择强度后，连接检查使用相同强度及配置的输出预算和响应期限；不支持时显示明确提示。站内使用文档及运维说明同步补充档位、权限、预算和生效规则。
+
+### Fixed
+
+- 模型设置表单在客户端接入前暂缓编辑，避免首屏过早输入后被替换；连接检查将已处理的模型拒绝原因返回页面，保留原始错误供诊断。
+- 统一跨构建模块的模型错误识别，保留可重试／不可重试及等待时长；固定保存和检查按钮的无障碍名称，以繁忙状态表达提交过程，避免加载图标残留影响连续操作。
+
+### Compatibility
+
+- 从 v1.22.22 升级无需新增数据库迁移、生产依赖或 Runner Protocol 字段，Lite／Full 共用配置规则。思考强度随原有配置 JSON 和修订号持久化，旧配置默认为“模型默认”，保持原请求行为。
+- Full 同步升级 Web 和全部 Worker，本次无需更新 Agent。显式指定强度时，端点须支持对应的 `reasoning_effort` 和 `max_completion_tokens`；各模型支持的档位不同，可先检查连接，不支持时明确失败，不静默降级。配置保存后供后续请求读取，在途请求保留已取得的配置。
+
+### Verification
+
+- 90 项相关单元／契约／UI 约束测试通过；8 项真实 SQLite／PostgreSQL 和 Full 双 AI Worker 中间件集成测试通过，覆盖旧配置、全部档位、实际请求正文、错误分类及重试规则。
+- Lite 3 项、Full 2 项 Playwright 场景分组复验通过，覆盖保存／刷新、连续连接检查、不兼容提示、批次／单例、429 重试、自动初析和导出。实际审查 1024×768、1536×1024 的深浅色页面与下拉框截图，未发现控件溢出或布局变形；模型采用本地确定性合成服务，不代表真实提供方的档位兼容性或分析准确率。
+- Web／Worker 生产构建、相关类型、变更格式／ESLint、19 行 E2E 覆盖矩阵及差异空白检查通过；发布准备另通过全仓格式与许可证及 97 项发布／运维／质量脚本检查。
+- 按明确要求采用最快发布路径，仅运行 Release，保留原生 amd64／arm64、镜像启动、内置资源、SBOM、签名及资产完整性检查，结束后恢复临时暂停的发布后验收。未重跑完整标准 CI、完整发布后验收、真实模型或业务 Java 长时负载。
+
 ## 1.22.22 - 2026-11-17
 
 ### Added

@@ -14,7 +14,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 完整的实现事项和阶段验收门见 [AutoForge 待办路线图](./docs/project-roadmap.md)。
 按里程碑统计的最新实现证据见 [AutoForge 实现进展](./docs/project-status.md)。
 
-Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/architecture/ai-failure-analysis.md)和[提示词草案](./docs/architecture/ai-failure-analysis-prompts.md)，配置、部署及当前实现边界见[AI 初析使用说明](./docs/operations/ai-analysis.md)。全文证据由 Worker 分页采集后交给模型；Full 各进程共用日志平台身份标识，日志库读取故障直接展示具体原因，临时不可用有限重试、繁忙时退避。
+Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/architecture/ai-failure-analysis.md)和[提示词草案](./docs/architecture/ai-failure-analysis-prompts.md)，配置、部署及当前实现边界见[AI 初析使用说明](./docs/operations/ai-analysis.md)。模型配置支持思考强度，默认沿用模型服务行为，保存后对后续请求实时生效。全文证据由 Worker 分页采集后交给模型；Full 各进程共用日志平台身份标识，日志库读取故障直接展示具体原因，临时不可用有限重试、繁忙时退避。
 
 ## 平台使用文档
 

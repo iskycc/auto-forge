@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+export const aiReasoningEffortSchema = z.enum([
+  "default",
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
 export const aiReferencePromptSchema = z
   .object({
     title: z.string().trim().min(1).max(60),
@@ -24,6 +35,7 @@ export const aiModelConfigurationSchema = z
         );
       }, "模型地址须为不含凭据及查询参数的 HTTP(S) API 根地址。"),
     modelId: z.string().trim().min(1).max(200),
+    reasoningEffort: aiReasoningEffortSchema.default("default"),
     contextTokens: z.number().int().min(8192).max(2097152).default(32768),
     outputTokens: z.number().int().min(512).max(16384).default(2048),
     concurrency: z.number().int().min(1).max(32).default(2),

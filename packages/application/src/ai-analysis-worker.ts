@@ -12,6 +12,7 @@ import {
 import { assertAiPermission, resolveAiActor, AI_KEY_PURPOSE } from "./ai-analysis";
 import {
   AiModelRequestError,
+  isAiModelRequestError,
   AiResourceDeferral,
   type AiAnalysisRepository,
   type AiEvidence,
@@ -302,12 +303,11 @@ export class AiAnalysisWorker {
           );
           return true;
         }
-        const retryable =
-          error instanceof AiModelRequestError
-            ? error.retryable
-            : !(error instanceof SyntaxError) &&
-              !(error instanceof Error && error.name === "ZodError");
-        const retryAfter = error instanceof AiModelRequestError ? error.retryAfterMs : undefined;
+        const retryable = isAiModelRequestError(error)
+          ? error.retryable
+          : !(error instanceof SyntaxError) &&
+            !(error instanceof Error && error.name === "ZodError");
+        const retryAfter = isAiModelRequestError(error) ? error.retryAfterMs : undefined;
         const wait =
           retryAfter ??
           Math.min(60000, 2000 * 2 ** work.attempts) + Math.floor(Math.random() * 500);
@@ -513,8 +513,8 @@ export class AiAnalysisWorker {
           );
           return true;
         }
-        const retry = error instanceof AiModelRequestError && error.retryable;
-        const delay = error instanceof AiModelRequestError ? (error.retryAfterMs ?? 5000) : 5000;
+        const retry = isAiModelRequestError(error) && error.retryable;
+        const delay = isAiModelRequestError(error) ? (error.retryAfterMs ?? 5000) : 5000;
         if (retry) await this.repository.coolDown(this.after(delay));
         await this.repository.deferGroup(
           work,

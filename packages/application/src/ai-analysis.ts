@@ -10,7 +10,11 @@ import {
   type AuthenticatedIdentity,
   type Permission,
 } from "@autoforge/domain";
-import type { AiAnalysisRepository, AiModelGatewayPort } from "./ai-analysis-ports";
+import {
+  isAiModelRequestError,
+  type AiAnalysisRepository,
+  type AiModelGatewayPort,
+} from "./ai-analysis-ports";
 import type {
   CachePort,
   Clock,
@@ -82,33 +86,49 @@ export class AiAnalysisService {
       parsed.apiKey ??
       (current.encryptedKey ? this.cipher.decrypt(current.encryptedKey, AI_KEY_PURPOSE) : "");
     const started = this.clock.now().getTime();
-    const reply = await gateway.complete({
-      configuration: { ...parsed.configuration, outputTokens: 512 },
-      apiKey,
-      messages: [
-        {
-          role: "system",
-          content: "这是连接与工具兼容检查，没有真实用例数据。请调用 connection_check，参数为 {}。",
-        },
-      ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "connection_check",
-            description: "检查工具调用能力。",
-            strict: true,
-            parameters: {
-              type: "object",
-              properties: {},
-              required: [],
-              additionalProperties: false,
+    const explicitReasoning = parsed.configuration.reasoningEffort !== "default";
+    const reply = await gateway
+      .complete({
+        // Thinking and visible output share a budget; a 512-token probe can exhaust it before a tool call.
+        configuration: explicitReasoning
+          ? parsed.configuration
+          : { ...parsed.configuration, outputTokens: 512 },
+        apiKey,
+        messages: [
+          {
+            role: "system",
+            content:
+              "这是连接与工具兼容检查，没有真实用例数据。请调用 connection_check，参数为 {}。",
+          },
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "connection_check",
+              description: "检查工具调用能力。",
+              strict: true,
+              parameters: {
+                type: "object",
+                properties: {},
+                required: [],
+                additionalProperties: false,
+              },
             },
           },
-        },
-      ],
-      signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
-    });
+        ],
+        signal: AbortSignal.any([
+          signal,
+          AbortSignal.timeout(
+            explicitReasoning ? parsed.configuration.timeoutSeconds * 1000 : 10000,
+          ),
+        ]),
+      })
+      .catch((cause: unknown) => {
+        if (isAiModelRequestError(cause))
+          throw new DomainError("AI_MODEL_CHECK_FAILED", cause.message, { cause });
+        throw cause;
+      });
     if (reply.tool_calls?.[0]?.function.name !== "connection_check")
       throw new DomainError("AI_TOOLS_UNSUPPORTED", "模型未返回兼容的工具调用。");
     return {

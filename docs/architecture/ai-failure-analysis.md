@@ -343,6 +343,8 @@ AI 采集不再额外脱敏，授权范围内的业务输入和 stdout 保留源
 
 首版默认 OpenAI 兼容 Chat Completions，Base URL 指向 API 根，例如 `https://model.example.internal/v1`，由适配器拼接 `/chat/completions`；避免重复拼接路径。保留显式协议能力扩展点，不声称所有“兼容”端点都支持 tools 或所有模型都能使用此协议。管理员连接检查发送最小合成请求，不发送真实用例；后台只返回检查结果和耗时，不回显密钥。
 
+模型配置增加 `reasoningEffort`，默认 `default` 保持原请求行为；显式选项为 `none / minimal / low / medium / high / xhigh / max`。显式配置通过 `reasoning_effort` 下发，并以 `max_completion_tokens` 计入思考和答案的总预算；连接检查使用相同强度、配置预算与响应期限。旧配置读取时补默认，不新增数据库迁移，Lite／Full 共用配置修订与 Worker 读取路径。不按模型名称猜测或静默降级，兼容性由当前端点的连接检查确认，详见[思考强度说明](../operations/ai-analysis.md#思考强度)。
+
 上下文预算包含 system、工具 schema、历史消息、证据、输出预留及安全余量。模型 ID 由管理员填写，不固定某个厂商型号；不依赖在线模型列表。API Key 加密持久化，省略表示保留，显式清除需校验是否允许无鉴权；不进入 DTO、模型工具、日志或导出。
 
 ### 17.2 调度、中间件与实时进度

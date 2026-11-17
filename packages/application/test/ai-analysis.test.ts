@@ -3,7 +3,13 @@ import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
 import type { IdentityAccessRepository } from "../src/ports";
 import { AiAnalysisService, assertAiPermission, resolveAiActor } from "../src/ai-analysis";
 import { aiModelConfigurationSchema } from "@autoforge/contracts";
-import type { AiAnalysisRepository, AiGroupWork, AiWork } from "../src/ai-analysis-ports";
+import type {
+  AiAnalysisRepository,
+  AiGroupWork,
+  AiWork,
+  AiModelGatewayPort,
+} from "../src/ai-analysis-ports";
+import { AiModelRequestError } from "../src/ai-analysis-ports";
 import { AiAnalysisWorker, type AiEvidencePort } from "../src/ai-analysis-worker";
 import type { SecretCipherPort, RunBatchRepository } from "../src/ports";
 import {
@@ -31,6 +37,77 @@ function actor(permissions: Permission[]): AuthenticatedIdentity {
     projectPermissions: { project: permissions },
   };
 }
+describe("AI connection checks", () => {
+  it.each([false, true])(
+    "preserves a safe model rejection across bundles: %s",
+    async (separateBundle) => {
+      const configuration = aiModelConfigurationSchema.parse({
+        baseUrl: "http://model/v1",
+        modelId: "model",
+        reasoningEffort: "high",
+      });
+      const service = new AiAnalysisService(
+        {
+          configuration: async () => ({ configuration, revision: 0, encryptedKey: null }),
+        } as unknown as AiAnalysisRepository,
+        {} as RunBatchRepository,
+        {} as SecretCipherPort,
+        { now: () => new Date("2026-11-17T00:00:00Z") },
+        { next: () => "unused" },
+      );
+      const cause = separateBundle
+        ? Object.assign(new Error("模型端点不支持所选思考强度。"), {
+            name: "AiModelRequestError",
+            retryable: false,
+          })
+        : new AiModelRequestError("模型端点不支持所选思考强度。", false);
+      await expect(
+        service.check(
+          { revision: 0, configuration },
+          {
+            complete: async () => {
+              throw cause;
+            },
+          },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: "AI_MODEL_CHECK_FAILED", message: cause.message, cause });
+    },
+  );
+  it.each([
+    ["default", 512],
+    ["high", 2048],
+  ])("uses reasoning %s without exhausting its output budget", async (reasoningEffort, budget) => {
+    const configuration = aiModelConfigurationSchema.parse({
+      baseUrl: "http://model/v1",
+      modelId: "model",
+      reasoningEffort,
+    });
+    const service = new AiAnalysisService(
+      {
+        configuration: async () => ({ configuration, revision: 0, encryptedKey: null }),
+      } as unknown as AiAnalysisRepository,
+      {} as RunBatchRepository,
+      {} as SecretCipherPort,
+      { now: () => new Date("2026-11-17T00:00:00Z") },
+      { next: () => "unused" },
+    );
+    const complete = vi.fn<AiModelGatewayPort["complete"]>().mockResolvedValue({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "check", type: "function", function: { name: "connection_check", arguments: "{}" } },
+      ],
+    });
+    await expect(
+      service.check({ revision: 0, configuration }, { complete }, new AbortController().signal),
+    ).resolves.toMatchObject({ ok: true });
+    expect(complete.mock.calls[0]![0].configuration).toMatchObject({
+      reasoningEffort,
+      outputTokens: budget,
+    });
+  });
+});
 describe("AI evidence authorization", () => {
   it("keeps manual analysis permissions separate from model disclosure", () => {
     expect(() =>
@@ -440,6 +517,28 @@ describe("concise stack-first analysis", () => {
 });
 
 describe("AI group reduction admission", () => {
+  it.each([false, true])("preserves model retry policy across bundles: %s", async (retryable) => {
+    const fixture = groupWorker();
+    fixture.reserveModel.mockResolvedValue(true);
+    const coolDown = vi.fn();
+    fixture.repository.coolDown = coolDown;
+    fixture.complete.mockRejectedValue(
+      Object.assign(new Error("模型拒绝本次请求。"), {
+        name: "AiModelRequestError",
+        retryable,
+        retryAfterMs: 60000,
+      }),
+    );
+    await fixture.worker.tick(new AbortController().signal);
+    expect(fixture.deferGroup).toHaveBeenCalledWith(
+      expect.anything(),
+      "模型拒绝本次请求。",
+      "2026-11-04T00:01:00.000Z",
+      !retryable,
+      "2026-11-04T00:00:00.000Z",
+    );
+    expect(coolDown).toHaveBeenCalledTimes(retryable ? 1 : 0);
+  });
   it("defers without charging a retry when platform pressure rises before inference", async () => {
     const fixture = groupWorker();
     fixture.canWork.mockReturnValueOnce(true).mockReturnValue(false);

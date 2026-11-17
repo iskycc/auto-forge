@@ -11,11 +11,24 @@ import {
   Typography,
   Row,
   Col,
+  Select,
 } from "antd";
 import { useState } from "react";
 import type { AiModelConfigurationView } from "@autoforge/contracts";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { AiReferencePromptsDialog } from "./ai-reference-prompts-dialog";
+import { useClientReadiness } from "./ui/use-client-readiness";
+
+const REASONING_EFFORT_OPTIONS = [
+  { value: "default", label: "模型默认" },
+  { value: "none", label: "关闭（none）" },
+  { value: "minimal", label: "极低（minimal）" },
+  { value: "low", label: "低（low）" },
+  { value: "medium", label: "中（medium）" },
+  { value: "high", label: "高（high）" },
+  { value: "xhigh", label: "极高（xhigh）" },
+  { value: "max", label: "最高（max）" },
+];
 
 export function AiModelSettings({
   initial,
@@ -25,6 +38,7 @@ export function AiModelSettings({
   canManage: boolean;
 }) {
   const [form] = Form.useForm();
+  const clientReady = useClientReadiness();
   const [revision, setRevision] = useState(initial.revision);
   const [keyConfigured, setKeyConfigured] = useState(initial.apiKeyConfigured);
   const [pending, setPending] = useState<"save" | "check" | null>(null);
@@ -77,11 +91,12 @@ export function AiModelSettings({
         <Form
           form={form}
           layout="vertical"
-          disabled={!canManage || pending !== null}
+          disabled={!clientReady || !canManage || pending !== null}
           initialValues={{
             enabled: false,
             baseUrl: "",
             modelId: "",
+            reasoningEffort: "default",
             contextTokens: 32768,
             outputTokens: 2048,
             concurrency: 2,
@@ -137,6 +152,14 @@ export function AiModelSettings({
               autoComplete="new-password"
             />
           </Form.Item>
+          <Form.Item
+            name="reasoningEffort"
+            label="思考强度"
+            extra="模型默认保持现有请求方式；其他选项需模型支持。思考与答案共用输出预算，较高强度可适当增加预算和响应期限。"
+            rules={[{ required: true, message: "请选择思考强度。" }]}
+          >
+            <Select options={REASONING_EFFORT_OPTIONS} virtual={false} />
+          </Form.Item>
           <Row gutter={[24, 0]}>
             {[
               ["contextTokens", "上下文大小（tokens）", 8192, 2097152],
@@ -169,13 +192,24 @@ export function AiModelSettings({
             label="分析参考提示词"
             extra="每次批次和单例分析都会读取；应用后点击“保存配置”生效。"
           >
-            <AiReferencePromptsDialog disabled={!canManage || pending !== null} />
+            <AiReferencePromptsDialog disabled={!clientReady || !canManage || pending !== null} />
           </Form.Item>
           <Space wrap>
-            <Button type="primary" loading={pending === "save"} onClick={() => void submit()}>
+            <Button
+              type="primary"
+              aria-label="保存配置"
+              aria-busy={pending === "save"}
+              loading={pending === "save"}
+              onClick={() => void submit()}
+            >
               保存配置
             </Button>
-            <Button loading={pending === "check"} onClick={() => void submit(true)}>
+            <Button
+              aria-label="检查连接"
+              aria-busy={pending === "check"}
+              loading={pending === "check"}
+              onClick={() => void submit(true)}
+            >
               检查连接
             </Button>
             <Typography.Text type="secondary">所有 Worker 共用模型并发及限流额度</Typography.Text>
