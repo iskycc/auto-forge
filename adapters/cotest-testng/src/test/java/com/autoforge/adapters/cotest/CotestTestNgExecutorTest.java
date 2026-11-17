@@ -63,6 +63,10 @@ class CotestTestNgExecutorTest {
     assertSame(originalContextLoader, Thread.currentThread().getContextClassLoader());
     assertTrue(Utf8TestIO.decode(standardOutput).contains("Passed: 1"));
     assertTrue(Files.isRegularFile(reports.resolve("testng-results.xml")));
+    try (java.util.stream.Stream<Path> files = Files.walk(reports)) {
+      assertEquals(Collections.singletonList(reports.resolve("testng-results.xml")),
+          files.filter(Files::isRegularFile).collect(java.util.stream.Collectors.toList()));
+    }
   }
 
   @Test

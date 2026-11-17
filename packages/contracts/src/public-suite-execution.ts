@@ -125,7 +125,10 @@ export const publicSuiteViewSchema = z.object({
   concurrency: z.number().int().positive(),
   retryLimit: z.number().int().nonnegative(),
   unlimitedRetries: z.boolean().optional(),
-  adapterEnabled: z.boolean().default(false),
+  adapterEnabled: z
+    .boolean()
+    .default(true)
+    .transform((): boolean => true),
   environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses,
   environment: publicSuiteEnvironmentStateSchema.default({
     schemaVersion: 1,

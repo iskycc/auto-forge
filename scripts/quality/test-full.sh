@@ -573,6 +573,9 @@ run_full_browser_flow() {
       ;;
     governance)
       browser_specs=(
+        tests/e2e/cotest-default-public-export.spec.ts
+        tests/e2e/testng-artifacts-retirement.spec.ts
+        tests/e2e/user-documentation.spec.ts
         tests/e2e/log-databases.spec.ts
         tests/e2e/log-archives.spec.ts
         tests/e2e/identity-rbac.spec.ts

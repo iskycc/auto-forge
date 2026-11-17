@@ -58,6 +58,20 @@ describe("case suite copy scope", () => {
   });
 });
 
+describe("retired execution artifact input", () => {
+  it("keeps partial task edits free of retired fields when omitted", () => {
+    const input = { expectedRevision: 2, policy: { concurrency: 8 } };
+
+    expect(updateCaseSuiteInputSchema.parse(input)).toEqual(input);
+  });
+
+  it("normalizes explicitly supplied legacy rules to an empty list", () => {
+    expect(caseSuiteExecutionPolicySchema.parse({ artifactPatterns: ["reports/*.xml"] })).toEqual({
+      artifactPatterns: [],
+    });
+  });
+});
+
 describe("Runner registration contracts", () => {
   it("accepts the optional startup terminal ticket without changing protocol v1", () => {
     expect(

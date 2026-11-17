@@ -31,7 +31,6 @@ it("searches and inherits from 100,000 DDT cases off the Web thread with bounded
       attemptLogsDirectory: resolve(directory, "logs"),
       sqlite: { databasePath },
       caseExecutionTimeoutSeconds: 60,
-      artifactCollectionEnabled: false,
       scheduler: {
         maximumCpuUtilizationPercent: 90,
         maximumMemoryUtilizationPercent: 90,

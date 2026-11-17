@@ -377,122 +377,30 @@ func boundedLogUploadRequest(request uploadLogChunksRequest) (uploadLogChunksReq
 	return request, nil
 }
 
-func (client *Client) DeclareArtifacts(ctx context.Context, identity Identity, attemptID, leaseToken string, artifacts []artifactDeclaration) (declareArtifactsResponse, error) {
+// BeginUpload changes only lifecycle timing; it never declares or transfers files.
+func (client *Client) BeginUpload(ctx context.Context, identity Identity, attemptID, leaseToken string) error {
 	requestID, err := randomIdentifier()
 	if err != nil {
-		return declareArtifactsResponse{}, fmt.Errorf("create artifact declaration request identifier: %w", err)
+		return fmt.Errorf("create upload phase identifier: %w", err)
 	}
-	request := declareArtifactsRequest{
-		SchemaVersion: protocolVersion,
-		RequestID:     requestID,
-		LeaseToken:    leaseToken,
-		Artifacts:     artifacts,
+	request := map[string]any{"schemaVersion": protocolVersion, "requestId": requestID, "leaseToken": leaseToken}
+	var response struct {
+		SchemaVersion int `json:"schemaVersion"`
 	}
-	var response declareArtifactsResponse
-	path := fmt.Sprintf("/api/v1/run-attempts/%s/artifacts", url.PathEscape(attemptID))
-	if err := client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response); err != nil {
-		return declareArtifactsResponse{}, fmt.Errorf("declare artifacts: %w", err)
+	path := fmt.Sprintf("/api/v1/run-attempts/%s/upload-phase", url.PathEscape(attemptID))
+	err = client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response)
+	var failure *APIError
+	if errors.As(err, &failure) && failure.StatusCode == http.StatusNotFound {
+		// Adjacent protocol-v1 servers used an empty declaration for this transition.
+		request["artifacts"] = []any{}
+		path = fmt.Sprintf("/api/v1/run-attempts/%s/artifacts", url.PathEscape(attemptID))
+		err = client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response)
 	}
-	if response.SchemaVersion != protocolVersion || len(response.Artifacts) != len(artifacts) {
-		return declareArtifactsResponse{}, errors.New("declare artifacts: incompatible protocol response")
-	}
-	return response, nil
-}
-
-func (client *Client) UploadArtifact(ctx context.Context, identity Identity, lease Lease, artifact declaredArtifact, path string) error {
-	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open artifact upload: %w", err)
+		return fmt.Errorf("begin log upload: %w", err)
 	}
-	defer file.Close()
-	endpoint, direct, err := client.artifactUploadURL(artifact)
-	if err != nil {
-		return fmt.Errorf("resolve artifact upload target: %w", err)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, file)
-	if err != nil {
-		return fmt.Errorf("create artifact upload request: %w", err)
-	}
-	request.ContentLength = artifact.SizeBytes
-	if !direct {
-		request.Header.Set("Authorization", "Bearer "+identity.Credential)
-		request.Header.Set("X-AutoForge-Runner-Id", identity.RunnerID)
-		request.Header.Set("X-AutoForge-Lease-Token", lease.Token)
-	}
-	request.Header.Set("Content-Type", artifact.MediaType)
-	request.Header.Set("User-Agent", "AutoForge-Runner-Agent")
-	response, err := client.http.Do(request)
-	if err != nil {
-		return fmt.Errorf("upload artifact: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return client.responseError(response)
-	}
-	if direct {
-		if artifact.FinalizePath == "" {
-			return errors.New("upload artifact: direct target is missing finalize path")
-		}
-		return client.finalizeArtifact(ctx, identity, lease, artifact)
-	}
-	var result uploadArtifactResponse
-	if err := json.NewDecoder(io.LimitReader(response.Body, maximumResponseBytes+1)).Decode(&result); err != nil {
-		return fmt.Errorf("decode artifact upload response: %w", err)
-	}
-	if result.ArtifactID != artifact.ArtifactID || result.Status != "uploaded" {
-		return errors.New("upload artifact: incompatible protocol response")
-	}
-	return nil
-}
-
-func (client *Client) artifactUploadURL(artifact declaredArtifact) (string, bool, error) {
-	method := artifact.UploadMethod
-	if method == "" {
-		method = "control-plane"
-	}
-	target, err := url.Parse(artifact.UploadPath)
-	if err != nil || artifact.UploadPath == "" {
-		return "", false, errors.New("invalid artifact upload path")
-	}
-	if method == "direct" {
-		if !target.IsAbs() || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-			return "", false, errors.New("invalid direct artifact upload URL")
-		}
-		return target.String(), true, nil
-	}
-	if method != "control-plane" || target.IsAbs() || !strings.HasPrefix(target.Path, "/api/v1/") {
-		return "", false, errors.New("invalid control-plane artifact upload path")
-	}
-	return client.baseURL.ResolveReference(target).String(), false, nil
-}
-
-func (client *Client) finalizeArtifact(ctx context.Context, identity Identity, lease Lease, artifact declaredArtifact) error {
-	target, err := url.Parse(artifact.FinalizePath)
-	if err != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/api/v1/") {
-		return errors.New("finalize artifact: invalid control-plane path")
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL.ResolveReference(target).String(), nil)
-	if err != nil {
-		return fmt.Errorf("create artifact finalize request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+identity.Credential)
-	request.Header.Set("X-AutoForge-Runner-Id", identity.RunnerID)
-	request.Header.Set("X-AutoForge-Lease-Token", lease.Token)
-	request.Header.Set("User-Agent", "AutoForge-Runner-Agent")
-	response, err := client.http.Do(request)
-	if err != nil {
-		return fmt.Errorf("finalize artifact: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return client.responseError(response)
-	}
-	var result uploadArtifactResponse
-	if err := json.NewDecoder(io.LimitReader(response.Body, maximumResponseBytes+1)).Decode(&result); err != nil {
-		return fmt.Errorf("decode artifact finalize response: %w", err)
-	}
-	if result.ArtifactID != artifact.ArtifactID || result.Status != "uploaded" {
-		return errors.New("finalize artifact: incompatible protocol response")
+	if response.SchemaVersion != protocolVersion {
+		return errors.New("begin log upload: incompatible protocol response")
 	}
 	return nil
 }

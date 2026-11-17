@@ -61,7 +61,15 @@ const entries = [
     name: "single TestNG case",
     invoke: (request: Request) =>
       createSingleCase(request, { params: Promise.resolve({ caseDefinitionId: "case" }) }),
-    body: { runnerIds: ["runner"] },
+    body: {
+      runnerIds: ["runner"],
+      adapter: {
+        enabled: true,
+        suiteName: "Project",
+        testName: "Version",
+        environmentAddresses: ["10.0.0.21"],
+      },
+    },
     create: runtime.createSingleCase,
   },
   {
@@ -70,7 +78,15 @@ const entries = [
       createSingleDdtCase(request, {
         params: Promise.resolve({ path: ["cases", "case", "execute"] }),
       }),
-    body: { runnerIds: ["runner"] },
+    body: {
+      runnerIds: ["runner"],
+      adapter: {
+        enabled: true,
+        suiteName: "Project",
+        testName: "Version",
+        environmentAddresses: ["10.0.0.21"],
+      },
+    },
     create: runtime.createSingleDdtCase,
   },
   {
@@ -80,7 +96,15 @@ const entries = [
       ...scope,
       kind: "testng",
       caseDefinitionId: "case",
-      execution: { runnerIds: ["runner"] },
+      execution: {
+        runnerIds: ["runner"],
+        adapter: {
+          enabled: true,
+          suiteName: "Project",
+          testName: "Version",
+          environmentAddresses: ["10.0.0.21"],
+        },
+      },
     },
     create: runtime.createDebugCase,
   },

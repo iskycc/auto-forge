@@ -83,7 +83,6 @@ export function CaseSuiteEditor({
   projectVersions,
   projectName,
   selectedTestStageId,
-  artifactsEnabled,
   canManage,
 }: {
   suite: CaseSuite;
@@ -92,7 +91,6 @@ export function CaseSuiteEditor({
   projectVersions: ProjectStructure["versions"];
   projectName: string;
   selectedTestStageId: string | undefined;
-  artifactsEnabled: boolean;
   canManage: boolean;
 }) {
   const router = useRouter();
@@ -181,11 +179,6 @@ export function CaseSuiteEditor({
       .split(/[,，]/)
       .map((label) => label.trim())
       .filter((label) => label.length > 0);
-    const artifactPatterns = String(form.get("artifactPatterns") ?? "")
-      .split("\n")
-      .map((pattern) => pattern.trim())
-      .filter((pattern) => pattern.length > 0);
-
     const runnerIds = form
       .getAll("runnerIds")
       .map(String)
@@ -205,7 +198,7 @@ export function CaseSuiteEditor({
             aiAnalysisAfterCompletion: form.get("aiAnalysisAfterCompletion") === "on",
             executor: form.get("executor"),
             adapter: {
-              enabled: form.get("adapterEnabled") === "on",
+              enabled: true,
               suiteName: form.get("adapterSuiteName"),
               testName: form.get("adapterTestName"),
               environmentAddresses,
@@ -224,8 +217,6 @@ export function CaseSuiteEditor({
             runnerGroupId:
               runnerSelectionKind === "group" ? String(form.get("runnerGroupId") ?? "") : "",
             runnerLabels,
-            // 全局开关只影响新批次快照，不应在编辑其他任务字段时抹掉任务规则。
-            artifactPatterns,
             retryConcurrencyRules: retryConcurrencyRules.map(toRetryConcurrencyRuleInput),
             roundRecoveryRules: roundRecoveryRules.map(toRoundRecoveryRuleInput),
           },
@@ -1065,14 +1056,7 @@ export function CaseSuiteEditor({
                 </label>
               )}
             </div>
-            <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
-              <Input
-                name="adapterEnabled"
-                type="checkbox"
-                defaultChecked={suite.policy.adapter.enabled}
-              />
-              使用 CoTest TestNG Adapter
-            </label>
+
             <label>
               Adapter Suite Name
               <Input
@@ -1111,16 +1095,7 @@ export function CaseSuiteEditor({
                 defaultValue={suite.description}
               />
             </label>
-            {artifactsEnabled ? (
-              <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
-                产物规则（每行一个相对路径 glob）
-                <Textarea
-                  name="artifactPatterns"
-                  rows={2}
-                  defaultValue={suite.policy.artifactPatterns.join("\n")}
-                />
-              </label>
-            ) : null}
+
             <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
               <Input name="enabled" type="checkbox" defaultChecked={suite.enabled} />
               启用（停用后不能创建新批次，在途批次继续）

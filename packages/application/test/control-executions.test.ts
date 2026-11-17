@@ -4,7 +4,6 @@ import { ExecutionControlService, redactLogContent } from "../src/control-execut
 import type {
   ClaimedAssignmentRecord,
   ExecutionControlRepository,
-  JarObjectStorePort,
   RunBatchRepository,
   RunBatchSchedulingPort,
   RunnerRepository,
@@ -69,7 +68,6 @@ describe("execution data scope", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batchesRepositoryFake(),
@@ -127,7 +125,6 @@ describe("Runner execution compatibility", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batches,
@@ -244,7 +241,6 @@ describe("Runner execution compatibility", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batches,
@@ -325,7 +321,6 @@ describe("high-concurrency execution control", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now },
       { next: () => "generated-id" },
       batchesRepositoryFake(),
@@ -392,7 +387,6 @@ describe("high-concurrency execution control", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "generated-id" },
       batchesRepositoryFake(),
@@ -432,7 +426,6 @@ describe("high-concurrency execution control", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "termination-event" },
       batchesRepositoryFake(),
@@ -464,7 +457,6 @@ describe("high-concurrency execution control", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => now },
       { next: () => "recovery-event" },
       batchesRepositoryFake(),
@@ -545,7 +537,6 @@ describe("attempt completion scheduling events", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "event-id" },
       batches,
@@ -696,107 +687,6 @@ describe("attempt completion scheduling events", () => {
   });
 });
 
-describe("artifact transfer orchestration", () => {
-  it("issues a direct target and verifies the object before finalizing metadata", async () => {
-    const artifact = {
-      artifactId: "artifact-1",
-      relativePath: "reports/testng/testng-results.xml",
-      mediaType: "application/xml",
-      sizeBytes: 8,
-      sha256: "a".repeat(64),
-      required: true,
-    };
-    const executions = {
-      resolveAttemptProjectId: vi.fn().mockResolvedValue("project-1"),
-      declareArtifacts: vi.fn().mockResolvedValue([{ ...artifact, status: "declared" }]),
-      resolveArtifactUpload: vi.fn().mockResolvedValue({ ...artifact, status: "declared" }),
-      markArtifactUploaded: vi.fn().mockResolvedValue(undefined),
-    } as unknown as ExecutionControlRepository;
-    const runners = {
-      findByCredentialHash: vi.fn().mockResolvedValue({
-        id: "runner-1",
-        name: "Runner 1",
-        state: "online",
-        os: "linux",
-        architecture: "amd64",
-        agentVersion: "0.2.2",
-        protocolVersion: 1,
-        labels: [],
-        capabilities: [],
-        maxConcurrency: 1,
-        busySlots: 0,
-        lastSeenAt: "2026-08-09T00:00:00.000Z",
-        terminalEnabled: false,
-        createdAt: "2026-08-09T00:00:00.000Z",
-        updatedAt: "2026-08-09T00:00:00.000Z",
-      }),
-    } as unknown as RunnerRepository;
-    const objectStore = {
-      prepareArtifactUpload: vi.fn().mockResolvedValue({
-        kind: "direct",
-        uploadUrl: "https://minio.internal/signed-object",
-        objectKey: `projects/project-1/artifacts/attempt-1/artifact-1/${artifact.sha256}`,
-      }),
-      verifyArtifactUpload: vi.fn().mockResolvedValue({
-        objectKey: `projects/project-1/artifacts/attempt-1/artifact-1/${artifact.sha256}`,
-        created: true,
-      }),
-    } as unknown as JarObjectStorePort;
-    const service = new ExecutionControlService(
-      executions,
-      runners,
-      {
-        issue: vi.fn(),
-        issueBootstrapToken: vi.fn(),
-        hash: (value) => `hash:${value}`,
-        verifyBootstrapToken: vi.fn(),
-      },
-      credentialCipherFake(),
-      objectStore,
-      { now: () => new Date("2026-08-09T00:00:00.000Z") },
-      { next: () => "id-1" },
-      batchesRepositoryFake(),
-      schedulingFake(),
-    );
-
-    await expect(
-      service.declareArtifacts("runner-1", "credential", "attempt-1", {
-        schemaVersion: 1,
-        requestId: "request-1",
-        leaseToken: "l".repeat(32),
-        artifacts: [artifact],
-      }),
-    ).resolves.toMatchObject({
-      artifacts: [
-        {
-          artifactId: "artifact-1",
-          uploadMethod: "direct",
-          uploadPath: "https://minio.internal/signed-object",
-          finalizePath: "/api/v1/run-attempts/attempt-1/artifacts/artifact-1/finalize",
-        },
-      ],
-    });
-    await expect(
-      service.finalizeArtifactUpload({
-        runnerId: "runner-1",
-        credential: "credential",
-        attemptId: "attempt-1",
-        artifactId: "artifact-1",
-        leaseToken: "l".repeat(32),
-      }),
-    ).resolves.toMatchObject({ status: "uploaded" });
-    expect(executions.resolveArtifactUpload).toHaveBeenCalledWith(
-      expect.objectContaining({ leaseTokenHash: `hash:${"l".repeat(32)}` }),
-    );
-    expect(objectStore.verifyArtifactUpload).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: "artifact-1", sha256: artifact.sha256 }),
-    );
-    expect(executions.markArtifactUploaded).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: "artifact-1" }),
-    );
-  });
-});
-
 describe("failure summary log fallback", () => {
   type LogTailResponse = {
     items: Array<{ stream: string; sequence: number; content: string }>;
@@ -881,7 +771,6 @@ describe("failure summary log fallback", () => {
         verifyBootstrapToken: vi.fn(),
       },
       credentialCipherFake(),
-      {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "event-id" },
       batchesRepositoryFake(),

@@ -41,7 +41,7 @@ export interface WorkDispatcher {
   reconcileAttempts(input: unknown): Promise<unknown>;
   renewLease(input: unknown): Promise<unknown>;
   completeAttempt(input: unknown): Promise<unknown>;
-  declareArtifacts(input: unknown): Promise<unknown>;
+  beginAttemptUpload(input: unknown): Promise<unknown>;
   recoverExpired(input: unknown): Promise<unknown>;
   resolveAttemptSchedulingContexts(attemptIds: readonly string[]): Promise<unknown>;
   changeBatchScheduling(input: unknown): Promise<boolean>;

@@ -21,6 +21,9 @@ final class ReflectiveTestNgRunner {
     Class<?> xmlClassClass = Class.forName("org.testng.xml.XmlClass", true, loader);
 
     Object testNg = testNgClass.getDeclaredConstructor().newInstance();
+    // Only the local result consumed by the Runner is needed, not downloadable reports.
+    ReflectionSupport.invoke(
+        testNgClass.getMethod("setUseDefaultListeners", boolean.class), testNg, false);
     Object xmlSuite = xmlSuiteClass.getDeclaredConstructor().newInstance();
     ReflectionSupport.invoke(
         xmlSuiteClass.getMethod("setName", String.class),
@@ -51,6 +54,10 @@ final class ReflectiveTestNgRunner {
     Class<?> listenerInterface = Class.forName("org.testng.ITestNGListener", true, loader);
     ReflectionSupport.invoke(
         testNgClass.getMethod("addListener", listenerInterface), testNg, listener);
+    Object resultWriter = Class.forName("org.testng.reporters.XMLReporter", true, loader)
+        .getDeclaredConstructor().newInstance();
+    ReflectionSupport.invoke(
+        testNgClass.getMethod("addListener", listenerInterface), testNg, resultWriter);
 
     ReflectionSupport.invoke(testNgClass.getMethod("run"), testNg);
 

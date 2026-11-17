@@ -1036,10 +1036,7 @@ public class MixedVisibleTest {
   );
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
-  // This scenario executes the imported TestNG JAR directly, without Adapter dependencies.
-  const adapterCheckbox = createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter");
-  await adapterCheckbox.click({ trial: true });
-  await adapterCheckbox.uncheck();
+  await expect(createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
   await createSuiteDialog.getByLabel("任务名称").fill("每日冒烟测试");
   await createSuiteDialog.getByLabel("说明").fill("E2E 创建的可复用任务");
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
@@ -1283,50 +1280,6 @@ public class MixedVisibleTest {
   expect(firstLog.status()).toBe(200);
   expect(await firstLog.json()).toMatchObject({ acknowledgedSequence: { stdout: 0 } });
 
-  const report = Buffer.from("AutoForge E2E report\n", "utf8");
-  const reportDeclaration = {
-    artifactId: "e2e-report",
-    relativePath: "reports/testng/e2e-report.txt",
-    mediaType: "text/plain",
-    sizeBytes: report.byteLength,
-    sha256: createHash("sha256").update(report).digest("hex"),
-    required: false,
-  };
-  const artifactDeclaration = await page.request.post(
-    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts`,
-    {
-      headers: runnerHeaders(identity),
-      data: {
-        schemaVersion: 1,
-        requestId: "e2e-artifact-declare",
-        leaseToken: firstClaim.lease.token,
-        artifacts: [reportDeclaration],
-      },
-    },
-  );
-  expect(artifactDeclaration.status()).toBe(200);
-  const declaredArtifact = (
-    (await artifactDeclaration.json()) as {
-      artifacts: Array<{ uploadPath: string; uploadMethod: string; finalizePath?: string }>;
-    }
-  ).artifacts[0]!;
-  if (declaredArtifact.uploadMethod === "control-plane") {
-    const artifactUpload = await page.request.put(declaredArtifact.uploadPath, {
-      headers: runnerHeaders(identity, firstClaim.lease.token),
-      data: report,
-    });
-    expect(artifactUpload.status()).toBe(200);
-  } else {
-    expect(declaredArtifact.uploadMethod).toBe("direct");
-    expect(declaredArtifact.finalizePath).toBeTruthy();
-    const directUpload = await page.request.put(declaredArtifact.uploadPath, { data: report });
-    expect([200, 204]).toContain(directUpload.status());
-    const finalize = await page.request.post(declaredArtifact.finalizePath!, {
-      headers: runnerHeaders(identity, firstClaim.lease.token),
-    });
-    expect(finalize.status()).toBe(200);
-  }
-
   const failedCompletion = await completeAttempt(page, identity, firstClaim, {
     completionId: "e2e-completion-failed",
     status: "failed",
@@ -1334,7 +1287,7 @@ public class MixedVisibleTest {
     summary: "E2E intentional failure",
     durationMs: 200,
     testNg: testNgResult("failed"),
-    artifacts: [reportDeclaration],
+    artifacts: [],
   });
   expect(failedCompletion).toMatchObject({
     disposition: "accepted",
@@ -1567,14 +1520,6 @@ public class MixedVisibleTest {
     "java.lang.AssertionError: 中文断言失败",
   );
   await expect(page.locator(".design-failure-card")).not.toContainText("TESTNG_SUCCEEDED");
-
-  const artifactDownload = await page.request.get(
-    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts/e2e-report`,
-    { headers: userHeaders },
-  );
-  expect(artifactDownload.status()).toBe(200);
-  expect(artifactDownload.headers()["content-disposition"]).toContain("attachment");
-  expect(await artifactDownload.body()).toEqual(report);
 
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   await selectExecutionRound(page, "初始轮次");

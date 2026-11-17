@@ -128,6 +128,9 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.deepEqual(
     specifications.sort(),
     [
+      "tests/e2e/cotest-default-public-export.spec.ts",
+      "tests/e2e/testng-artifacts-retirement.spec.ts",
+      "tests/e2e/user-documentation.spec.ts",
       "tests/e2e/platform-initialization.spec.ts",
       "tests/e2e/log-archives.spec.ts",
       "tests/e2e/security-audit.spec.ts",

@@ -216,31 +216,6 @@ type artifactDeclaration struct {
 	Required     bool   `json:"required"`
 }
 
-type declareArtifactsRequest struct {
-	SchemaVersion int                   `json:"schemaVersion"`
-	RequestID     string                `json:"requestId"`
-	LeaseToken    string                `json:"leaseToken"`
-	Artifacts     []artifactDeclaration `json:"artifacts"`
-}
-
-type declaredArtifact struct {
-	artifactDeclaration
-	UploadPath   string `json:"uploadPath"`
-	UploadMethod string `json:"uploadMethod"`
-	FinalizePath string `json:"finalizePath,omitempty"`
-	Status       string `json:"status"`
-}
-
-type declareArtifactsResponse struct {
-	SchemaVersion int                `json:"schemaVersion"`
-	Artifacts     []declaredArtifact `json:"artifacts"`
-}
-
-type uploadArtifactResponse struct {
-	ArtifactID string `json:"artifactId"`
-	Status     string `json:"status"`
-}
-
 type logChunk struct {
 	Stream     string `json:"stream"`
 	Sequence   int64  `json:"sequence"`

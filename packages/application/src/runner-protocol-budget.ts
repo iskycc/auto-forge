@@ -1,4 +1,4 @@
-export type RunnerProtocolOperation = "logs" | "complete" | "renew-lease" | "artifacts";
+export type RunnerProtocolOperation = "logs" | "complete" | "renew-lease" | "upload-phase";
 
 export interface RunnerProtocolAdmissionPort {
   assertAllowed(input: {
@@ -13,8 +13,8 @@ export const RUNNER_PROTOCOL_RATE_WINDOW_MS = 60_000;
 const operationBudgets = {
   logs: { resource: 600, minimumRunner: 600, perSlot: 180 },
   complete: { resource: 300, minimumRunner: 300, perSlot: 120 },
+  "upload-phase": { resource: 300, minimumRunner: 300, perSlot: 120 },
   "renew-lease": { resource: 600, minimumRunner: 600, perSlot: 12 },
-  artifacts: { resource: 120, minimumRunner: 120, perSlot: 240 },
 } satisfies Record<
   RunnerProtocolOperation,
   { resource: number; minimumRunner: number; perSlot: number }

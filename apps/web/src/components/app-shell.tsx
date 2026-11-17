@@ -41,6 +41,7 @@ import { GlobalProjectSwitcher } from "./global-project-switcher";
 import { configurePlatformTimeZone } from "@/lib/platform-date-time";
 import { SessionKeepalive } from "./session-keepalive";
 import { ColorModeToggle } from "./color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 
 type NavigationItem = {
   label: string;
@@ -271,6 +272,8 @@ export function AppShell({
     pathname === "/Execution" ||
     pathname === "/RunTask" ||
     pathname === "/CaseAnalysis" ||
+    pathname === "/docs" ||
+    pathname.startsWith("/docs/") ||
     pathname.startsWith("/progress/") ||
     (pathname === "/" && !userName)
   ) {
@@ -359,6 +362,7 @@ export function AppShell({
             </div>
           )}
           <div className={cn("topbar-actions", appShellStyles["topbar-actions"])}>
+            <DocumentationLink iconOnly />
             <ColorModeToggle />
             {!forcePasswordChange ? (
               <GlobalRunDialog

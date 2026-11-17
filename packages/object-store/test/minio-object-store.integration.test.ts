@@ -60,29 +60,6 @@ describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () =>
       );
       await store.delete(written.objectKey);
       await expect(store.exists(written.objectKey)).resolves.toBe(false);
-
-      const artifactContent = new TextEncoder().encode("direct artifact");
-      const artifactSha256 = createHash("sha256").update(artifactContent).digest("hex");
-      const artifactIdentity = {
-        projectId: "project-1",
-        attemptId: "attempt-minio",
-        artifactId: "artifact-minio",
-        sha256: artifactSha256,
-        sizeBytes: artifactContent.byteLength,
-        mediaType: "application/xml",
-      };
-      const target = await store.prepareArtifactUpload(artifactIdentity);
-      expect(target.kind).toBe("direct");
-      if (target.kind !== "direct") throw new Error("Expected a direct MinIO upload target.");
-      const response = await fetch(target.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": artifactIdentity.mediaType },
-        body: artifactContent,
-      });
-      expect(response.ok).toBe(true);
-      const verified = await store.verifyArtifactUpload(artifactIdentity);
-      await expect(store.read(verified.objectKey)).resolves.toEqual(Buffer.from(artifactContent));
-      await store.delete(verified.objectKey);
     } finally {
       await client.removeBucket(bucket);
     }

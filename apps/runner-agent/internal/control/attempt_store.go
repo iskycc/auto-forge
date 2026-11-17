@@ -20,12 +20,13 @@ const (
 var localIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type attemptState struct {
-	SchemaVersion   int                   `json:"schemaVersion"`
-	Claimed         ClaimedAssignment     `json:"claimed"`
-	LocalState      string                `json:"localState"`
-	Process         *attemptProcess       `json:"process,omitempty"`
-	CompletionID    string                `json:"completionId,omitempty"`
-	Result          *completionResult     `json:"result,omitempty"`
+	SchemaVersion int               `json:"schemaVersion"`
+	Claimed       ClaimedAssignment `json:"claimed"`
+	LocalState    string            `json:"localState"`
+	Process       *attemptProcess   `json:"process,omitempty"`
+	CompletionID  string            `json:"completionId,omitempty"`
+	Result        *completionResult `json:"result,omitempty"`
+	// Deprecated: decoded from old state files and discarded during load.
 	ArtifactUploads []artifactUploadState `json:"artifactUploads,omitempty"`
 }
 
@@ -211,6 +212,7 @@ func (store attemptStore) load(entry os.DirEntry) (attemptState, error) {
 	// Version 1 did not persist process identity. Normalize it in memory so
 	// the next state write atomically upgrades the record.
 	state.SchemaVersion = attemptStateSchemaVersion
+	state.ArtifactUploads = nil
 	return state, nil
 }
 

@@ -66,7 +66,7 @@ describe("failure task execution snapshot compatibility", () => {
       executor: "testng-container",
       aiAnalysisAfterCompletion: true,
       runnerLabels: ["java"],
-      artifactPatterns: ["reports/**"],
+      artifactPatterns: [],
       retryConcurrencyRules: [{ id: "rule-1", executionRound: 2, concurrency: 20 }],
       adapter: { environmentAddresses: ["10.20.0.21"] },
     });
@@ -126,14 +126,14 @@ describe("failure task execution snapshot compatibility", () => {
       toFailureCaseSuiteSource(sourceRow({}), []).policy?.adapter.environmentAddresses,
     ).toEqual(["10.0.0.11"]);
   });
-  it("accepts the empty address projection on tasks with Adapter disabled", () => {
+  it("keeps an empty historical environment without disabling CoTest in the copied task", () => {
     const row = sourceRow({ environmentAddresses: [] });
     row.suitePolicyJson = JSON.stringify({
       ...defaultCaseSuiteExecutionPolicy,
       projectVersionId: "version-1",
     });
     expect(toFailureCaseSuiteSource(row, []).policy?.adapter).toMatchObject({
-      enabled: false,
+      enabled: true,
       environmentAddresses: [],
     });
   });

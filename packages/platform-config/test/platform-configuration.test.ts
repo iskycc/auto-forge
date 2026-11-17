@@ -70,13 +70,19 @@ describe("platform configuration store", () => {
     store.initialize(new Date("2026-08-11T00:00:00.000Z"));
     const legacy = JSON.parse(readFileSync(store.paths.configurationFile, "utf8")) as {
       web: { timeZone?: string };
-      limits: { ddtImportFileLimit?: number; ddtImportZipSpreadsheetLimit?: number };
+      limits: {
+        ddtImportFileLimit?: number;
+        ddtImportZipSpreadsheetLimit?: number;
+        artifactCollectionEnabled?: boolean;
+      };
     };
+    legacy.limits.artifactCollectionEnabled = true;
     delete legacy.web.timeZone;
     delete legacy.limits.ddtImportFileLimit;
     delete legacy.limits.ddtImportZipSpreadsheetLimit;
     writeFileSync(store.paths.configurationFile, JSON.stringify(legacy), { mode: 0o600 });
 
+    expect(store.read().limits).not.toHaveProperty("artifactCollectionEnabled");
     expect(store.read().web.timeZone).toBe("Asia/Shanghai");
     expect(store.read().limits.ddtImportFileLimit).toBe(200);
     expect(store.read().limits.ddtImportZipSpreadsheetLimit).toBe(200);

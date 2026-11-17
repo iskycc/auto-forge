@@ -161,7 +161,6 @@ export default async function CaseSuitePage({ params }: Props) {
             key={`${suite.id}:${suite.status}:${suite.lockedBy ?? ""}`}
             projectName={projects.find((project) => project.id === suite.projectId)?.name ?? ""}
             selectedTestStageId={hierarchy.testStageId}
-            artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
             canManage={canMutate}
             projectVersions={projectStructure.versions}
             runnerGroups={runnerGroups}

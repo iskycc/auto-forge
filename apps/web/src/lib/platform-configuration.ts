@@ -53,9 +53,6 @@ export function platformConfigurationActivation(
     changed(current.web.publicBaseUrl, saved.web.publicBaseUrl) ? "外部访问地址" : undefined,
     changed(current.web.runnerBaseUrl, saved.web.runnerBaseUrl) ? "内部访问地址" : undefined,
     changed(current.web.timeZone, saved.web.timeZone) ? "平台时区" : undefined,
-    changed(current.limits.artifactCollectionEnabled, saved.limits.artifactCollectionEnabled)
-      ? "产物收集"
-      : undefined,
     changed(current.limits.ddtImportFileLimit, saved.limits.ddtImportFileLimit) ||
     changed(current.limits.ddtImportZipSpreadsheetLimit, saved.limits.ddtImportZipSpreadsheetLimit)
       ? "DDT 导入数量限制"

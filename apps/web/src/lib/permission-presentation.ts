@@ -30,7 +30,10 @@ const PERMISSION_PRESENTATIONS = {
   "run.cancel": { label: "终止执行", description: "取消排队中或运行中的执行" },
   "run.retry": { label: "重试执行", description: "重试失败或未完成的执行" },
   "log.read": { label: "查看执行日志", description: "查看执行过程的标准输出和错误日志" },
-  "artifact.read": { label: "查看执行产物", description: "查看和下载报告、截图等执行产物" },
+  "artifact.read": {
+    label: "历史产物权限（已退役）",
+    description: "仅兼容历史角色记录，不再提供执行产物访问",
+  },
   "runner.read": { label: "查看执行节点", description: "查看执行节点、资源和在线状态" },
   "runner.manage": { label: "管理执行节点", description: "注册、轮换、禁用和注销执行节点" },
   "runner.terminal": { label: "使用执行节点终端", description: "创建并操作授权的交互终端" },
@@ -54,6 +57,10 @@ const PERMISSION_PRESENTATIONS = {
 
 export function permissionLabel(permission: string): string {
   return permissionPresentation(permission)?.label ?? permission;
+}
+
+export function isAssignablePermission(permission: string): boolean {
+  return permission !== "artifact.read";
 }
 
 export function permissionDescription(permission: string): string {

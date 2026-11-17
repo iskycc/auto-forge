@@ -26,10 +26,7 @@ import { useOptimistic, useState, useTransition } from "react";
 
 import { CaseSuiteCard } from "./case-suite-card";
 import { parseExportFilename } from "@/lib/run-batch-export";
-import {
-  DEFAULT_EXECUTION_ADAPTER_ENABLED,
-  type AdapterNameDefaults,
-} from "@/lib/case-suite-adapter-defaults";
+import { type AdapterNameDefaults } from "@/lib/case-suite-adapter-defaults";
 
 export function CaseSuiteManager({
   currentUserId,
@@ -96,7 +93,6 @@ export function CaseSuiteManager({
   const [configurationOnly, setConfigurationOnly] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [adapterEnabled, setAdapterEnabled] = useState<boolean>(DEFAULT_EXECUTION_ADAPTER_ENABLED);
   const [adapterSuiteName, setAdapterSuiteName] = useState(adapterNameDefaults.suiteName);
   const [adapterTestName, setAdapterTestName] = useState(adapterNameDefaults.testName);
   const [environmentAddresses, setEnvironmentAddresses] = useState<string[]>([]);
@@ -202,7 +198,7 @@ export function CaseSuiteManager({
           name,
           ...(description.trim() ? { description } : {}),
           adapter: {
-            enabled: adapterEnabled,
+            enabled: true,
             suiteName: adapterSuiteName,
             testName: adapterTestName,
             environmentAddresses,
@@ -214,7 +210,7 @@ export function CaseSuiteManager({
       setCreatedSuites((current) => [suite, ...current]);
       setName("");
       setDescription("");
-      setAdapterEnabled(DEFAULT_EXECUTION_ADAPTER_ENABLED);
+
       setAdapterSuiteName(adapterNameDefaults.suiteName);
       setAdapterTestName(adapterNameDefaults.testName);
       setEnvironmentAddresses([]);
@@ -490,39 +486,29 @@ export function CaseSuiteManager({
             >
               <strong>Adapter 执行配置</strong>
               <p>配置随任务版本保存；多个环境地址会按任务中的用例顺序循环分配。</p>
-              <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
-                <Input
-                  checked={adapterEnabled}
-                  onChange={(event) => setAdapterEnabled(event.target.checked)}
-                  type="checkbox"
-                />
-                使用 CoTest TestNG Adapter
-              </label>
-              {adapterEnabled ? (
-                <>
-                  <label className={caseSuiteManagerStyles["form-field"]}>
-                    <span>TestNG Suite Name</span>
-                    <Input
-                      value={adapterSuiteName}
-                      onChange={(event) => setAdapterSuiteName(event.target.value)}
-                      maxLength={512}
-                    />
-                  </label>
-                  <label className={caseSuiteManagerStyles["form-field"]}>
-                    <span>TestNG Test Name</span>
-                    <Input
-                      value={adapterTestName}
-                      onChange={(event) => setAdapterTestName(event.target.value)}
-                      maxLength={512}
-                    />
-                  </label>
-                  <EnvironmentAddressesField
-                    addresses={environmentAddresses}
-                    onChange={setEnvironmentAddresses}
-                    description="随任务保存，首轮按用例、重试按环境池分配。"
+              <>
+                <label className={caseSuiteManagerStyles["form-field"]}>
+                  <span>TestNG Suite Name</span>
+                  <Input
+                    value={adapterSuiteName}
+                    onChange={(event) => setAdapterSuiteName(event.target.value)}
+                    maxLength={512}
                   />
-                </>
-              ) : null}
+                </label>
+                <label className={caseSuiteManagerStyles["form-field"]}>
+                  <span>TestNG Test Name</span>
+                  <Input
+                    value={adapterTestName}
+                    onChange={(event) => setAdapterTestName(event.target.value)}
+                    maxLength={512}
+                  />
+                </label>
+                <EnvironmentAddressesField
+                  addresses={environmentAddresses}
+                  onChange={setEnvironmentAddresses}
+                  description="随任务保存，首轮按用例、重试按环境池分配。"
+                />
+              </>
             </div>
           ) : null}
           {error && (

@@ -64,8 +64,6 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           { accessToken: parsed.access_token, publicAccess: parsed.public === "1" },
           services,
         );
-    if (publicExport && parsed.template !== "results")
-      throw new DomainError("AUTH_FORBIDDEN", "公开访问仅支持导出标准执行结果。");
     const exportData = await services.runBatchExport.prepare({
       batchId,
       scope: parsed.scope,
@@ -76,12 +74,16 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const base = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const timeZone = services.configurationStore.read().web.timeZone;
     const aiSnapshotAt = services.clock.now().toISOString();
+    // Publishing the execution also makes its failure-analysis workbook readable.
+    // Editing, full-log downloads and evidence endpoints keep their own authorization.
+    const canReadAi =
+      (publicExport && parsed.template === "failure-analysis") ||
+      (!!identity &&
+        hasPermission(identity, "analysis.ai.read", exportData.projectId) &&
+        hasPermission(identity, "log.read", exportData.projectId) &&
+        hasPermission(identity, "case.read", exportData.projectId));
     const includesAi =
-      !!identity &&
-      hasPermission(identity, "analysis.ai.read", exportData.projectId) &&
-      hasPermission(identity, "log.read", exportData.projectId) &&
-      hasPermission(identity, "case.read", exportData.projectId) &&
-      (await services.aiAnalysis.repository.hasAnalysis(batchId, aiSnapshotAt));
+      canReadAi && (await services.aiAnalysis.repository.hasAnalysis(batchId, aiSnapshotAt));
     const filename = executionExportFilename({
       batch: exportData.batch,
       template: parsed.template,

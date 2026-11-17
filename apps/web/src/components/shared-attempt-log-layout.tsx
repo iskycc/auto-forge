@@ -13,6 +13,7 @@ import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
 import { LinkButton } from "@/components/ui/link-button";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
@@ -88,6 +89,7 @@ export function SharedAttemptLogLayout({
                 </Tag>
               </div>
               <div className="mb-4.5 flex flex-wrap items-start gap-2 [&_.shared-attempt-log-actions]:mb-0 [&_.share-log-rerun-login]:mb-0">
+                <DocumentationLink topic="case-logs" section="public-case-log" />
                 <SharedLogRerunAction
                   access={rerunAccess}
                   attempt={{ id: view.attemptId, status: view.outcome }}

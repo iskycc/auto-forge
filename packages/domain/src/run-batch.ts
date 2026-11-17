@@ -83,18 +83,6 @@ export type RunBatchExecutionPolicy = {
   retryConcurrencyRules?: RetryConcurrencyRule[];
 };
 
-// 产物规则的媒体类型只是上传提示，按扩展名做保守推断，未知一律 octet-stream。
-export function artifactMediaType(pattern: string): string {
-  if (pattern.endsWith(".xml")) return "application/xml";
-  if (pattern.endsWith(".json")) return "application/json";
-  if (pattern.endsWith(".html") || pattern.endsWith(".htm")) return "text/html";
-  if (pattern.endsWith(".txt") || pattern.endsWith(".log")) return "text/plain";
-  if (pattern.endsWith(".png")) return "image/png";
-  if (pattern.endsWith(".jpg") || pattern.endsWith(".jpeg")) return "image/jpeg";
-  if (pattern.endsWith(".zip")) return "application/zip";
-  return "application/octet-stream";
-}
-
 export type RunBatch = {
   id: string;
   // 自然递增展示编号；UUID 仍是权威主键，该字段只用于界面展示。

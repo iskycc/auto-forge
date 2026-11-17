@@ -34,7 +34,6 @@ describe("execution log admission", () => {
         undefined,
         undefined,
         undefined,
-        undefined,
         admission,
       );
       const result =

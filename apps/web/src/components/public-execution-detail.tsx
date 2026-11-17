@@ -11,6 +11,7 @@ import { currentIdentity } from "@/lib/auth";
 import { toExecutionBatchView } from "@/lib/execution-batch-view";
 import { getPlatformServices } from "@/lib/services";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 
 export async function PublicExecutionDetail({
   batchId,
@@ -58,7 +59,12 @@ export async function PublicExecutionDetail({
           suiteVersion={batch.suiteVersion}
           {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
           shared
-          sharedActions={!identity ? <SessionLoginButton /> : undefined}
+          sharedActions={
+            <>
+              <DocumentationLink topic="execution-records" section="public-progress" />
+              {!identity ? <SessionLoginButton /> : null}
+            </>
+          }
         />
         <ExecutionBatchDetails
           batch={toExecutionBatchView(overview)}
@@ -69,8 +75,6 @@ export async function PublicExecutionDetail({
           canRetryRuns={false}
           canReadLogs={false}
           canReadAttemptEvents={false}
-          canReadArtifacts={false}
-          artifactsEnabled={false}
           runnerDirectory={runnerDirectory}
         />
       </div>

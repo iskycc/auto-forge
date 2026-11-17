@@ -36,7 +36,6 @@ describe("DDT import memory isolation", () => {
           migrationsFolder: "unused",
           attemptLogsDirectory: "unused",
           caseExecutionTimeoutSeconds: 60,
-          artifactCollectionEnabled: false,
           scheduler: {
             maximumCpuUtilizationPercent: 90,
             maximumMemoryUtilizationPercent: 90,

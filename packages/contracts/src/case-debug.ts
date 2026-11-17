@@ -18,13 +18,6 @@ export const createCaseDebugRunSchema = ddtScopeSchema
         message: "DDT 调试必须选择一个 DDT 用例，普通调试不能携带 DDT 数据。",
       });
     }
-    if (input.kind === "ddt" && !input.execution.adapter.enabled) {
-      context.addIssue({
-        code: "custom",
-        path: ["execution", "adapter"],
-        message: "DDT 调试必须启用 Adapter，以传递 CaseId。",
-      });
-    }
     if (input.execution.projectId && input.execution.projectId !== input.projectId) {
       context.addIssue({
         code: "custom",

@@ -10,13 +10,11 @@ import { Button } from "./ui/button";
 
 export function PublicSuiteEnvironment({
   addresses,
-  enabled,
   disabled,
   environment,
   onChange,
 }: {
   addresses: string[];
-  enabled: boolean;
   disabled: boolean;
   environment: PublicSuiteEnvironmentState;
   onChange: (addresses: string[] | null, revision: number) => Promise<void>;
@@ -43,34 +41,32 @@ export function PublicSuiteEnvironment({
             {overridden ? "链接共享配置" : "任务默认"}
           </span>
         </span>
-        {enabled ? (
-          <div className="flex flex-wrap gap-2">
-            {overridden ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={disabled}
-                onClick={() => void reset()}
-              >
-                恢复任务配置
-              </Button>
-            ) : null}
+        <div className="flex flex-wrap gap-2">
+          {overridden ? (
             <Button
               type="button"
               size="sm"
-              variant="secondary"
+              variant="ghost"
               disabled={disabled}
-              onClick={() => {
-                setError("");
-                setEditingRevision(environment.revision);
-                setEditing(true);
-              }}
+              onClick={() => void reset()}
             >
-              修改环境 IP
+              恢复任务配置
             </Button>
-          </div>
-        ) : null}
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={disabled}
+            onClick={() => {
+              setError("");
+              setEditingRevision(environment.revision);
+              setEditing(true);
+            }}
+          >
+            修改环境 IP
+          </Button>
+        </div>
       </div>
       <ExecutionEnvironmentAddresses addresses={addresses} />
       {environment.change ? (
@@ -85,9 +81,7 @@ export function PublicSuiteEnvironment({
       ) : null}
       {error ? <Alert type="error" showIcon title={error} /> : null}
       <p className="m-0 text-xs leading-5 text-muted-foreground">
-        {enabled
-          ? "本次执行将使用以上 IP。同一公开链接共享最新配置，修改不影响任务默认 IP 或已创建的执行。"
-          : "任务未启用 Adapter，无需下发环境 IP。"}
+        本次执行将使用以上 IP。同一公开链接共享最新配置，修改不影响任务默认 IP 或已创建的执行。
       </p>
       {editing ? (
         <EnvironmentAddressesDialog

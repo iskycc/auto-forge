@@ -37,7 +37,6 @@ type attemptSupervisor struct {
 	configuration         config.Config
 	store                 attemptStore
 	logSpool              *logSpool
-	artifactSpool         *artifactSpool
 	batches               *batchRegistry
 	diagnostics           io.Writer
 	draining              atomic.Bool
@@ -67,6 +66,9 @@ func newAttemptSupervisor(client *Client, identity Identity, configuration confi
 }
 
 func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
+	if err := os.RemoveAll(filepath.Join(supervisor.configuration.DataDirectory, "spool", "uploads")); err != nil {
+		return fmt.Errorf("remove retired artifact spool: %w", err)
+	}
 	spool, err := newLogSpool(
 		supervisor.configuration.DataDirectory,
 		supervisor.configuration.Spool,
@@ -80,11 +82,6 @@ func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
 	if err := supervisor.store.removeTemporaryFiles(); err != nil {
 		return err
 	}
-	artifactSpool, err := newArtifactSpool(supervisor.configuration.DataDirectory, spool.budget)
-	if err != nil {
-		return err
-	}
-	supervisor.artifactSpool = artifactSpool
 	if err := supervisor.cleanOrphanedWorkspaces(); err != nil {
 		return err
 	}
@@ -348,7 +345,7 @@ func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel 
 		supervisor.renewLease(renewContext, cancel, &state, stateMutex, reportAllowed)
 	}()
 
-	persistProgress := func(result completionResult, uploads []artifactUploadState) error {
+	persistProgress := func(result completionResult) error {
 		stateMutex.Lock()
 		defer stateMutex.Unlock()
 		if state.CompletionID == "" {
@@ -360,7 +357,6 @@ func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel 
 		}
 		state.LocalState = "uploading"
 		state.Result = &result
-		state.ArtifactUploads = append([]artifactUploadState(nil), uploads...)
 		return supervisor.store.save(state)
 	}
 	persistProcess := func(identity executor.ProcessIdentity) error {
@@ -407,7 +403,7 @@ func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel 
 func (supervisor *attemptSupervisor) runTestNG(
 	ctx context.Context,
 	claimed ClaimedAssignment,
-	persistProgress func(completionResult, []artifactUploadState) error,
+	persistProgress func(completionResult) error,
 	persistProcess func(executor.ProcessIdentity) error,
 ) completionResult {
 	startupStartedAt := time.Now()
@@ -548,15 +544,13 @@ func (supervisor *attemptSupervisor) runTestNG(
 		},
 	})
 	timeoutDiagnostics.close()
-	uploadPhaseStarted := false
 	var phaseErr error
 	if runErr == nil && result.Termination == "completed" && result.ExitCode != adapterCaseTimeoutExitCode && ctx.Err() == nil {
 		// Java has stopped. Log flush and report handling must use the upload
-		// deadline even when no artifacts were requested, not the JVM deadline.
+		// deadline rather than the JVM deadline.
 		phaseContext, cancelPhase := context.WithTimeout(ctx, 3*time.Second)
-		_, phaseErr = supervisor.client.DeclareArtifacts(phaseContext, supervisor.currentIdentity(), claimed.Assignment.AttemptID, claimed.Lease.Token, []artifactDeclaration{})
+		phaseErr = supervisor.client.BeginUpload(phaseContext, supervisor.currentIdentity(), claimed.Assignment.AttemptID, claimed.Lease.Token)
 		cancelPhase()
-		uploadPhaseStarted = phaseErr == nil
 	}
 	processLogErr := processLogs.Close()
 	if phaseErr != nil {
@@ -586,39 +580,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 		}
 	}()
 	reportSummary, reportFound, reportErr := executor.ReadTestNGReport(result.WorkspacePath)
-	artifactRules := make([]executor.ArtifactRule, 0, len(claimed.Assignment.ExecutionSpec.ArtifactRules))
-	for _, rule := range claimed.Assignment.ExecutionSpec.ArtifactRules {
-		artifactRules = append(artifactRules, executor.ArtifactRule{
-			Pattern: rule.Pattern, Required: rule.Required, MediaType: rule.MediaType,
-		})
-	}
-	artifacts := make([]executor.Artifact, 0)
-	var artifactDiscoveryErr error
-	artifactDiscoveryCode := ""
-	if len(artifactRules) > 0 {
-		artifactContext, cancelArtifactScan := context.WithTimeout(
-			ctx,
-			time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
-		)
-		discovered, artifactErr := executor.DiscoverArtifacts(
-			artifactContext,
-			result.WorkspacePath,
-			artifactRules,
-			claimed.Assignment.ExecutionSpec.ResourceLimits.ArtifactBytes,
-		)
-		cancelArtifactScan()
-		if artifactErr != nil {
-			artifactDiscoveryErr = artifactErr
-			artifactDiscoveryCode = "ARTIFACT_DISCOVERY_REJECTED"
-			var missing *executor.RequiredArtifactMissingError
-			if errors.As(artifactErr, &missing) {
-				artifactDiscoveryCode = "REQUIRED_ARTIFACT_MISSING"
-			}
-		} else {
-			artifacts = discovered
-		}
-	}
-	// 保持实时上传协程运行到报告解析和产物扫描结束，利用这些本地 I/O 时间
+	// 保持实时上传协程运行到结构化结果解析结束，利用本地 I/O 时间
 	// 提前排空日志；最终仍执行一次权威 flush，完成契约与断线重传语义不变。
 	stopLiveLogs()
 	watermarks, uploadErr := supervisor.uploadAttemptLogs(
@@ -642,152 +604,11 @@ func (supervisor *attemptSupervisor) runTestNG(
 	} else if reportFound {
 		mapTestNGReport(&mapped, result, reportSummary)
 	}
-	if artifactDiscoveryErr != nil {
-		if artifactDiscoveryCode == "REQUIRED_ARTIFACT_MISSING" {
-			// 显式声明为必需的产物缺失代表执行不完整，保留失败语义。
-			mapped.Status = "failed"
-			mapped.ResultCode = artifactDiscoveryCode
-			mapped.Summary = boundedSummary(artifactDiscoveryErr.Error())
-		} else {
-			// 产物收集是尽力而为的辅助能力，扫描的偶发问题不得推翻由 TestNG 报告与
-			// 进程退出码决定的用例真实结果，仅记录 Agent 诊断日志。
-			fmt.Fprintf(supervisor.diagnostics, "attempt %s artifact discovery skipped: %v\n", claimed.Assignment.AttemptID, artifactDiscoveryErr)
-		}
-	}
 	mapped.LogWatermarks = &watermarks
-	uploads := make([]artifactUploadState, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		artifactID, err := randomIdentifier()
-		if err != nil {
-			return platformFailure("ARTIFACT_ID_FAILED", err)
-		}
-		declaration := artifactDeclaration{
-			ArtifactID: artifactID, RelativePath: artifact.RelativePath,
-			MediaType: artifact.MediaType, SizeBytes: artifact.SizeBytes,
-			SHA256: artifact.SHA256, Required: artifact.Required,
-		}
-		mapped.Artifacts = append(mapped.Artifacts, declaration)
-		if err := supervisor.artifactSpool.stage(claimed.Assignment.AttemptID, declaration, artifact.AbsolutePath); err != nil {
-			_ = supervisor.artifactSpool.removeAttempt(claimed.Assignment.AttemptID)
-			code := "ARTIFACT_SPOOL_WRITE_FAILED"
-			if errors.Is(err, errSpoolQuotaExceeded) {
-				code = "ARTIFACT_SPOOL_QUOTA_EXCEEDED"
-			}
-			return platformFailure(code, err)
-		}
-		uploads = append(uploads, artifactUploadState{Artifact: declaration})
-	}
-	if err := persistProgress(mapped, uploads); err != nil {
-		_ = supervisor.artifactSpool.removeAttempt(claimed.Assignment.AttemptID)
+	if err := persistProgress(mapped); err != nil {
 		return platformFailure("RESULT_SPOOL_WRITE_FAILED", err)
 	}
-	if len(uploads) > 0 || !uploadPhaseStarted {
-		if err := supervisor.uploadArtifacts(
-			ctx,
-			claimed,
-			uploads,
-			time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
-			func(updated []artifactUploadState) error { return persistProgress(mapped, updated) },
-		); err != nil {
-			code := "OPTIONAL_ARTIFACT_UPLOAD_FAILED"
-			var transferError *artifactTransferError
-			if errors.As(err, &transferError) && transferError.required {
-				code = "REQUIRED_ARTIFACT_UPLOAD_FAILED"
-			}
-			return platformFailure(code, err)
-		}
-	}
 	return mapped
-}
-
-type artifactTransferError struct {
-	required bool
-	cause    error
-}
-
-func (problem *artifactTransferError) Error() string { return problem.cause.Error() }
-func (problem *artifactTransferError) Unwrap() error { return problem.cause }
-
-func (supervisor *attemptSupervisor) uploadArtifacts(
-	ctx context.Context,
-	claimed ClaimedAssignment,
-	uploads []artifactUploadState,
-	timeout time.Duration,
-	persistProgress func([]artifactUploadState) error,
-) error {
-	artifacts := make([]artifactDeclaration, 0, len(uploads))
-	for _, upload := range uploads {
-		if err := supervisor.artifactSpool.verify(claimed.Assignment.AttemptID, upload.Artifact); err != nil {
-			return &artifactTransferError{required: upload.Artifact.Required, cause: err}
-		}
-		artifacts = append(artifacts, upload.Artifact)
-	}
-	uploadContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	declared, err := supervisor.client.DeclareArtifacts(
-		uploadContext,
-		supervisor.currentIdentity(),
-		claimed.Assignment.AttemptID,
-		claimed.Lease.Token,
-		artifacts,
-	)
-	if err != nil {
-		return &artifactTransferError{required: hasRequiredArtifact(artifacts), cause: err}
-	}
-	byID := make(map[string]int, len(uploads))
-	for index, upload := range uploads {
-		byID[upload.Artifact.ArtifactID] = index
-	}
-	for _, accepted := range declared.Artifacts {
-		index, exists := byID[accepted.ArtifactID]
-		if !exists {
-			return &artifactTransferError{required: true, cause: errors.New("control plane returned an unknown artifact declaration")}
-		}
-		artifact := uploads[index].Artifact
-		if accepted.Status == "uploaded" {
-			uploads[index].Uploaded = true
-			if err := persistProgress(uploads); err != nil {
-				return &artifactTransferError{required: artifact.Required, cause: err}
-			}
-			continue
-		}
-		backoff := time.Second
-		for {
-			err := supervisor.client.UploadArtifact(
-				uploadContext,
-				supervisor.currentIdentity(),
-				claimed.Lease,
-				accepted,
-				supervisor.artifactSpool.path(claimed.Assignment.AttemptID, artifact.ArtifactID),
-			)
-			if err == nil {
-				break
-			}
-			if !waitFor(uploadContext, backoff) {
-				return &artifactTransferError{required: artifact.Required, cause: err}
-			}
-			backoff = min(backoff*2, 10*time.Second)
-		}
-		uploads[index].Uploaded = true
-		if err := persistProgress(uploads); err != nil {
-			return &artifactTransferError{required: artifact.Required, cause: err}
-		}
-	}
-	for _, upload := range uploads {
-		if !upload.Uploaded {
-			return &artifactTransferError{required: upload.Artifact.Required, cause: errors.New("control plane omitted a declared artifact")}
-		}
-	}
-	return nil
-}
-
-func hasRequiredArtifact(artifacts []artifactDeclaration) bool {
-	for _, artifact := range artifacts {
-		if artifact.Required {
-			return true
-		}
-	}
-	return false
 }
 
 func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claimed ClaimedAssignment, timeout time.Duration) (logWatermark, error) {
@@ -1015,7 +836,7 @@ func (supervisor *attemptSupervisor) reconcilePage(ctx context.Context, states [
 		localState := state.LocalState
 		// "uploading" is an Agent persistence detail that predates the v1
 		// reconcile contract. Report it as the equivalent terminal recovery phase
-		// so a restart during artifact upload is accepted by both old and new
+		// so a restart during log/result upload is accepted by both old and new
 		// control planes instead of trapping the Agent in a restart loop.
 		if localState == "uploading" {
 			localState = reconcileUploadingLocalState
@@ -1077,25 +898,6 @@ func (supervisor *attemptSupervisor) reconcilePage(ctx context.Context, states [
 					return err
 				}
 			}
-			if len(state.ArtifactUploads) > 0 {
-				state.LocalState = "uploading"
-				if err := supervisor.store.save(state); err != nil {
-					return err
-				}
-				uploadErr := supervisor.uploadArtifacts(
-					ctx,
-					state.Claimed,
-					state.ArtifactUploads,
-					time.Duration(state.Claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
-					func(updated []artifactUploadState) error {
-						state.ArtifactUploads = append([]artifactUploadState(nil), updated...)
-						return supervisor.store.save(state)
-					},
-				)
-				if uploadErr != nil {
-					return fmt.Errorf("retransmit artifacts for %s: %w", decision.AttemptID, uploadErr)
-				}
-			}
 			watermarks, uploadErr := supervisor.flushAttemptLogs(
 				ctx,
 				state.Claimed,
@@ -1114,7 +916,7 @@ func (supervisor *attemptSupervisor) reconcilePage(ctx context.Context, states [
 				supervisor.batches.close(state.Claimed.Assignment.ExecutionSpec.BatchID, supervisor.diagnostics)
 			}
 			// 重启后的进程不会恢复执行。即使旧 lease 已过期、完成上报需留待下次
-			// reconcile 重试，所需结果、日志和产物都已进入持久 spool，原工作目录
+			// reconcile 重试，所需结果和日志都已进入持久 spool，原工作目录
 			// 也不再有恢复价值，应立即删除以释放批次输入硬链接和磁盘空间。
 			if err := supervisor.removeAttemptWorkspaces(decision.AttemptID); err != nil {
 				return err
@@ -1142,9 +944,6 @@ func (supervisor *attemptSupervisor) killRecoveredProcess(state attemptState) er
 }
 
 func (supervisor *attemptSupervisor) cleanAttemptSpool(attemptID string) error {
-	if err := supervisor.artifactSpool.removeAttempt(attemptID); err != nil {
-		return err
-	}
 	maximumSequence := int64(^uint64(0) >> 1)
 	if err := supervisor.logSpool.acknowledge(attemptID, logWatermark{
 		Stdout: maximumSequence,

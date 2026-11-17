@@ -624,17 +624,12 @@ func TestReportCompletionReturnsBatchClosedFromControlPlane(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifactSpool, err := newArtifactSpool(configuration.DataDirectory, spool.budget)
-	if err != nil {
-		t.Fatal(err)
-	}
 	supervisor := &attemptSupervisor{
 		client:        client,
 		identity:      Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes"},
 		configuration: configuration,
 		store:         newAttemptStore(configuration.DataDirectory),
 		logSpool:      spool,
-		artifactSpool: artifactSpool,
 		batches:       newBatchRegistry(configuration.DataDirectory),
 		diagnostics:   os.Stderr,
 	}
@@ -698,12 +693,12 @@ func TestSupervisorRemovesBatchWorkspaceAfterBatchCloses(t *testing.T) {
 				AcknowledgedSequence: acknowledgedLogChunks(upload.Chunks),
 			})
 		case "/api/v1/run-attempts/attempt-1/artifacts":
-			var declaration declareArtifactsRequest
+			var declaration map[string]json.RawMessage
 			if err := json.NewDecoder(request.Body).Decode(&declaration); err != nil {
 				http.Error(writer, err.Error(), http.StatusBadRequest)
 				return
 			}
-			_ = json.NewEncoder(writer).Encode(declareArtifactsResponse{SchemaVersion: 1, Artifacts: []declaredArtifact{}})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"schemaVersion": 1, "artifacts": []any{}})
 		default:
 			http.NotFound(writer, request)
 		}

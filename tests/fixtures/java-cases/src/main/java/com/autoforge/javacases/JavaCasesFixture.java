@@ -1,15 +1,12 @@
 package com.autoforge.javacases;
 
 import com.huawei.cotest.util.ProjectFileUtil;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
 /**
  * java-cases 模块的成功验收用例。断言任务保存的 Adapter 环境地址已注入，
- * 并输出可供 UI 断言的标记日志与产物文件。
+ * 并输出可供 UI 断言的标记日志。
  */
 public final class JavaCasesFixture {
   @Test(groups = {"java-cases", "smoke"}, description = "java-cases 全链路成功验收")
@@ -26,9 +23,5 @@ public final class JavaCasesFixture {
     Thread.sleep(3_000);
     System.err.println("WARN simulated slow dependency probe before final assertion");
     System.err.println("JAVA_CASES_STDERR_CAPTURED");
-
-    Path artifact = Path.of("artifacts", "java-cases.txt");
-    Files.createDirectories(artifact.getParent());
-    Files.writeString(artifact, "JAVA_CASES_ARTIFACT_SAFE\n", StandardCharsets.UTF_8);
   }
 }

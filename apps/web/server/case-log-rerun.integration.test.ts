@@ -37,7 +37,6 @@ it.each(["cold", "warm"] as const)(
       {
         ...persisted,
         scheduler,
-        limits: { ...persisted.limits, artifactCollectionEnabled: false },
       },
       persisted.revision,
     );
@@ -49,7 +48,6 @@ it.each(["cold", "warm"] as const)(
         attemptLogsDirectory: join(directory, "logs"),
         sqlite: { databasePath },
         caseExecutionTimeoutSeconds: 60,
-        artifactCollectionEnabled: false,
         scheduler,
       },
       1,

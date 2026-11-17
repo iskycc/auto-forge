@@ -37,7 +37,7 @@ func TestAttemptStorePersistsLeaseCredentialsPrivatelyAndRemovesAcknowledgedStat
 		t.Fatalf("attempt state permissions = %o, want 600", info.Mode().Perm())
 	}
 	states, err := store.list()
-	if err != nil || len(states) != 1 || states[0].Claimed.Lease.Token != "secret" || len(states[0].ArtifactUploads) != 1 || states[0].Process == nil || states[0].Process.StartTimeTicks != 5678 {
+	if err != nil || len(states) != 1 || states[0].Claimed.Lease.Token != "secret" || len(states[0].ArtifactUploads) != 0 || states[0].Process == nil || states[0].Process.StartTimeTicks != 5678 {
 		t.Fatalf("list() = %#v, %v", states, err)
 	}
 	if err := store.remove("attempt-1"); err != nil {
@@ -75,5 +75,48 @@ func TestAttemptStoreReadsLegacyStateWithoutProcessIdentity(t *testing.T) {
 	}
 	if states[0].SchemaVersion != attemptStateSchemaVersion || states[0].Process != nil {
 		t.Fatalf("normalized legacy state = %#v", states[0])
+	}
+}
+
+func TestAttemptStoreDropsLegacyTransfersWithoutChangingCompletionReceiptPayload(t *testing.T) {
+	store := newAttemptStore(t.TempDir())
+	artifact := artifactDeclaration{
+		ArtifactID: "legacy-artifact", RelativePath: "reports/testng/old.xml",
+		MediaType: "application/xml", SizeBytes: 10, SHA256: strings.Repeat("a", 64),
+	}
+	state := attemptState{
+		SchemaVersion: attemptStateSchemaVersion,
+		LocalState:    "uploading",
+		Claimed: ClaimedAssignment{
+			Assignment: Assignment{AttemptID: "attempt-legacy-transfer"},
+		},
+		CompletionID: "completion-legacy-transfer",
+		Result: &completionResult{
+			Status: "failed", ResultCode: "TESTNG_FAILED", Summary: "failed", DurationMs: 1,
+			Artifacts: []artifactDeclaration{artifact},
+		},
+		ArtifactUploads: []artifactUploadState{{Artifact: artifact}},
+	}
+	if err := store.save(state); err != nil {
+		t.Fatal(err)
+	}
+	states, err := store.list()
+	if err != nil || len(states) != 1 {
+		t.Fatalf("list() = %#v, %v", states, err)
+	}
+	recovered := states[0]
+	if len(recovered.ArtifactUploads) != 0 {
+		t.Fatalf("retired file transfers survived recovery: %#v", recovered.ArtifactUploads)
+	}
+	originalPayload, err := json.Marshal(state.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredPayload, err := json.Marshal(recovered.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(recoveredPayload) != string(originalPayload) || recovered.CompletionID != state.CompletionID {
+		t.Fatalf("completion receipt payload changed after recovery: %s", recoveredPayload)
 	}
 }

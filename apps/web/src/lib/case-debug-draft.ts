@@ -7,7 +7,6 @@ const draftSchema = z.object({
   runnerKind: z.enum(["runner", "group"]),
   runnerId: z.string().max(128),
   groupId: z.string().max(128),
-  adapterEnabled: z.boolean(),
   suiteName: z.string().max(512),
   testName: z.string().max(512),
   addresses: z.string().max(32_768),

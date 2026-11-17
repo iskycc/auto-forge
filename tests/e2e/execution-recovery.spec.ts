@@ -26,6 +26,8 @@ const ExcelJS = createRequire(resolve(import.meta.dirname, "../../apps/web/packa
 ) as typeof import("exceljs").default;
 
 const runnerCapabilities = [
+  "adapter:cotest-testng-v1",
+  "runtime:project-assets-v1",
   "executor:testng-v1",
   "isolation:cgroup-v2",
   "java:21.0.8",
@@ -628,7 +630,19 @@ test("authoritative execution recovery handles every timeout and idempotent race
     uploadTimeoutMs: 1_000,
   });
   const uploadTimeoutClaim = await claimAssignment(page, runner);
-  const declaration = await page.request.post(
+  const uploadPhase = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(uploadTimeoutClaim.assignment.attemptId)}/upload-phase`,
+    {
+      headers: runnerHeaders(runner),
+      data: {
+        schemaVersion: 1,
+        requestId: randomUUID(),
+        leaseToken: uploadTimeoutClaim.lease.token,
+      },
+    },
+  );
+  expect(uploadPhase.status()).toBe(200);
+  const legacyPhase = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(uploadTimeoutClaim.assignment.attemptId)}/artifacts`,
     {
       headers: runnerHeaders(runner),
@@ -640,7 +654,33 @@ test("authoritative execution recovery handles every timeout and idempotent race
       },
     },
   );
-  expect(declaration.status()).toBe(200);
+  expect(legacyPhase.status()).toBe(200);
+  expect(await legacyPhase.json()).toEqual({ schemaVersion: 1, artifacts: [] });
+  const retiredTransfer = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(uploadTimeoutClaim.assignment.attemptId)}/artifacts`,
+    {
+      headers: runnerHeaders(runner),
+      data: {
+        schemaVersion: 1,
+        requestId: randomUUID(),
+        leaseToken: uploadTimeoutClaim.lease.token,
+        artifacts: [
+          {
+            artifactId: randomUUID(),
+            relativePath: "reports/testng/old.xml",
+            mediaType: "application/xml",
+            sizeBytes: 0,
+            sha256: "a".repeat(64),
+            required: false,
+          },
+        ],
+      },
+    },
+  );
+  expect(retiredTransfer.status()).toBe(410);
+  expect(await retiredTransfer.json()).toMatchObject({
+    error: { code: "EXECUTION_ARTIFACTS_RETIRED" },
+  });
   await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, uploadTimeoutBatch, "UPLOAD_TIMEOUT");

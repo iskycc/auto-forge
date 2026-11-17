@@ -11,6 +11,7 @@ import { readPermanentShareToken } from "@/lib/permanent-share-token";
 import { getPlatformServices } from "@/lib/services";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
+import { DocumentationLink } from "@/components/documentation-link";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,7 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
             <code>{definition.className}</code>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <DocumentationLink topic="testng-cases" section="details-history" />
             <Badge className={cn("shared-case-trust", pageStyles["shared-case-trust"])}>
               <ShieldCheck size={18} aria-hidden="true" /> 永久只读链接
             </Badge>

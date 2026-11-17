@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import type { RunProgress } from "@/lib/run-progress";
 
 import { ColorModeToggle } from "./color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 
 export function PublicRunProgress({
   initial,
@@ -83,7 +84,10 @@ export function PublicRunProgress({
             <StatusIcon size={20} />
             {progress.statusLabel}
           </Badge>
-          <ColorModeToggle />
+          <div className="flex shrink-0 items-center gap-2">
+            <DocumentationLink topic="execution-records" section="public-progress" />
+            <ColorModeToggle />
+          </div>
         </header>
 
         <Progress

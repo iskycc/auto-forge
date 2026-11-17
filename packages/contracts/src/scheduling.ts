@@ -111,9 +111,13 @@ export type CaseLogRerunConfiguration = z.infer<typeof caseLogRerunConfiguration
 export const createSingleCaseRunInputSchema = z
   .object({
     ...executionInputFields,
-    artifactPatterns: z.array(z.string().min(1).max(256)).max(32).default([]),
+    artifactPatterns: z
+      .array(z.string().min(1).max(256))
+      .max(32)
+      .default([])
+      .transform((): string[] => []),
     adapter: caseSuiteAdapterConfigurationSchema.default({
-      enabled: false,
+      enabled: true,
       suiteName: "",
       testName: "",
       environmentAddresses: [],
@@ -122,26 +126,25 @@ export const createSingleCaseRunInputSchema = z
   .strict()
   .superRefine((value, context) => {
     validateExecutionInput(value, context);
-    if (!value.adapter.enabled) return;
     if (!value.adapter.suiteName) {
       context.addIssue({
         code: "custom",
         path: ["adapter", "suiteName"],
-        message: "启用 Adapter 时必须填写 Suite Name。",
+        message: "必须填写 Suite Name。",
       });
     }
     if (!value.adapter.testName) {
       context.addIssue({
         code: "custom",
         path: ["adapter", "testName"],
-        message: "启用 Adapter 时必须填写 Test Name。",
+        message: "必须填写 Test Name。",
       });
     }
     if (value.adapter.environmentAddresses.length === 0) {
       context.addIssue({
         code: "custom",
         path: ["adapter", "environmentAddresses"],
-        message: "启用 Adapter 时必须填写至少一个执行环境 IP 或地址。",
+        message: "必须填写至少一个执行环境 IP 或地址。",
       });
     }
   });
@@ -156,10 +159,14 @@ const versionCaseExecutionFields = {
   execution: z
     .object({
       ...executionInputFields,
-      artifactPatterns: z.array(z.string().min(1).max(256)).max(32).default([]),
+      artifactPatterns: z
+        .array(z.string().min(1).max(256))
+        .max(32)
+        .default([])
+        .transform((): string[] => []),
       adapter: z
         .object({
-          enabled: z.boolean().optional(),
+          enabled: caseSuiteAdapterConfigurationSchema.shape.enabled.optional(),
           suiteName: z.string().trim().max(512).optional(),
           testName: z.string().trim().max(512).optional(),
         })

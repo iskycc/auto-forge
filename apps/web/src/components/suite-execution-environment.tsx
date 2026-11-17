@@ -23,10 +23,9 @@ export function SuiteExecutionEnvironment({
 }) {
   const draft = useSuiteExecutionEnvironment(userId, suite.id);
   const [editing, setEditing] = useState(false);
-  const enabled = suite.policy.adapter.enabled;
-  const overridden = enabled && Boolean(draft.addresses);
+  const overridden = Boolean(draft.addresses);
   const addresses = draft.addresses ?? suite.policy.adapter.environmentAddresses;
-  const disabled = !canExecute || !enabled || !suite.enabled || suite.status !== "active";
+  const disabled = !canExecute || !suite.enabled || suite.status !== "active";
   const executionLabel = timing === "current" ? "本次" : "下次";
   const controls = (
     <div className="flex flex-wrap items-center gap-2">
@@ -76,11 +75,7 @@ export function SuiteExecutionEnvironment({
             </div>
             {controls}
           </div>
-          {enabled ? (
-            <ExecutionEnvironmentAddresses addresses={addresses} />
-          ) : (
-            <span className="text-sm text-muted-foreground">未启用 Adapter</span>
-          )}
+          <ExecutionEnvironmentAddresses addresses={addresses} />
           <p className="m-0 text-xs leading-5 text-muted-foreground">
             修改只对{timing === "current" ? "本次" : "下一次"}
             手动立即或倒计时执行生效，提交成功后恢复任务默认；取消或提交失败时保留。任务锁定不影响此操作，不改变任务配置。

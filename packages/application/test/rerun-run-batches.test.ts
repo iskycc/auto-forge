@@ -5,6 +5,10 @@ import { DomainError, type RunBatchDetails } from "@autoforge/domain";
 import { RunBatchSchedulingService } from "../src/schedule-run-batches";
 import type {
   CaseSuiteRepository,
+  CaseCatalogRepository,
+  JarObjectStorePort,
+  IdentityAccessRepository,
+  ProjectStructureRepository,
   CreateRunBatchRecord,
   RunBatchRepository,
   RunBatchRerunSnapshot,
@@ -143,7 +147,42 @@ describe("derived run batches", () => {
     expect(created[0]?.adapter?.environmentAddresses).toEqual(["2001:db8::99"]);
   });
 
-  it("keeps an execution without Adapter unchanged and rejects an IP override", async () => {
+  it("uses the current project runtime for a historical non-CoTest execution with an explicit IP", async () => {
+    const snapshot = rerunSnapshot();
+    delete snapshot.adapterRuntime;
+    const { batches, created } = rerunRepository(snapshot, {
+      batchId: "batch-source",
+      executionRunId: "run-failed",
+      attemptStatus: "failed",
+    });
+    const projects = {
+      listProjects: vi.fn().mockResolvedValue([{ id: "project-1", name: "Payments" }]),
+    };
+    const structures = {
+      list: vi.fn().mockResolvedValue({
+        versions: [
+          { id: "version-1", name: "V1", stages: [{ name: "Regression", status: "active" }] },
+        ],
+      }),
+    } as unknown as ProjectStructureRepository;
+    const service = schedulingService(batches, { projects, structures });
+    await service.rerunCaseFromAttempt(
+      "attempt-failed",
+      { username: "operator", source: "local" },
+      { environmentIp: "10.0.0.99" },
+    );
+    expect(created[0]?.adapter).toEqual({
+      enabled: true,
+      suiteName: "Payments",
+      testName: "V1 - Regression",
+      environmentAddresses: ["10.0.0.99"],
+    });
+    expect(created[0]).not.toHaveProperty("adapterRuntimeSnapshot");
+    expect(snapshot.adapterRuntime).toBeUndefined();
+    expect(projects.listProjects).toHaveBeenCalledWith(["project-1"]);
+  });
+
+  it("requires an environment for historical executions and never falls back to running without CoTest", async () => {
     const snapshot = rerunSnapshot();
     delete snapshot.adapterRuntime;
     const { batches, created } = rerunRepository(snapshot, {
@@ -153,7 +192,7 @@ describe("derived run batches", () => {
     });
     const service = schedulingService(batches);
     await expect(service.getCaseLogRerunConfiguration("attempt-failed")).resolves.toEqual({
-      adapterEnabled: false,
+      adapterEnabled: true,
       environmentIp: null,
     });
     await expect(
@@ -162,10 +201,11 @@ describe("derived run batches", () => {
         { username: "operator", source: "local" },
         { environmentIp: "10.0.0.99" },
       ),
-    ).rejects.toMatchObject({ code: "RUN_RERUN_ENVIRONMENT_UNAVAILABLE" });
+    ).rejects.toMatchObject({ code: "ADAPTER_RUNTIME_UNAVAILABLE" });
     expect(created).toEqual([]);
-    await service.rerunCaseFromAttempt("attempt-failed", { username: "operator", source: "local" });
-    expect(created[0]).not.toHaveProperty("adapter");
+    await expect(
+      service.rerunCaseFromAttempt("attempt-failed", { username: "operator", source: "local" }),
+    ).rejects.toMatchObject({ code: "RUN_RERUN_ENVIRONMENT_UNAVAILABLE" });
   });
 
   it("preserves a Chinese DDT CaseId and its execution class when creating a log rerun", async () => {
@@ -441,7 +481,13 @@ describe("derived run batches", () => {
   });
 });
 
-function schedulingService(batches: RunBatchRepository): RunBatchSchedulingService {
+function schedulingService(
+  batches: RunBatchRepository,
+  legacyRuntime?: {
+    projects: Pick<IdentityAccessRepository, "listProjects">;
+    structures: ProjectStructureRepository;
+  },
+): RunBatchSchedulingService {
   let nextId = 0;
   return new RunBatchSchedulingService(
     batches,
@@ -455,6 +501,16 @@ function schedulingService(batches: RunBatchRepository): RunBatchSchedulingServi
       maximumLoadPerCpu: 1,
     },
     45,
+    legacyRuntime
+      ? {
+          catalog: {} as CaseCatalogRepository,
+          objectStore: {} as JarObjectStorePort,
+          projects: legacyRuntime.projects,
+        }
+      : undefined,
+    128,
+    5,
+    legacyRuntime?.structures,
   );
 }
 

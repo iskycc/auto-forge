@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { zipSync } from "fflate";
 
 import { closeExecutionCaseDetails } from "./execution-details";
 import { browserJson } from "./session";
@@ -12,7 +13,6 @@ type SuitePolicyOverrides = {
   claimTimeoutMs?: number;
   uploadTimeoutMs?: number;
   runnerLabels?: string[];
-  artifactPatterns?: string[];
   adapter?: {
     enabled: boolean;
     suiteName: string;
@@ -65,11 +65,18 @@ export async function configureTaskExecution(
   runnerId: string,
   overrides: SuitePolicyOverrides = {},
 ): Promise<void> {
-  const suite = await browserJson<{ revision: number; policy: Record<string, unknown> }>(
-    page,
-    `/api/v1/case-suites/${encodeURIComponent(suiteId)}`,
-  );
+  const suite = await browserJson<{
+    projectId: string;
+    revision: number;
+    policy: Record<string, unknown>;
+  }>(page, `/api/v1/case-suites/${encodeURIComponent(suiteId)}`);
   expect(suite.status).toBe(200);
+  await ensureTaskDependencyFixture(
+    page,
+    suite.body.projectId,
+    String(suite.body.policy.projectVersionId),
+  );
+  const adapter = suite.body.policy.adapter as SuitePolicyOverrides["adapter"];
   const updated = await browserJson(page, `/api/v1/case-suites/${encodeURIComponent(suiteId)}`, {
     method: "PATCH",
     body: {
@@ -78,11 +85,58 @@ export async function configureTaskExecution(
         runnerIds: [runnerId],
         runnerGroupId: "",
         ...overrides,
+        adapter: {
+          enabled: true,
+          suiteName: adapter?.suiteName || "E2E Suite",
+          testName: adapter?.testName || "E2E Test",
+          environmentAddresses: adapter?.environmentAddresses.length
+            ? adapter.environmentAddresses
+            : ["10.0.0.21"],
+          ...overrides.adapter,
+        },
       },
       expectedRevision: suite.body.revision,
     },
   });
   expect(updated.status).toBe(200);
+}
+
+async function ensureTaskDependencyFixture(page: Page, projectId: string, versionId: string) {
+  const endpoint = `/api/v1/projects/${projectId}/versions/${versionId}/adapter-configuration`;
+  const configuration = await browserJson<{ revision: number; jarBundleAsset?: { id: string } }>(
+    page,
+    endpoint,
+  );
+  expect(configuration.status).toBe(200);
+  if (configuration.body.jarBundleAsset) return;
+  // Fake-Runner scenarios still need a valid runtime snapshot. Real-Agent tests supply
+  // their executable archive before configuring the task and keep that archive intact.
+  const archive = zipSync({
+    "fixture.jar": zipSync({
+      "META-INF/MANIFEST.MF": new TextEncoder().encode("Manifest-Version: 1.0\n"),
+    }),
+  });
+  const uploaded = await page.request.post(
+    `/api/v1/projects/${projectId}/runtime-assets/upload?kind=jar-bundle&archiveFormat=zip`,
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "content-type": "application/octet-stream",
+        "x-autoforge-file-name": "protocol-fixture.zip",
+      },
+      data: Buffer.from(archive),
+    },
+  );
+  expect(uploaded.status(), await uploaded.text()).toBe(201);
+  const asset = (await uploaded.json()) as { id: string };
+  expect(
+    (
+      await browserJson(page, endpoint, {
+        method: "PUT",
+        body: { jarBundleAssetId: asset.id, expectedRevision: configuration.body.revision },
+      })
+    ).status,
+  ).toBe(200);
 }
 
 export async function createTaskRun(page: Page, suiteId: string): Promise<{ id: string }> {

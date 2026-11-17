@@ -34,6 +34,7 @@ import { ActionDialog } from "@/components/action-dialog";
 import {
   permissionDescription,
   permissionLabel,
+  isAssignablePermission,
   permissionGroup,
 } from "@/lib/permission-presentation";
 import { useConfirm, useToast } from "@/components/ui-feedback";
@@ -565,15 +566,17 @@ export function OperationsSettings({
                         operationsSettingsStyles["permission-chip-row"],
                       )}
                     >
-                      {account.systemPermissions.map((permission) => (
-                        <Badge
-                          className={cn("permission-chip", uiPatterns["permission-chip"])}
-                          key={permission}
-                          title={permissionDescription(permission)}
-                        >
-                          {permissionLabel(permission)}
-                        </Badge>
-                      ))}
+                      {account.systemPermissions
+                        .filter(isAssignablePermission)
+                        .map((permission) => (
+                          <Badge
+                            className={cn("permission-chip", uiPatterns["permission-chip"])}
+                            key={permission}
+                            title={permissionDescription(permission)}
+                          >
+                            {permissionLabel(permission)}
+                          </Badge>
+                        ))}
                     </div>
                   </Disclosure>
                   {canManageTokens ? (
@@ -777,12 +780,14 @@ export function OperationsSettings({
                               ...account.systemPermissions,
                               ...Object.values(account.projectPermissions).flat(),
                             ]),
-                          ].map((scope) => ({
-                            value: scope,
-                            label: permissionLabel(scope),
-                            group: permissionGroup(scope),
-                            description: permissionDescription(scope),
-                          }))}
+                          ]
+                            .filter(isAssignablePermission)
+                            .map((scope) => ({
+                              value: scope,
+                              label: permissionLabel(scope),
+                              group: permissionGroup(scope),
+                              description: permissionDescription(scope),
+                            }))}
                           required
                         />
                       </form>
@@ -1054,7 +1059,7 @@ function PermissionCheckboxGroup({
       {...(onSelectionChange ? { onSelectionChange } : {})}
       label={label}
       name={name}
-      options={permissionCatalog.map((permission) => ({
+      options={permissionCatalog.filter(isAssignablePermission).map((permission) => ({
         value: permission,
         label: permissionLabel(permission),
         group: permissionGroup(permission),

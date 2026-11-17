@@ -5,6 +5,17 @@ import { NextRequest } from "next/server";
 import { AUTHENTICATION_PAGE_PATH_HEADER } from "./authentication-return-path";
 
 describe("anonymous page routing", () => {
+  it("opens user documentation without opening similarly named private pages", () => {
+    for (const path of ["/docs", "/docs/case-logs", "/docs/unknown-guide"]) {
+      expect(isPublicPath(path)).toBe(true);
+      expect(
+        proxy(new NextRequest(`http://platform.local${path}`)).headers.get("location"),
+      ).toBeNull();
+    }
+    for (const path of ["/docsmith", "/docs-private", "/api/v1/docs"]) {
+      expect(isPublicPath(path)).toBe(false);
+    }
+  });
   it("preserves the protected destination before login without internal RSC parameters", () => {
     const response = proxy(
       new NextRequest("http://platform.local/execution-records?kind=single&_rsc=internal"),

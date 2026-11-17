@@ -147,20 +147,13 @@ describe("platform configuration mapping", () => {
       },
       limits: {
         ...current.limits,
-        artifactCollectionEnabled: false,
         maxJarBytes: 67_108_864,
         ddtImportFileLimit: 350,
       },
     });
 
     expect(platformConfigurationActivation(current, saved)).toEqual({
-      appliedImmediatelyFields: [
-        "外部访问地址",
-        "内部访问地址",
-        "平台时区",
-        "产物收集",
-        "DDT 导入数量限制",
-      ],
+      appliedImmediatelyFields: ["外部访问地址", "内部访问地址", "平台时区", "DDT 导入数量限制"],
       restartRequiredFields: ["HTTP 端口", "容量与会话限制"],
     });
   });
@@ -255,7 +248,6 @@ function configuration(
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
-      artifactCollectionEnabled: true,
       ddtImportFileLimit: 200,
       ddtImportZipSpreadsheetLimit: 200,
     },

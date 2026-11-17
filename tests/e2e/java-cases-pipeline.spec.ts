@@ -41,7 +41,7 @@ async function captureDetailsPage(page: Page, name: string): Promise<void> {
 
 // Covers the full java-cases acceptance chain through the UI:
 // JAR import -> suite creation -> case selection -> runner addition ->
-// execution -> detail page with logs, structured results and artifacts.
+// execution -> detail page with logs and structured results.
 // The suite environment addresses are mock values: the Adapter only injects
 // them into ProjectFileUtil and never opens a network connection to them.
 
@@ -65,7 +65,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     const hierarchy = await importJavaCasesJar(page);
 
     // 任务创建 + 用例勾选：创建 Adapter 任务并把用例加入任务。
-    await createExecutableSuite(page, successSuiteName, "JavaCasesFixture", 0, ["artifacts/*.txt"]);
+    await createExecutableSuite(page, successSuiteName, "JavaCasesFixture", 0);
 
     // 任务快捷执行：选择保存了完整配置的任务后直接执行。
     const batchId = await scheduleExecution(page, successSuiteName);
@@ -81,7 +81,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
       .poll(async () => executionLog.textContent(), { timeout: 30_000 })
       .toContain(`JAVA_CASES_STDOUT_完成:${environmentAddress}`);
 
-    // 查看执行详情及日志：等待成功后校验结构化结果、日志与产物。
+    // 查看执行详情及日志：等待成功后校验结构化结果与日志。
     const details = await waitForTerminalBatch(
       page,
       batchId,
@@ -100,7 +100,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
 
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
     await openExecutionCaseDetails(page);
-    // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果与产物。
+    // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果。
     await page
       .getByRole("row", { name: "JavaCasesFixture" })
       .getByRole("button", { name: "详情" })
@@ -110,13 +110,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     await expect(page.getByText("executesThroughJavaCasesModule", { exact: true })).toBeVisible();
     await captureDetailsPage(page, "real-details-success-dark");
 
-    const customArtifact = page.getByLabel("下载 artifacts/java-cases.txt");
-    await expect(customArtifact).toBeVisible();
-    const artifactHref = await customArtifact.getAttribute("href");
-    expect(artifactHref).toBeTruthy();
-    const artifactDownload = await page.request.get(artifactHref!);
-    expect(artifactDownload.status()).toBe(200);
-    expect(await artifactDownload.text()).toBe("JAVA_CASES_ARTIFACT_SAFE\n");
+    await expect(page.getByRole("heading", { name: "产物", exact: true })).toHaveCount(0);
     await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
 
     await page.getByRole("button", { name: "查看日志" }).click();
@@ -509,9 +503,8 @@ async function createExecutableSuite(
   suiteName: string,
   caseDisplayName: string,
   retryLimit: number,
-  artifactPatterns: string[] = [],
 ): Promise<void> {
-  await createConfiguredSuite(page, suiteName, caseDisplayName, retryLimit, artifactPatterns);
+  await createConfiguredSuite(page, suiteName, caseDisplayName, retryLimit);
   await addOrdinaryCaseToSuite(page, suiteName, caseDisplayName);
 }
 
@@ -520,7 +513,6 @@ async function createConfiguredSuite(
   suiteName: string,
   testName: string,
   retryLimit: number,
-  artifactPatterns: string[] = [],
   adapterAddresses = [environmentAddress, backupEnvironmentAddress],
 ): Promise<string> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
@@ -528,7 +520,7 @@ async function createConfiguredSuite(
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
   await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
   await createSuiteDialog.getByLabel("说明").fill("java-cases 模块全链路验收任务");
-  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+
   await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
   await createSuiteDialog.getByLabel("TestNG Test Name").fill(testName);
   if (requiresEnvironmentAddress(testName)) {
@@ -544,7 +536,6 @@ async function createConfiguredSuite(
   await configureTaskExecution(page, suiteId, runnerId);
   await suiteLink.click();
   await page.getByLabel("重试次数上限").fill(String(retryLimit));
-  await page.getByLabel("产物规则（每行一个相对路径 glob）").fill(artifactPatterns.join("\n"));
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
   return suiteId;
@@ -585,14 +576,9 @@ async function exerciseDdtExecution(
 ): Promise<void> {
   const caseId = uniqueName("JAVA-CASES-DDT").toUpperCase();
   await importDdtCase(page, hierarchy, caseId);
-  const suiteId = await createConfiguredSuite(
-    page,
-    ddtSuiteName,
-    "JavaCasesDdtFixture",
-    0,
-    [],
-    [ddtPublicApiBase(page, hierarchy)],
-  );
+  const suiteId = await createConfiguredSuite(page, ddtSuiteName, "JavaCasesDdtFixture", 0, [
+    ddtPublicApiBase(page, hierarchy),
+  ]);
   await addDdtCaseToSuite(page, hierarchy, suiteId, caseId);
 
   const batchId = await scheduleExecution(page, ddtSuiteName);
@@ -682,8 +668,8 @@ async function exerciseDdtQuickExecution(
   const dialog = page.getByRole("dialog", { name: "开始执行", exact: true });
   await expect(dialog.getByText(caseId, { exact: true })).toBeVisible();
   await dialog.getByRole("checkbox", { name: new RegExp(runnerName) }).check();
-  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
-  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeDisabled();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
   await dialog.getByRole("heading", { name: "选择执行内容", exact: true }).scrollIntoViewIfNeeded();
   await captureDdtExecutionViews(page, "ddt-execution-selection");
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Adapter · DDT quick execution");

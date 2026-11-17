@@ -142,6 +142,12 @@ const runtimeRequirementsSchema = z.object({
     .default("7.11.0"),
 });
 
+const retiredExecutionArtifactRuleSchema = z.object({
+  pattern: artifactPatternSchema,
+  required: z.boolean().default(false),
+  mediaType: z.string().trim().min(1).max(255).optional(),
+});
+
 export const executionSpecSchema = z
   .object({
     schemaVersion: protocolVersionSchema,
@@ -183,15 +189,11 @@ export const executionSpecSchema = z
         capabilities.filter((capability) => capability !== "isolation:cgroup-v2"),
       ),
     artifactRules: z
-      .array(
-        z.object({
-          pattern: artifactPatternSchema,
-          required: z.boolean().default(false),
-          mediaType: z.string().trim().min(1).max(255).optional(),
-        }),
-      )
+      .array(retiredExecutionArtifactRuleSchema)
       .max(64)
-      .default([]),
+      .default([])
+      // Protocol v1 compatibility: retired rules never reactivate collection.
+      .transform((): z.infer<typeof retiredExecutionArtifactRuleSchema>[] => []),
     timeoutMs: z.number().int().min(1_000).max(86_400_000),
     uploadTimeoutMs: z.number().int().min(1_000).max(3_600_000),
     resourceLimits: z.object({
@@ -418,27 +420,10 @@ export const declareArtifactsInputSchema = z.object({
   artifacts: z.array(artifactDeclarationSchema).max(256),
 });
 
-export const declareArtifactsResponseSchema = z.object({
+export const beginAttemptUploadInputSchema = z.object({
   schemaVersion: protocolVersionSchema,
-  artifacts: z
-    .array(
-      artifactDeclarationSchema.extend({
-        uploadPath: z.string().min(1).max(1_024),
-        uploadMethod: z.enum(["control-plane", "direct"]).default("control-plane"),
-        finalizePath: z.string().min(1).max(1_024).optional(),
-        status: z.enum(["declared", "uploaded"]),
-      }),
-    )
-    .max(256),
-});
-
-export const attemptArtifactListSchema = z.object({
-  items: z.array(
-    artifactDeclarationSchema.extend({
-      status: z.enum(["declared", "uploaded", "rejected"]),
-      downloadPath: z.string().min(1).optional(),
-    }),
-  ),
+  requestId: identifierSchema,
+  leaseToken: z.string().min(32).max(256),
 });
 
 const testNgCountsSchema = z.object({
@@ -528,6 +513,7 @@ export const completionResultSchema = z.object({
       agent: z.number().int().min(-1),
     })
     .optional(),
+  // Legacy metadata participates in completion receipts only; repositories never store new artifacts.
   artifacts: z.array(artifactDeclarationSchema).max(256).default([]),
 });
 
@@ -624,8 +610,6 @@ export type AttemptStateEvent = z.infer<typeof attemptStateEventSchema>;
 export type AttemptEventPage = z.infer<typeof attemptEventPageSchema>;
 export type ArtifactDeclaration = z.infer<typeof artifactDeclarationSchema>;
 export type DeclareArtifactsInput = z.infer<typeof declareArtifactsInputSchema>;
-export type DeclareArtifactsResponse = z.infer<typeof declareArtifactsResponseSchema>;
-export type AttemptArtifactList = z.infer<typeof attemptArtifactListSchema>;
 
 function validateTestNgCounts(
   counts: z.infer<typeof testNgCountsSchema>,

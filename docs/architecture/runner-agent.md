@@ -1,17 +1,17 @@
 # Runner Agent 架构设计
 
-状态：Go Runner Protocol v1 的注册、资源心跳、任务领取、lease 续期、reconcile、权威测试/依赖 JAR 获取、TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、安全产物上传、完成上报和可选直连终端已实现；新版本不可变 Release 资产的 Gate E 实机记录仍须在打标签后完成。
+状态：Go Runner Protocol v1 的注册、资源心跳、任务领取、lease 续期、reconcile、权威测试/依赖 JAR 获取、TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、完成上报和可选直连终端已实现；新版本不可变 Release 资产的 Gate E 实机记录仍须在打标签后完成。
 
-本文中的 **Runner Agent** 指安装在执行机上的 AutoForge 守护进程，不是参与仓库开发的编码代理。Runner Agent 从控制面领取执行任务，以受控子进程运行命令，采集日志和产物，并上报执行结果。
+本文中的 **Runner Agent** 指安装在执行机上的 AutoForge 守护进程，不是参与仓库开发的编码代理。Runner Agent 从控制面领取执行任务，以受控子进程运行命令，采集日志和结构化结果，并上报执行结果。
 
-当前 `apps/runner-agent` 使用 Go 1.26.x，实现了构建信息、集中配置诊断、版本化本地执行规格、可执行文件白名单、独立工作目录、三路有序日志、有界 spool、超时和 Linux 进程组清理。`start` 支持 bootstrap 注册、受限权限身份存储、认证资源心跳、assignment claim、lease 续期、启动 reconcile、日志/产物上传、完成上报和可选的出站终端 WebSocket。`run-once` 是执行核心的诊断入口，不会领取平台任务。
+当前 `apps/runner-agent` 使用 Go 1.26.x，实现了构建信息、集中配置诊断、版本化本地执行规格、可执行文件白名单、独立工作目录、三路有序日志、有界 spool、超时和 Linux 进程组清理。`start` 支持 bootstrap 注册、受限权限身份存储、认证资源心跳、assignment claim、lease 续期、启动 reconcile、日志上传、完成上报和可选的出站终端 WebSocket。`run-once` 是执行核心的诊断入口，不会领取平台任务。
 
 ## 目标
 
 - 同一 Runner Agent 同时兼容 Lite 和 Full，Agent 不感知服务端使用 SQLite 还是 PostgreSQL/NATS/MinIO/Redis。
 - 只需从执行机主动访问 AutoForge 控制面，不要求服务端反向连接执行机。
 - 正确处理重复交付、网络中断、Agent 崩溃、控制面重启、取消和超时。
-- 命令、环境变量、工作目录、日志和产物具有明确安全边界。
+- 命令、环境变量、工作目录、日志和结果具有明确安全边界。
 - 安装包可离线分发、升级和回滚，不在运行时下载依赖或自动更新。
 
 ## 非目标
@@ -37,11 +37,8 @@ flowchart LR
     UI -->|WSS: short-lived terminal session| API
     AGENT --> PROC[Child Process]
     PROC --> LOG[stdout / stderr]
-    PROC --> FILES[Artifacts]
     LOG --> AGENT
-    FILES --> AGENT
     AGENT -->|chunked logs / result| API
-    AGENT -->|controlled upload target| OBJ
 ```
 
 Agent 与控制面使用稳定的 Runner Protocol。Full 的 JetStream 和 Lite 的 SQLite 队列只位于控制面内部：
@@ -60,7 +57,6 @@ Agent 与控制面使用稳定的 Runner Protocol。Full 的 JetStream 和 Lite 
 - **Scheduler**：根据优先级、项目策略、Runner 标签、能力和剩余容量产生调度意图。
 - **Dispatcher**：消费调度任务，选择候选 Runner，创建可领取 assignment。
 - **Runner Gateway**：处理注册、心跳、领取、续租、取消、日志和完成上报。
-- **Artifact Service**：校验产物声明并生成受控上传目标。
 - **Reconciler**：回收过期租约，处理失联 Agent、孤儿任务和清理任务。
 
 ### Runner Agent
@@ -98,7 +94,7 @@ unregistered -> registering -> online -> draining -> offline
 ## 一次执行的流程
 
 ```text
-claim -> prepare -> start -> stream logs -> collect artifacts -> report result -> cleanup
+claim -> prepare -> start -> stream logs -> parse result -> drain logs -> report result -> cleanup
                  |                    |
                  -> cancel/timeout ---+
 ```
@@ -110,7 +106,7 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 5. Lease Manager 定时续租；Log Pipeline 并行采集 stdout/stderr。
 6. 取消、租约失效或超时触发进程树终止。
 7. Artifact Collector 只收集白名单路径下与声明匹配的文件。
-8. Agent 上报退出信息、结构化结果和产物清单。
+8. Agent 上报退出信息、结构化结果和日志水位。
 9. 控制面以带版本的条件写确定终态；重复完成上报返回相同确认。
 10. 得到服务端确认后清理本地 spool 和工作目录。
 
@@ -120,19 +116,18 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 
 协议端点：
 
-| 方法与路径                                                      | 用途                                             |
-| --------------------------------------------------------------- | ------------------------------------------------ |
-| `POST /api/v1/runner-agents/register`                           | 使用 bootstrap token 注册                        |
-| `POST /api/v1/runner-agents/{runnerId}/heartbeat`               | 上报在线、容量和能力摘要                         |
-| `POST /api/v1/terminal-sessions`                                | 登录用户按独立 RBAC 权限换取 30 秒一次性终端票据 |
-| `WS /api/v1/terminal-stream`                                    | Agent 出站通道与同源浏览器浮窗的有界终端中继     |
-| `POST /api/v1/runner-agents/{runnerId}/claims`                  | 长轮询并原子领取 assignment                      |
-| `POST /api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew`  | 续租并获取取消/排空指令                          |
-| `POST /api/v1/run-attempts/{attemptId}/logs`                    | 批量上报日志块                                   |
-| `POST /api/v1/run-attempts/{attemptId}/artifacts`               | 声明产物并获取上传目标                           |
-| `POST /api/v1/run-attempts/{attemptId}/artifacts/{id}/finalize` | 复核 Full 直传对象并确认产物元数据               |
-| `POST /api/v1/run-attempts/{attemptId}/complete`                | 幂等上报最终结果                                 |
-| `GET /api/v1/run-attempts/{attemptId}/events`                   | 登录用户按执行读取权限分页查询状态时间线         |
+| 方法与路径                                                     | 用途                                             |
+| -------------------------------------------------------------- | ------------------------------------------------ |
+| `POST /api/v1/runner-agents/register`                          | 使用 bootstrap token 注册                        |
+| `POST /api/v1/runner-agents/{runnerId}/heartbeat`              | 上报在线、容量和能力摘要                         |
+| `POST /api/v1/terminal-sessions`                               | 登录用户按独立 RBAC 权限换取 30 秒一次性终端票据 |
+| `WS /api/v1/terminal-stream`                                   | Agent 出站通道与同源浏览器浮窗的有界终端中继     |
+| `POST /api/v1/runner-agents/{runnerId}/claims`                 | 长轮询并原子领取 assignment                      |
+| `POST /api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取取消/排空指令                          |
+| `POST /api/v1/run-attempts/{attemptId}/logs`                   | 批量上报日志块                                   |
+| `POST /api/v1/run-attempts/{attemptId}/artifacts`              | 仅兼容旧 Agent 的空上传阶段握手（不接收文件）    |
+| `POST /api/v1/run-attempts/{attemptId}/complete`               | 幂等上报最终结果                                 |
+| `GET /api/v1/run-attempts/{attemptId}/events`                  | 登录用户按执行读取权限分页查询状态时间线         |
 
 Runner 端点使用版本化契约和 Runner 身份；浏览器查询端点使用登录会话与服务端 RBAC。协议 v1 允许补丁版本只新增可选字段，旧 Agent 与旧 Server 会忽略未知字段；删除字段、改变既有字段语义或类型属于破坏性变更，必须提升 `schemaVersion`。服务端协商和 Agent 响应解析都会明确拒绝非 v1 版本。兼容测试同时覆盖新 Agent 请求到旧 Server、旧 Agent 接收新 Server 响应，以及同一 Agent HTTP 客户端分别连接 Lite 与 Full 控制面。
 
@@ -181,7 +176,7 @@ TestNG 方法选择器使用 `methodName+JVM descriptor` 的规范形式，例�
 TestNG 输入固定为一个 `test-jar` 和最多 127 个 `dependency-jar`。每项输入都引用服务端管理的权威对象，并在 assignment 快照中固化 ID、相对 `.jar` 目标路径、大小和 SHA-256；控制面先验证 Runner 身份与有效 lease，再确认输入确实位于快照且权威元数据未漂移。Agent 在发起下载前校验输入总大小、attempt 磁盘上限和工作目录可用空间，逐项通过同一控制面端点下载并原子发布。输入超过策略配额返回 `EXECUTION_INPUT_DISK_LIMIT_EXCEEDED`；宿主工作目录实际可用磁盘不足返回 `WORKSPACE_DISK_INSUFFICIENT`，不得归为进程启动失败或内存不足。classpath 顺序固定为测试 JAR、按目标路径排序的依赖 JAR、Runner 预置 TestNG 工具链，不向 Agent 下发数据库或对象存储长期凭据。
 
 CoTest Adapter assignment 另外允许一个 `jar-bundle` 和一个可选 `jdk-archive`。项目保存这些
-资源，任务保存 Adapter 开关、Suite/Test 与环境地址列表；批次固化完整环境池，首轮按用例顺序
+资源，任务保存 Suite/Test 与环境地址列表并统一使用 CoTest Adapter；批次固化完整环境池，首轮按用例顺序
 分散起点，后续 attempt 轮询到下一个地址。Runner 在 attempt 配额内安全解压依赖包到 `test-jars`，主测试 JAR 发布为
 `test-jars/autoforge-case.jar`，Adapter 自动扫描根目录及三层子目录中的全部 JAR。上传端采用流式
 暂存和对象写入，不设固定业务大小上限；Runner Protocol 的磁盘上限、按输入动态计算的展开预算、
@@ -232,7 +227,7 @@ type LogChunk = {
 - Agent 在写本地 spool 前完成秘密脱敏；控制面再做第二层防护。仅匹配任务已知密文和带
   `Bearer`、`password`、`token`、`secret`、`api-key` 等明确上下文的凭据，不把普通点分标识符或
   Java 类路径猜测成 JWT，也不为无密文的普通日志固定扣留尾部字节。
-- 日志、完成结果和待上传产物共享 `AUTOFORGE_AGENT_SPOOL_MAX_BYTES` 硬预算；按最大并发预留最多一半预算给原子完成元数据，负载达到上限时以 `LOG_SPOOL_QUOTA_EXCEEDED` 或 `ARTIFACT_SPOOL_QUOTA_EXCEEDED` 明确终止，禁止静默丢弃。
+- 日志和完成结果共享 `AUTOFORGE_AGENT_SPOOL_MAX_BYTES` 硬预算；按最大并发预留最多一半预算给原子完成元数据，负载达到上限时以 `LOG_SPOOL_QUOTA_EXCEEDED` 明确终止，禁止静默丢弃。
 - 服务端只确认连续序号；Agent 根据确认水位删除 spool 并重传缺口。
 - Agent 同时受配置的块数上限和控制面 2 MiB JSON 请求上限约束，按实际编码后的字节数自动拆批；
   瞬时网络/服务错误使用有界指数退避重试，代理返回 413 时立即缩小批次重试，避免重复发送
@@ -240,16 +235,13 @@ type LogChunk = {
 - 保留期只清理没有本地未决 attempt 的孤立日志；仍待 reconcile/确认的日志不会仅因时间到期而删除。
 - ANSI 仅保存受控语义或原文，Web 展示必须白名单解析，禁止注入 HTML。
 
-## 产物收集
+## 执行结果与日志收尾
 
-- 产物规则相对 attempt 工作目录解析，拒绝绝对路径、`..`、设备文件和越界符号链接。
-- 收集前检查数量和单项/总大小限制；计算 SHA-256 后再声明上传。
-- Lite 返回单 attempt、单 artifact、受 lease 约束的控制面上传地址并流式写入本地 ObjectStore。Full 返回 15 分钟的单对象 MinIO 预签名 PUT；Agent 直传时不携带 Runner 或 lease 凭据，随后回到同源控制面 finalize。服务端重新读取对象并核对大小与 SHA-256 后才确认元数据，失败对象会被删除。
-- Agent 只接收短期、单对象、限大小的上传权限，不持有 MinIO 长期凭据。
-- 上传完成后由控制面校验大小和摘要，再把 Artifact 与 RunAttempt 关联。
-- 即使没有匹配产物，Agent 也发送一次空产物声明；控制面用首次声明的服务端 UTC 时间标记上传收尾阶段，使进程重启后仍可独立裁决上传超时。
-- 产物在首次上传前按服务端生成的 artifact ID 写入 `0600` 原子 spool 文件，attempt 状态记录逐项确认状态。Agent 重启后按 reconcile 决定续传；控制面确认完成结果后才统一删除日志、结果和上传文件。
-- 必需产物缺失和可选产物缺失必须使用不同结果码。
+TestNG 执行产物已退役，详见 [ADR 0018](../adr/0018-retire-testng-execution-artifacts.md)。Adapter 与普通启动器关闭默认报告，仅在本地生成最小 XML，Runner 解析后上报结构化结果并清理目录。平台不扫描、上传、预览或下载执行报告附件。
+
+Java 结束后，Agent 通过 `POST /api/v1/run-attempts/{attemptId}/upload-phase` 登记独立日志收尾期限，排空日志后提交完成结果。首次上传阶段时间不可被重复请求延长；新旧协议仅保留空握手兼容，不恢复文件传输。
+
+旧 spool 文件上传清单在恢复时丢弃，原完成结果保留用于幂等回执核对；已有平台历史表和对象保留，升级不清库。
 
 ## 租约、重复与恢复
 
@@ -276,15 +268,14 @@ AUTOFORGE_AGENT_DATA_DIR/
 │           └── jdk/                 # 配置 JDK archive 时只解压一次
 └── spool/
     ├── logs/<attempt-id>/          # 待确认的有序日志块
-    ├── attempts/<attempt-id>.json  # lease、完成结果和上传水位
-    └── uploads/<attempt-id>/       # 待确认产物内容
+    └── attempts/<attempt-id>.json  # lease、完成结果和上传水位
 ```
 
 同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载。CoTest Adapter 的主 JAR、独立依赖 JAR、依赖压缩包解压结果与可选 JDK 在临时目录完整生成后原子发布到 `runtime/cotest/`；每个 attempt 创建真实 `test-jars` 目录并以文件级硬链接复用其中 JAR（跨文件系统时回退复制），避免 Java 的非跟随式目录遍历跳过符号链接根目录；`runtime/jdk` 继续使用受控符号链接。非 Adapter 输入同样以硬链接（不支持时回退复制）进入 attempt 工作目录。
 
 批次注册表记录本机在途 attempt 数与已确认终态：完成响应的 `batchClosed=true` 会持久到最后一个本地 attempt 收尾，避免并发完成次序造成目录泄漏。Agent 还会在 heartbeat 与 claim 中上报本机已空闲的 `cachedBatchIds`；控制面仅把该 Runner 仍被选中且尚未终态的批次视为可复用，其余 ID 通过 `closedBatchIds` 通知回收。因此多 Runner 批次中没有提交最后一份结果的节点以及已进入排空、暂停 claim 的节点都能及时清理。禁用状态只保留心跳认证以便下发 drain 和执行该回收握手，claim、续租、完成和凭据轮换仍被拒绝；恢复 active 后心跳返回 `draining=false`，领取循环恢复。
 
-启动 reconcile 前只清理 `work/` 下无本地状态引用的 `<attemptId>-*` 独立工作目录；目录扫描只保留 attempt ID，完整状态按 256 条有界解码与提交，不因历史未决记录超过单次协议上限而拒绝启动。启用直连终端时，Agent 在这段恢复前先获取短期票据并建立出站通道。有状态引用的崩溃 attempt 会保存进程组 leader PID 与 Linux 内核启动时钟，重启后先核对两者以防 PID 复用误杀，再终止仍存活的原进程组，并在完成 reconcile、日志/产物/结果重传后连同状态一起回收。reconcile 后再次扫描孤儿目录，关闭状态已确认删除而旧进程刚结束写入的崩溃窗口；本地 attempt 状态 v2 可读取并自动升级不含进程身份的 v1 记录。安全的 `batches/<batch-id>` 会恢复为空闲缓存，避免 Agent 崩溃后同批次的后续用例重新下载或解压。reconcile 完成后由上述 heartbeat/claim 核对批次是否仍可能派发；终态、已删除或不属于该 Runner 的目录才会回收，非法批次路径和非目录内容直接清理。
+启动 reconcile 前只清理 `work/` 下无本地状态引用的 `<attemptId>-*` 独立工作目录；目录扫描只保留 attempt ID，完整状态按 256 条有界解码与提交，不因历史未决记录超过单次协议上限而拒绝启动。启用直连终端时，Agent 在这段恢复前先获取短期票据并建立出站通道。有状态引用的崩溃 attempt 会保存进程组 leader PID 与 Linux 内核启动时钟，重启后先核对两者以防 PID 复用误杀，再终止仍存活的原进程组，并在完成 reconcile、日志/结果重传后连同状态一起回收。reconcile 后再次扫描孤儿目录，关闭状态已确认删除而旧进程刚结束写入的崩溃窗口；本地 attempt 状态 v2 可读取并自动升级不含进程身份的 v1 记录。安全的 `batches/<batch-id>` 会恢复为空闲缓存，避免 Agent 崩溃后同批次的后续用例重新下载或解压。reconcile 完成后由上述 heartbeat/claim 核对批次是否仍可能派发；终态、已删除或不属于该 Runner 的目录才会回收，非法批次路径和非目录内容直接清理。
 
 目录权限遵循最小权限。spool 和 diagnostics 都必须有配额、保留期和启动时恢复策略；清理不得跟随越界符号链接。
 
@@ -334,7 +325,7 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 
 - Agent 仅信任明确配置的控制面地址和 CA，所有请求都带 Runner 身份并使用 TLS。
 - bootstrap token 一次性、短时有效、最小权限；注册后使用可撤销和轮换的凭据。
-- 控制面记录任务创建、调度、领取、命令摘要、取消、完成和产物审计，但不记录秘密值。
+- 控制面记录任务创建、调度、领取、命令摘要、取消和完成审计，但不记录秘密值。
 - 命令摘要包含 executable、参数的脱敏表示和输入摘要，支持追溯。
 - Runner 本地策略可以收紧服务端任务，但不能放宽服务端限制。
 - Agent API 需要速率限制、请求体上限、重放防护和稳定的幂等键。
@@ -344,7 +335,7 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 - 契约：相邻 Agent/Server 版本兼容、不兼容版本明确拒绝。
 - 进程：成功、非零退出、启动失败、超时、取消和进程树清理。
 - 日志：中文跨块、stdout/stderr 交错、重复块、缺口、断线重传、截断和脱敏。
-- 产物：空匹配、超限、路径穿越、符号链接、重复上传、摘要不匹配。
+- 退役兼容：旧产物规则不生效、旧文件传输清单丢弃、旧完成回执保持幂等，日志上传阶段可独立登记。
 - 租约：续期、过期、网络分区、Agent 重启、迟到结果和重复完成。
 - 安全：Shell 注入、环境泄露、恶意文件名、越界 cwd 和失效凭据。
 - 模式：同一 Agent 测试套件分别连接 Lite 与 Full 控制面。
@@ -352,7 +343,7 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 
 ## 当前实现顺序
 
-assignment/lease、Agent claim/续期、process supervisor、权威测试/依赖 JAR 输入、TestNG descriptor 精确方法选择与参数注入、取消、reconcile、有序日志、双层脱敏、有界 spool、产物上传、幂等完成、结构化 TestNG 报告解析、凭据轮换（15 分钟宽限期）与管理员撤销/注销已落地。结构化报告采用有界流式 XML 解析，拒绝 DTD/实体扩展，明细达到上限后继续累计汇总；控制面在双数据库保存结果，原始 XML 按产物规则上传。后续按以下顺序继续，未列为完成的能力不得用于生产声明：
+assignment/lease、Agent claim/续期、process supervisor、权威测试/依赖 JAR 输入、TestNG descriptor 精确方法选择与参数注入、取消、reconcile、有序日志、双层脱敏、有界 spool、幂等完成、结构化 TestNG 报告解析、凭据轮换（15 分钟宽限期）与管理员撤销/注销已落地。结构化报告采用有界流式 XML 解析，拒绝 DTD/实体扩展，明细达到上限后继续累计汇总；控制面在双数据库保存结果，原始 XML 仅在工作目录用于本地结果解析，解析后清理。后续按以下顺序继续，未列为完成的能力不得用于生产声明：
 
 1. 补齐离线服务安装和相邻版本兼容矩阵。
 2. 完成专用文件系统/项目配额部署验证。

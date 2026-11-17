@@ -40,6 +40,7 @@ import { readApiErrorMessage } from "@/lib/client-api";
 import {
   permissionDescription,
   permissionLabel,
+  isAssignablePermission,
   permissionGroup,
 } from "@/lib/permission-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
@@ -239,7 +240,7 @@ export function AccessSettings({
         name: form.get("name"),
         description: role.description,
         scope: role.scope,
-        permissions: role.permissions,
+        permissions: role.permissions.filter(isAssignablePermission),
       }),
       "角色副本已创建，可继续编辑后再分配。",
     );
@@ -838,7 +839,7 @@ export function AccessSettings({
                 className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}
                 label="权限"
                 name="permissions"
-                options={permissionCatalog.map((permission) => ({
+                options={permissionCatalog.filter(isAssignablePermission).map((permission) => ({
                   value: permission,
                   label: permissionLabel(permission),
                   group: permissionGroup(permission),
@@ -900,14 +901,18 @@ export function AccessSettings({
                   </div>
                   <p>{role.description || "无描述"}</p>
                   <Disclosure
-                    header={<>{role.permissions.length} 项权限 · 查看明细</>}
+                    header={
+                      <>
+                        {role.permissions.filter(isAssignablePermission).length} 项权限 · 查看明细
+                      </>
+                    }
                     className={cn(
                       "management-disclosure",
                       accessSettingsStyles["management-disclosure"],
                     )}
                   >
                     <div className={cn("permission-list", accessSettingsStyles["permission-list"])}>
-                      {role.permissions.map((permission) => (
+                      {role.permissions.filter(isAssignablePermission).map((permission) => (
                         <Badge
                           className={cn("permission-chip", uiPatterns["permission-chip"])}
                           key={permission}
@@ -978,15 +983,17 @@ export function AccessSettings({
                                   "settings-wide-field",
                                   uiPatterns["settings-wide-field"],
                                 )}
-                                defaultValue={role.permissions}
+                                defaultValue={role.permissions.filter(isAssignablePermission)}
                                 label="权限"
                                 name="permissions"
-                                options={permissionCatalog.map((permission) => ({
-                                  value: permission,
-                                  label: permissionLabel(permission),
-                                  group: permissionGroup(permission),
-                                  description: permissionDescription(permission),
-                                }))}
+                                options={permissionCatalog
+                                  .filter(isAssignablePermission)
+                                  .map((permission) => ({
+                                    value: permission,
+                                    label: permissionLabel(permission),
+                                    group: permissionGroup(permission),
+                                    description: permissionDescription(permission),
+                                  }))}
                                 required
                               />
                               <label

@@ -196,7 +196,7 @@ export function CaseSuiteCard({
             立即执行
           </OpenRunDialogButton>
         ) : null}
-        {canExecute && suite.policy.adapter.enabled && suite.status === "active" ? (
+        {canExecute && suite.status === "active" ? (
           <SuiteExecutionEnvironment
             suite={suite}
             userId={currentUserId}

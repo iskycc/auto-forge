@@ -1,4 +1,4 @@
-// New execution entrypoints use these defaults; saved snapshots retain their choices.
+// All new execution entrypoints use CoTest; historical execution snapshots remain immutable.
 export const DEFAULT_EXECUTION_ADAPTER_ENABLED = true;
 
 export function executionAdapterNameDefaults(

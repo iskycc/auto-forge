@@ -112,10 +112,7 @@ export function AttemptRerunDialog({
             form={formId}
             variant="primary"
             disabled={
-              loading ||
-              !configuration ||
-              pending ||
-              (!editing && configuration.adapterEnabled && !configuration.environmentIp)
+              loading || !configuration || pending || (!editing && !configuration.environmentIp)
             }
           >
             {pending ? "正在提交…" : settings ? "保存设置" : "确认执行"}
@@ -147,13 +144,9 @@ export function AttemptRerunDialog({
                   aria-label="本次重跑环境 IP"
                   autoComplete="off"
                   readOnly={!editing}
-                  disabled={pending || !configuration.adapterEnabled}
+                  disabled={pending}
                   value={environmentIp}
-                  placeholder={
-                    configuration.adapterEnabled
-                      ? "请输入 IPv4 或 IPv6 地址"
-                      : "原执行未启用 Adapter"
-                  }
+                  placeholder={"请输入 IPv4 或 IPv6 地址"}
                   onChange={(event) => {
                     setEnvironmentIp(event.target.value);
                     setError("");
@@ -162,7 +155,7 @@ export function AttemptRerunDialog({
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={pending || !configuration.adapterEnabled}
+                  disabled={pending}
                   className="shrink-0"
                   onClick={() => {
                     setError("");
@@ -177,13 +170,11 @@ export function AttemptRerunDialog({
               </div>
             </label>
             <p className="m-0 text-sm leading-6 text-muted-foreground">
-              {configuration.adapterEnabled
-                ? configuration.environmentIp
-                  ? settings
-                    ? "修改仅保存在当前页面，不改变任务配置或已有批次。"
-                    : "修改仅对本次重跑生效，不改变原任务或已有批次的环境 IP。"
-                  : "原执行未记录环境 IP，请点击修改并填写本次重跑地址。"
-                : "原执行未启用 Adapter，本次按原配置执行。"}
+              {configuration.environmentIp
+                ? settings
+                  ? "修改仅保存在当前页面，不改变任务配置或已有批次。"
+                  : "修改仅对本次重跑生效，不改变原任务或已有批次的环境 IP。"
+                : "原执行未记录环境 IP，请点击修改并填写本次重跑地址。"}
             </p>
           </>
         ) : null}

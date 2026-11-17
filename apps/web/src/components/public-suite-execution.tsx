@@ -29,6 +29,7 @@ import {
 import { Button } from "./ui/button";
 import { PublicSuiteTerminationDialog } from "./public-suite-termination-dialog";
 import { ColorModeToggle } from "./color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 import { JenkinsTaskGuide } from "./jenkins-task-guide";
 import { useLoginDialog } from "./login-dialog-provider";
 import { SessionLoginButton } from "./session-login-button";
@@ -69,9 +70,7 @@ export function PublicSuiteExecution({
   const startActionLabel = mode === "delay" ? "开始倒计时" : "执行任务";
   const endpoint = `/api/v1/public/case-suites/${encodeURIComponent(view.suiteId)}`;
   const query = new URLSearchParams({ PublisherId: view.publisher.id });
-  const requestedAddresses = view.adapterEnabled
-    ? (view.environment.change?.addresses ?? view.environmentAddresses)
-    : [];
+  const requestedAddresses = view.environment.change?.addresses ?? view.environmentAddresses;
   const environmentConflict = view.active.find(
     (batch) =>
       requestedAddresses.length === 0 ||
@@ -180,6 +179,7 @@ export function PublicSuiteExecution({
             ) : (
               <SessionLoginButton />
             )}
+            <DocumentationLink topic="public-tasks" section="run-and-control" />
             <ColorModeToggle />
           </div>
         </header>
@@ -410,7 +410,6 @@ export function PublicSuiteExecution({
               )}
               <PublicSuiteEnvironment
                 addresses={requestedAddresses}
-                enabled={view.adapterEnabled}
                 disabled={
                   !authenticated ||
                   pending ||

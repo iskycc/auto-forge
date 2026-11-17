@@ -87,7 +87,7 @@ pnpm exec playwright test --config playwright.full.config.ts tests/e2e/case-suit
 - `PUT /api/v1/public/case-suites/:suiteId/environment?PublisherId=…` 接收 `{revision,addresses}`；`addresses:null` 恢复任务默认。需个人账号登录、同源和限流，不要求项目执行权限，不受任务锁定人限制；停用、归档、无效链接与未启用 Adapter 时拒绝。修改人来自登录会话，不能由请求伪造。每次成功只更新一个最新记录，并登记操作审计。
 - 页面展示“本次执行将使用以上 IP”和最新修改人、时间。编辑保留打开时修订号；并发修改返回 `PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT`，保留草稿并通过统一冲突弹窗提示重新加载，禁止静默覆盖。
 - 立即／倒计时执行提交所见修订号，应用服务读取共享地址，批次创建事务再次校验修订号。Full 锁住链接行到快照提交；Lite 依靠 SQLite 写事务序列化。变更前已接受的请求幂等重放仍返回原批次，修改不会影响已创建执行。
-- 执行详情分别展示分享人、实际拉起人及环境 IP 修改人。任务默认地址、用例范围与修订号均不改变。后台任务／Jenkins 执行仍使用各自原有配置；历史 API 显式传一次性 `environmentAddresses` 的行为继续兼容。关闭 Adapter 后不套用历史共享 IP。
+- 执行详情分别展示分享人、实际拉起人及环境 IP 修改人。任务默认地址、用例范围与修订号均不改变。后台任务／Jenkins 执行仍使用各自原有配置；历史 API 显式传一次性 `environmentAddresses` 的行为继续兼容。CoTest 开关已移除，旧关闭标记不影响共享环境；同一有效链接继续使用最新共享 IP。
 
 ### 验证证据
 
@@ -103,3 +103,5 @@ pnpm exec playwright test --config playwright.full.config.ts tests/e2e/case-suit
 ```
 
 实际查看 1024×768、1536×960 的深浅色共享配置、修改记录、冲突弹窗、后台执行操作人和工作台弹窗截图，按钮、长名称及多 IP 无横向溢出，执行节点空提醒不占空间。截图在本机 `/var/tmp/autoforge-public-ip-lite/`、`/var/tmp/autoforge-public-ip-full-ui/` 与对应 `*-browser/` 目录。验证使用隔离数据；未运行全量回归、真实 JVM／Jenkins／SSH 节点或发布流水线，本次未修改这些执行协议和资源。
+
+2026-11-17：执行入口统一使用 CoTest，前述关闭开关的测试仅记录旧版本行为。当前任务配置和公开链接的共享环境不会再被旧 `enabled: false` 标记停用；已创建的执行仍保留原快照。详情见[统一 CoTest 与公开导出](./cotest-default-and-public-export.md)。

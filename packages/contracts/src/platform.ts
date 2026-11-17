@@ -69,7 +69,6 @@ const platformLimitsInputSchema = z.object({
   sessionTtlHours: z.number().int().min(1).max(168),
   authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
   caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
-  artifactCollectionEnabled: z.boolean().default(true),
   // Optional on the v1 write contract so older administration clients do not
   // overwrite an administrator's persisted DDT limits when saving other fields.
   ddtImportFileLimit: ddtImportQuantityLimitSchema.optional(),

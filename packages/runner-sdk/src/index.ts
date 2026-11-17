@@ -1,8 +1,8 @@
 import type { ExecutionControlService } from "@autoforge/application";
 import {
   claimAssignmentsInputSchema,
+  beginAttemptUploadInputSchema,
   completeAttemptInputSchema,
-  declareArtifactsInputSchema,
   reconcileAttemptsInputSchema,
   renewLeaseInputSchema,
   uploadLogChunksInputSchema,
@@ -14,6 +14,11 @@ const POLL_INTERVAL_MS = 500;
 
 export class RunnerProtocolController {
   constructor(private readonly executions: ExecutionControlService) {}
+
+  beginUpload(runnerId: string, credential: string, attemptId: string, rawInput: unknown) {
+    const input = beginAttemptUploadInputSchema.parse(rawInput);
+    return this.executions.beginUpload(runnerId, credential, attemptId, input.leaseToken);
+  }
 
   async claim(runnerId: string, credential: string, rawInput: unknown) {
     const input = claimAssignmentsInputSchema.parse(rawInput);
@@ -72,15 +77,6 @@ export class RunnerProtocolController {
       credential,
       attemptId,
       uploadLogChunksInputSchema.parse(rawInput),
-    );
-  }
-
-  declareArtifacts(runnerId: string, credential: string, attemptId: string, rawInput: unknown) {
-    return this.executions.declareArtifacts(
-      runnerId,
-      credential,
-      attemptId,
-      declareArtifactsInputSchema.parse(rawInput),
     );
   }
 

@@ -3,12 +3,7 @@ import { constants, createReadStream } from "node:fs";
 import { access, link, mkdir, open, opendir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 
-import type {
-  ArtifactObjectIdentity,
-  ArtifactUploadTarget,
-  JarObjectStorePort,
-  ObjectWriteResult,
-} from "@autoforge/application";
+import type { JarObjectStorePort, ObjectWriteResult } from "@autoforge/application";
 
 export class LocalObjectStore implements JarObjectStorePort {
   readonly storageKind = "local" as const;
@@ -65,7 +60,7 @@ export class LocalObjectStore implements JarObjectStorePort {
     const targetPath = this.resolveObjectKey(input.objectKey);
     await mkdir(dirname(targetPath), { recursive: true });
     if (await this.pathExists(targetPath)) {
-      await this.verifyStoredArtifact(targetPath, input.sizeBytes, input.sha256);
+      await this.verifyStoredObject(targetPath, input.sizeBytes, input.sha256);
       return { objectKey: input.objectKey, created: false };
     }
     const temporaryPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
@@ -94,84 +89,13 @@ export class LocalObjectStore implements JarObjectStorePort {
       return { objectKey: input.objectKey, created: true };
     } catch (error) {
       if (await this.pathExists(targetPath)) {
-        await this.verifyStoredArtifact(targetPath, input.sizeBytes, input.sha256);
+        await this.verifyStoredObject(targetPath, input.sizeBytes, input.sha256);
         return { objectKey: input.objectKey, created: false };
       }
       throw error;
     } finally {
       await rm(temporaryPath, { force: true });
     }
-  }
-
-  async putArtifact(input: {
-    projectId: string;
-    attemptId: string;
-    artifactId: string;
-    sha256: string;
-    sizeBytes: number;
-    mediaType: string;
-    content: AsyncIterable<Uint8Array>;
-  }): Promise<ObjectWriteResult> {
-    validateArtifactIdentity(input.attemptId, input.artifactId, input.sha256, input.sizeBytes);
-    const objectKey = artifactObjectKey(input);
-    const targetPath = this.resolveObjectKey(objectKey);
-    await mkdir(dirname(targetPath), { recursive: true });
-    if (await this.pathExists(targetPath)) {
-      await this.verifyStoredArtifact(targetPath, input.sizeBytes, input.sha256);
-      return { objectKey, created: false };
-    }
-    const temporaryPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
-    const file = await open(temporaryPath, "wx", 0o600);
-    const digest = createHash("sha256");
-    let sizeBytes = 0;
-    try {
-      for await (const chunk of input.content) {
-        sizeBytes += chunk.byteLength;
-        if (sizeBytes > input.sizeBytes) throw new Error("Artifact exceeds its declared size.");
-        digest.update(chunk);
-        await writeCompleteChunk(file, chunk);
-      }
-      await file.sync();
-    } catch (error) {
-      await rm(temporaryPath, { force: true });
-      throw error;
-    } finally {
-      await file.close();
-    }
-    try {
-      if (sizeBytes !== input.sizeBytes)
-        throw new Error("Artifact size does not match declaration.");
-      if (digest.digest("hex") !== input.sha256) {
-        throw new Error("Artifact SHA-256 does not match declaration.");
-      }
-      await link(temporaryPath, targetPath);
-      return { objectKey, created: true };
-    } catch (error) {
-      if (await this.pathExists(targetPath)) {
-        await this.verifyStoredArtifact(targetPath, input.sizeBytes, input.sha256);
-        return { objectKey, created: false };
-      }
-      throw error;
-    } finally {
-      await rm(temporaryPath, { force: true });
-    }
-  }
-
-  async prepareArtifactUpload(input: ArtifactObjectIdentity): Promise<ArtifactUploadTarget> {
-    validateArtifactIdentity(input.attemptId, input.artifactId, input.sha256, input.sizeBytes);
-    validateScopeId(input.projectId);
-    return { kind: "control-plane" };
-  }
-
-  async verifyArtifactUpload(input: ArtifactObjectIdentity): Promise<ObjectWriteResult> {
-    validateArtifactIdentity(input.attemptId, input.artifactId, input.sha256, input.sizeBytes);
-    const objectKey = artifactObjectKey(input);
-    await this.verifyStoredArtifact(
-      this.resolveObjectKey(objectKey),
-      input.sizeBytes,
-      input.sha256,
-    );
-    return { objectKey, created: false };
   }
 
   async delete(objectKey: string): Promise<void> {
@@ -253,17 +177,17 @@ export class LocalObjectStore implements JarObjectStorePort {
     await access(this.objectsDirectory, constants.R_OK | constants.W_OK);
   }
 
-  private async verifyStoredArtifact(
+  private async verifyStoredObject(
     targetPath: string,
     expectedSizeBytes: number,
     expectedSha256: string,
   ): Promise<void> {
     const metadata = await stat(targetPath);
-    if (metadata.size !== expectedSizeBytes) throw new Error("Existing artifact size is invalid.");
+    if (metadata.size !== expectedSizeBytes) throw new Error("Existing object size is invalid.");
     const digest = createHash("sha256");
     for await (const chunk of createReadStream(targetPath)) digest.update(chunk);
     if (digest.digest("hex") !== expectedSha256) {
-      throw new Error("Existing artifact SHA-256 is invalid.");
+      throw new Error("Existing object SHA-256 is invalid.");
     }
   }
 
@@ -311,28 +235,6 @@ export class LocalObjectStore implements JarObjectStorePort {
       if (entry.isDirectory()) yield* this.walk(path);
       if (entry.isFile()) yield path;
     }
-  }
-}
-
-function artifactObjectKey(
-  input: Pick<ArtifactObjectIdentity, "projectId" | "attemptId" | "artifactId" | "sha256">,
-) {
-  validateScopeId(input.projectId);
-  return `projects/${input.projectId}/artifacts/${input.attemptId}/${input.artifactId}/${input.sha256}`;
-}
-
-function validateArtifactIdentity(
-  attemptId: string,
-  artifactId: string,
-  sha256: string,
-  sizeBytes: number,
-): void {
-  const identifier = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-  if (!identifier.test(attemptId) || !identifier.test(artifactId)) {
-    throw new Error("Artifact identity is invalid.");
-  }
-  if (!/^[a-f0-9]{64}$/.test(sha256) || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
-    throw new Error("Artifact metadata is invalid.");
   }
 }
 

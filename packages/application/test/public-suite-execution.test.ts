@@ -119,7 +119,7 @@ describe("public task execution", () => {
     expect(f.runs.create).toHaveBeenCalledTimes(1);
     expect(suite.policy.adapter.environmentAddresses).toEqual([]);
   });
-  it("does not apply a previous shared override after the task disables Adapter", async () => {
+  it("keeps the shared environment when reading an obsolete disabled Adapter flag", async () => {
     f.links.environment.mockResolvedValue({
       revision: 1,
       change: { addresses: ["10.0.0.21"], modifiedBy: actor, modifiedAt: now },
@@ -132,9 +132,9 @@ describe("public task execution", () => {
     );
     expect(f.runs.create.mock.calls[0]?.[2]).toMatchObject({
       environmentRevision: 1,
-      environmentChange: null,
+      environmentChange: expect.objectContaining({ addresses: ["10.0.0.21"] }),
     });
-    expect(f.runs.create.mock.calls[0]?.[2]).not.toHaveProperty("environmentAddresses");
+    expect(f.runs.create.mock.calls[0]?.[2]).toHaveProperty("environmentAddresses", ["10.0.0.21"]);
   });
   it("replays an accepted request even when the shared environment changed afterwards", async () => {
     f.links.replay.mockResolvedValue("batch");
@@ -147,24 +147,23 @@ describe("public task execution", () => {
     expect(f.runs.getSummary).toHaveBeenCalledWith("batch");
     expect(f.links.environment).not.toHaveBeenCalled();
   });
-  it.each([
-    { enabled: false },
-    { status: "archived" },
-    { policy: { ...suite.policy, adapter: { ...suite.policy.adapter, enabled: false } } },
-  ])("rejects edits when task execution is unavailable: %j", async (override) => {
-    f.getSummary.mockResolvedValue({ ...suite, ...override });
-    await expect(
-      f.service.changeEnvironment(
-        "suite",
-        publisher.id,
-        { revision: 0, addresses: ["10.0.0.21"] },
-        actor,
-      ),
-    ).rejects.toMatchObject({
-      code: expect.stringMatching(/CASE_SUITE_DISABLED|RUN_BATCH_PREFLIGHT_FAILED/),
-    });
-    expect(f.links.changeEnvironment).not.toHaveBeenCalled();
-  });
+  it.each([{ enabled: false }, { status: "archived" }])(
+    "rejects edits when task execution is unavailable: %j",
+    async (override) => {
+      f.getSummary.mockResolvedValue({ ...suite, ...override });
+      await expect(
+        f.service.changeEnvironment(
+          "suite",
+          publisher.id,
+          { revision: 0, addresses: ["10.0.0.21"] },
+          actor,
+        ),
+      ).rejects.toMatchObject({
+        code: expect.stringMatching(/CASE_SUITE_DISABLED|RUN_BATCH_PREFLIGHT_FAILED/),
+      });
+      expect(f.links.changeEnvironment).not.toHaveBeenCalled();
+    },
+  );
   it("publishes and revokes a per-publisher business link without changing task configuration", async () => {
     await expect(f.service.publish("suite", "maintainer")).resolves.toBe(
       "/RunTask?SuiteId=suite&PublisherId=maintainer",

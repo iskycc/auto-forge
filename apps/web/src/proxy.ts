@@ -14,10 +14,11 @@ const PUBLIC_PATHS = new Set([
   "/Execution",
   "/RunTask",
   "/CaseAnalysis",
+  "/docs",
 ]);
-// Public pages enforce their own publication grant or legacy-token boundary.
-// The proxy only allows anonymous requests to reach these exact business paths.
-const PUBLIC_PREFIXES = ["/share/", "/progress/"];
+// Documentation is public reference material. Shared business pages still enforce
+// their own publication grant or legacy-token boundary after this routing check.
+const PUBLIC_PREFIXES = ["/share/", "/progress/", "/docs/"];
 
 export function isPublicPath(pathname: string): boolean {
   return (

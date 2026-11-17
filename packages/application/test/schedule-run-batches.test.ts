@@ -139,7 +139,6 @@ describe("live scheduling configuration", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       () => configuration,
     );
 
@@ -423,7 +422,7 @@ describe("run batch preflight", () => {
     }
   });
 
-  it("blocks DDT members without an execution class or enabled Adapter", async () => {
+  it("blocks DDT members without an execution class", async () => {
     const suite = readySuite({
       ddtItems: [
         {
@@ -457,7 +456,7 @@ describe("run batch preflight", () => {
     const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.blockers.map((entry) => entry.code)).toEqual(
-      expect.arrayContaining(["DDT_EXECUTION_CLASS_REQUIRED", "DDT_ADAPTER_REQUIRED"]),
+      expect.arrayContaining(["DDT_EXECUTION_CLASS_REQUIRED"]),
     );
   });
 
@@ -704,39 +703,6 @@ describe("run batch creation with suite policy", () => {
     );
   });
 
-  it("rejects internal execution overrides when Adapter is disabled in both preflight and creation", async () => {
-    const service = preflightService({
-      suites: { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
-      runners: runnersFake(),
-      catalog: readyCatalogFake(),
-      objectStore: objectStoreFake(),
-    });
-    const input = { suiteId: "suite-1", environmentAddresses: ["10.0.0.99"] };
-    expect((await service.preflight(input)).blockers).toContainEqual(
-      expect.objectContaining({ code: "ADAPTER_DISABLED", path: ["environmentAddresses"] }),
-    );
-    await expect(service.create(input)).rejects.toMatchObject({
-      code: "RUN_BATCH_PREFLIGHT_FAILED",
-    });
-  });
-
-  it("rejects public environment overrides when the saved task disables Adapter", async () => {
-    const service = preflightService({
-      suites: { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
-      runners: runnersFake(),
-      catalog: readyCatalogFake(),
-      objectStore: objectStoreFake(),
-    });
-    const actor = { id: "visitor", username: "visitor", source: "local" as const };
-    await expect(
-      service.create({ suiteId: "suite-1" }, undefined, {
-        publisher: actor,
-        initiator: actor,
-        requestKey: randomUUID(),
-        environmentAddresses: ["10.0.0.21"],
-      }),
-    ).rejects.toMatchObject({ code: "RUN_BATCH_PREFLIGHT_FAILED" });
-  });
   it.each([undefined, "local", "ldap"] as const)(
     "executes a task locked by another user and freezes its policy and initiator (%s)",
     async (source) => {
@@ -822,7 +788,7 @@ describe("run batch creation with suite policy", () => {
         retryLimit: 2,
         queueTimeoutMs: 60_000,
         executionTimeoutMs: 600_000,
-        policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
+        policy: { concurrency: 2, runnerLabels: [], artifactPatterns: [] },
         roundRecoveries: [
           expect.objectContaining({
             ruleId: "recovery-app",
@@ -901,8 +867,7 @@ describe("run batch creation with suite policy", () => {
     expect(reserveAssignments).not.toHaveBeenCalled();
   });
 
-  it("drops saved artifact patterns when global artifact collection is disabled", async () => {
-    let artifactCollectionEnabled = false;
+  it("ignores retired artifact patterns in saved task snapshots", async () => {
     const suite = readySuite({
       policy: { artifactPatterns: ["reports/**"] },
     });
@@ -941,15 +906,13 @@ describe("run batch creation with suite policy", () => {
       undefined,
       undefined,
       600_000,
-      () => artifactCollectionEnabled,
     );
 
     await service.create({ suiteId: "suite-1" });
     expect(created[0]?.policy.artifactPatterns).toEqual([]);
 
-    artifactCollectionEnabled = true;
     await service.create({ suiteId: "suite-1" });
-    expect(created[1]?.policy.artifactPatterns).toEqual(["reports/**"]);
+    expect(created[1]?.policy.artifactPatterns).toEqual([]);
   });
 
   it("rejects creating batches for archived suites", async () => {
@@ -1490,6 +1453,9 @@ describe("run batch creation with suite policy", () => {
         },
         45,
         { catalog, objectStore: objectStoreFake() },
+        128,
+        5,
+        singleCaseProjectStructureFake(),
       );
 
       await service.createSingleCase(
@@ -1497,6 +1463,12 @@ describe("run batch creation with suite policy", () => {
         {
           projectId: "project-1",
           runnerIds: ["runner-1"],
+          adapter: {
+            enabled: true,
+            suiteName: "Project",
+            testName: "V1",
+            environmentAddresses: ["10.0.0.21"],
+          },
         },
         source ? { username: "single-case-launcher", source } : undefined,
       );
@@ -1725,6 +1697,12 @@ describe("run batch creation with suite policy", () => {
       service.createSingleCase("case-1", {
         projectId: "project-1",
         runnerIds: ["runner-1"],
+        adapter: {
+          enabled: true,
+          suiteName: "Project",
+          testName: "V1",
+          environmentAddresses: ["10.0.0.21"],
+        },
       }),
     ).rejects.toMatchObject({ code: "CASE_SOURCE_NOT_EXECUTABLE" });
   });
@@ -2050,6 +2028,7 @@ function readySuite(overrides: {
 
 function runnersFake(
   capabilities: string[] = [
+    "adapter:cotest-testng-v1",
     "executor:testng-v1",
     "isolation:cgroup-v2",
     "java:21.0.8",
@@ -2212,4 +2191,24 @@ function activeProjectStructure() {
       updatedAt: timestamp,
     },
   };
+}
+
+function singleCaseProjectStructureFake(): ProjectStructureRepository {
+  return {
+    list: vi.fn().mockResolvedValue(activeProjectStructure()),
+    getAdapterConfiguration: vi.fn().mockResolvedValue({
+      jarBundleAsset: {
+        id: "bundle-1",
+        projectId: "project-1",
+        kind: "jar-bundle",
+        sourceType: "upload",
+        fileName: "adapter.zip",
+        objectKey: "runtime/bundle.zip",
+        sha256: "b".repeat(64),
+        sizeBytes: 1024,
+        archiveFormat: "zip",
+        createdAt: timestamp,
+      },
+    }),
+  } as unknown as ProjectStructureRepository;
 }

@@ -853,7 +853,7 @@ describe("SQLite management repositories", () => {
     }
   });
 
-  it("omits artifact rules from assignment specs when artifact collection is disabled", async () => {
+  it("never restores retired artifact rules from legacy batch policies", async () => {
     const { handle, runners } = await fixture();
     try {
       const disabledBatches = new SqliteRunBatchRepository(handle);
@@ -1428,63 +1428,25 @@ describe("SQLite management repositories", () => {
           { sequence: 1, content: "second" },
         ],
       });
-      const artifact = {
-        artifactId: "artifact-control",
-        relativePath: "reports/testng-results.xml",
-        mediaType: "application/xml",
-        sizeBytes: 12,
-        sha256: "b".repeat(64),
-        required: true,
-      };
-      await expect(
-        withCompetingWriter(handle, () =>
-          executions.declareArtifacts({
-            runnerId: "runner-control",
-            attemptId: "attempt-control",
-            leaseTokenHash: "lease-token-hash",
-            artifacts: [artifact],
-            declaredAt: "2026-08-09T00:01:03.400Z",
-          }),
-        ),
-      ).resolves.toEqual([{ ...artifact, status: "declared" }]);
-      await expect(
-        executions.declareArtifacts({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          leaseTokenHash: "lease-token-hash",
-          artifacts: [artifact],
-          declaredAt: "2026-08-09T00:01:03.450Z",
-        }),
-      ).resolves.toEqual([{ ...artifact, status: "declared" }]);
-      await expect(
-        executions.declareArtifacts({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          leaseTokenHash: "lease-token-hash",
-          artifacts: [{ ...artifact, sha256: "c".repeat(64) }],
-          declaredAt: "2026-08-09T00:01:03.460Z",
-        }),
-      ).rejects.toMatchObject({ code: "ARTIFACT_DECLARATION_CONFLICT" });
-      await expect(
-        executions.resolveArtifactUpload({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          artifactId: artifact.artifactId,
-          leaseTokenHash: "lease-token-hash",
-          now: "2026-08-09T00:01:03.500Z",
-        }),
-      ).resolves.toMatchObject(artifact);
       await withCompetingWriter(handle, () =>
-        executions.markArtifactUploaded({
+        executions.beginAttemptUpload({
+          runnerId: "runner-control",
           attemptId: "attempt-control",
-          artifactId: artifact.artifactId,
-          objectKey: `artifacts/attempt-control/artifact-control/${artifact.sha256}`,
-          uploadedAt: "2026-08-09T00:01:03.600Z",
+          leaseTokenHash: "lease-token-hash",
+          startedAt: "2026-08-09T00:01:03.400Z",
         }),
       );
-      await expect(executions.listArtifacts("attempt-control")).resolves.toMatchObject([
-        { ...artifact, status: "uploaded" },
-      ]);
+      await executions.beginAttemptUpload({
+        runnerId: "runner-control",
+        attemptId: "attempt-control",
+        leaseTokenHash: "lease-token-hash",
+        startedAt: "2026-08-09T00:01:03.450Z",
+      });
+      expect(
+        handle.client
+          .prepare("SELECT upload_started_at FROM run_attempts WHERE id=?")
+          .get("attempt-control"),
+      ).toMatchObject({ upload_started_at: "2026-08-09T00:01:03.400Z" });
       await expect(
         executions.reconcile({
           runnerId: "runner-control",
@@ -1522,13 +1484,27 @@ describe("SQLite management repositories", () => {
             summary: "assertion failed",
             durationMs: 1_000,
             testNg: structuredTestNgResult("failed"),
-            artifacts: [],
+            artifacts: [
+              {
+                artifactId: "retired-report",
+                relativePath: "reports/retired.xml",
+                mediaType: "application/xml",
+                sizeBytes: 1,
+                sha256: "a".repeat(64),
+                required: true,
+              },
+            ],
           },
           eventId: "event-complete-control",
           acceptedAt: "2026-08-09T00:01:20.000Z",
         }),
       );
       expect(completion).toMatchObject({ disposition: "accepted", retryScheduled: true });
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS count FROM attempt_artifacts WHERE attempt_id=?")
+          .get("attempt-control"),
+      ).toEqual({ count: 0 });
       expect(
         handle.client
           .prepare(
@@ -2158,12 +2134,11 @@ describe("SQLite management repositories", () => {
         now: "2026-08-09T00:03:32.000Z",
         leaseExpiresAt: "2026-08-09T00:04:30.000Z",
       });
-      await executions.declareArtifacts({
+      await executions.beginAttemptUpload({
         runnerId: "runner-control",
         attemptId: "attempt-upload-timeout",
         leaseTokenHash: "lease-upload-timeout-token-hash",
-        artifacts: [],
-        declaredAt: "2026-08-09T00:03:33.000Z",
+        startedAt: "2026-08-09T00:03:33.000Z",
       });
       await expect(
         executions.recoverExpired({

@@ -2,7 +2,7 @@
 import { EnvironmentAddressesField } from "./environment-addresses-dialog";
 
 import { DdtDebugChangeActions } from "./ddt-change-review";
-import { Divider, Empty, Flex, Switch, Tag, Typography } from "antd";
+import { Divider, Empty, Flex, Tag, Typography } from "antd";
 import { Bug, Play, Terminal } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -22,7 +22,6 @@ import { CaseDebugSplitter } from "./case-debug-splitter";
 import { debugRequest } from "@/lib/case-debug-client";
 import { LinkButton } from "./ui/link-button";
 import { caseDebugDraftKey, createCaseDebugDraftStore } from "@/lib/case-debug-draft";
-import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@/lib/case-suite-adapter-defaults";
 
 export type CaseDebugWorkspaceProps = {
   scope: DdtScope;
@@ -108,7 +107,7 @@ function DebugPanel({
         runnerKind: "runner",
         runnerId: "",
         groupId: "",
-        adapterEnabled: DEFAULT_EXECUTION_ADAPTER_ENABLED,
+
         suiteName: labels.project,
         testName: `${labels.version} ${labels.stage}`,
         addresses: "",
@@ -127,7 +126,7 @@ function DebugPanel({
     runnerKind,
     runnerId,
     groupId,
-    adapterEnabled,
+
     suiteName,
     testName,
     addresses,
@@ -205,9 +204,8 @@ function DebugPanel({
                 ...(runnerKind === "group" ? { runnerGroupId: groupId } : {}),
                 retryLimit: 0,
                 retryMode: "round",
-                artifactPatterns: ["reports/testng/**"],
                 adapter: {
-                  enabled: kind === "ddt" || adapterEnabled,
+                  enabled: true,
                   suiteName,
                   testName,
                   environmentAddresses: [
@@ -398,53 +396,42 @@ function DebugPanel({
                 ))}
               </Select>
             )}
-            <label className="flex min-h-8 cursor-pointer items-center justify-between gap-2">
-              <Typography.Text strong>CoTest Adapter</Typography.Text>
-              <Switch
-                aria-label="调试启用 Adapter"
-                checked={kind === "ddt" || adapterEnabled}
-                disabled={kind === "ddt" || editingDisabled}
-                onChange={(adapterEnabled) => draftStore.update({ adapterEnabled })}
-              />
-            </label>
-            {kind === "ddt" || adapterEnabled ? (
-              <div className="grid min-w-0 gap-3">
-                <Notice>
-                  Adapter 使用当前版本的 JDK 和完整依赖包；更新代码需同步更新依赖包。
-                  <LinkButton href="/settings/projects" target="_blank" rel="noreferrer">
-                    配置运行依赖
-                  </LinkButton>
-                </Notice>
-                <label className="grid min-w-0 gap-1">
-                  Suite Name
-                  <Input
-                    aria-label="调试 Suite Name"
-                    value={suiteName}
-                    maxLength={512}
-                    disabled={editingDisabled}
-                    onChange={(event) => draftStore.update({ suiteName: event.target.value })}
-                  />
-                </label>
-                <label className="grid min-w-0 gap-1">
-                  Test Name
-                  <Input
-                    aria-label="调试 Test Name"
-                    value={testName}
-                    maxLength={512}
-                    disabled={editingDisabled}
-                    onChange={(event) => draftStore.update({ testName: event.target.value })}
-                  />
-                </label>
-                <EnvironmentAddressesField
-                  purpose="execution"
-                  addresses={addresses.split("\n").filter(Boolean)}
+            <div className="grid min-w-0 gap-3">
+              <Notice>
+                Adapter 使用当前版本的 JDK 和完整依赖包；更新代码需同步更新依赖包。
+                <LinkButton href="/settings/projects" target="_blank" rel="noreferrer">
+                  配置运行依赖
+                </LinkButton>
+              </Notice>
+              <label className="grid min-w-0 gap-1">
+                Suite Name
+                <Input
+                  aria-label="调试 Suite Name"
+                  value={suiteName}
+                  maxLength={512}
                   disabled={editingDisabled}
-                  description="仅用于本次调试执行，逐项填写环境地址。"
-                  allowEmpty={false}
-                  onChange={(values) => draftStore.update({ addresses: values.join("\n") })}
+                  onChange={(event) => draftStore.update({ suiteName: event.target.value })}
                 />
-              </div>
-            ) : null}
+              </label>
+              <label className="grid min-w-0 gap-1">
+                Test Name
+                <Input
+                  aria-label="调试 Test Name"
+                  value={testName}
+                  maxLength={512}
+                  disabled={editingDisabled}
+                  onChange={(event) => draftStore.update({ testName: event.target.value })}
+                />
+              </label>
+              <EnvironmentAddressesField
+                purpose="execution"
+                addresses={addresses.split("\n").filter(Boolean)}
+                disabled={editingDisabled}
+                description="仅用于本次调试执行，逐项填写环境地址。"
+                allowEmpty={false}
+                onChange={(values) => draftStore.update({ addresses: values.join("\n") })}
+              />
+            </div>
             {error ? <Notice tone="error">{error}</Notice> : null}
           </div>
           <div className="grid shrink-0 gap-2 border-t border-border p-3">

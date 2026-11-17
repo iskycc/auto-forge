@@ -159,7 +159,7 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
   await page.goto(`/case-suites?projectId=${project.body.id}`);
   await page.getByRole("button", { name: "创建任务" }).click();
   const dialog = page.getByRole("dialog", { name: "创建用例任务" });
-  await dialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
+
   const suiteName = `内存兼容任务 ${suffix}`;
   await dialog.getByLabel("任务名称").fill(suiteName);
   await dialog.getByRole("button", { name: "创建任务" }).click();
@@ -175,7 +175,13 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
     `/api/v1/case-suites?projectId=${project.body.id}&limit=200`,
   );
   const suiteId = suites.body.items.find((suite) => suite.name === suiteName)!.id;
-  const capabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
+  const capabilities = [
+    "adapter:cotest-testng-v1",
+    "runtime:project-assets-v1",
+    "executor:testng-v1",
+    "java:21.0.8",
+    "testng:7.11.0",
+  ];
   const labels = ["linux", "java", "testng"];
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },

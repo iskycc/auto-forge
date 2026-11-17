@@ -111,3 +111,7 @@ Runner 使用当前身份连接控制面的地址（含反向代理路径前缀�
 保持原始快照，缺失范围的历史规格继续按旧协议读取；需自动注入地址时重新发起执行。
 本次没有数据库迁移，Lite/Full 使用相同可选契约；未启用 Adapter 的原生 TestNG 执行不注入 CoTest 配置。
 旧 `--class-data` 参数已移除；升级前已分配的旧文件协议任务需结束或停止后重新发起。
+
+## 执行结果与报告
+
+Adapter 关闭 TestNG 默认报告监听器，只生成 Runner 本地解析所需的 `testng-results.xml`；不生成 HTML、JUnit 等附件，不上传执行文件。`--output` 仅指定内部结果输出目录，原用例结果、失败信息及 stdout/stderr 保持不变。

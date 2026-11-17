@@ -1077,6 +1077,7 @@ test("non-default project operator can execute while another project's viewer ca
     ).status,
   ).toBe(200);
   const capabilities = [
+    "runtime:project-assets-v1",
     "executor:testng-v1",
     "isolation:cgroup-v2",
     "java:21.0.8",

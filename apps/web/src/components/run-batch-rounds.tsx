@@ -32,7 +32,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 import { loadExecutionCasePage } from "@/lib/execution-case-page-client";
 import { executionRoundSelection } from "@/lib/execution-round-selection";
 
-import type { AttemptArtifactList, AttemptEventPage } from "@autoforge/contracts";
+import type { AttemptEventPage } from "@autoforge/contracts";
 import type {
   RunAttempt,
   RunBatchRoundRecovery,
@@ -77,7 +77,6 @@ import {
 } from "@/lib/round-case-rows";
 import {
   attemptFailureHint,
-  formatArtifactBytes,
   formatAttemptDuration,
   formatBatchDuration,
   formatLocalDateTime,
@@ -94,9 +93,8 @@ const CASE_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500] as const;
 // Text stays in bounded previews; filtering or polling must not resize the columns.
 const CASE_PREVIEW_COLUMN_WIDTHS = { case: 40, status: 24, runner: 18 } as const;
 
-/** 行内详情缓存：展开过的 attempt 产物与事件只请求一次，切换页面/重新展开不再重复拉取。 */
+/** 行内详情缓存：展开过的 attempt 状态事件只请求一次，切换页面/重新展开不再重复拉取。 */
 type AttemptDetailEntry = {
-  artifacts?: AttemptArtifactList["items"] | undefined;
   events?: AttemptEventPage["items"] | undefined;
   error?: string | undefined;
 };
@@ -263,8 +261,6 @@ export function RunBatchRounds({
   canReadLogs,
   canRetryRuns,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   runnerDirectory,
   onRefresh,
 }: {
@@ -273,8 +269,6 @@ export function RunBatchRounds({
   canReadLogs: boolean;
   canRetryRuns: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
   onRefresh: () => void;
 }) {
@@ -339,7 +333,7 @@ export function RunBatchRounds({
   const [cancelPending, setCancelPending] = useState(false);
   const [actionError, setActionError] = useState("");
   // 行内详情缓存按批次组件生命周期存活；概要与当前用例页局部刷新时，
-  // 缓存仍按 attemptId 复用已加载的产物与事件。
+  // 缓存仍按 attemptId 复用已加载的状态事件。
   const [detailCache, setDetailCache] = useState<Map<string, AttemptDetailEntry>>(new Map());
 
   const rememberAttemptDetail = useCallback((attemptId: string, entry: AttemptDetailEntry) => {
@@ -749,8 +743,6 @@ export function RunBatchRounds({
               canCancelRuns={canCancelRuns}
               canReadLogs={canReadLogs}
               canReadAttemptEvents={canReadAttemptEvents}
-              canReadArtifacts={canReadArtifacts}
-              artifactsEnabled={artifactsEnabled}
               runnerDirectory={runnerDirectoryById}
               cancelPending={cancelPending}
               actionError={actionError}
@@ -766,8 +758,6 @@ export function RunBatchRounds({
               canCancelRuns={canCancelRuns}
               canReadLogs={canReadLogs}
               canReadAttemptEvents={canReadAttemptEvents}
-              canReadArtifacts={canReadArtifacts}
-              artifactsEnabled={artifactsEnabled}
               runnerDirectory={runnerDirectoryById}
               cancelPending={cancelPending}
               actionError={actionError}
@@ -786,8 +776,6 @@ export function RunBatchRounds({
               canCancelRuns={canCancelRuns}
               canReadLogs={canReadLogs}
               canReadAttemptEvents={canReadAttemptEvents}
-              canReadArtifacts={canReadArtifacts}
-              artifactsEnabled={artifactsEnabled}
               runnerDirectory={runnerDirectoryById}
               cancelPending={cancelPending}
               actionError={actionError}
@@ -986,8 +974,6 @@ function SummaryRoundPanel({
   canCancelRuns,
   canReadLogs,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   runnerDirectory,
   cancelPending,
   actionError,
@@ -1001,8 +987,6 @@ function SummaryRoundPanel({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   actionError: string;
@@ -1086,8 +1070,6 @@ function SummaryRoundPanel({
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
           canReadAttemptEvents={canReadAttemptEvents}
-          canReadArtifacts={canReadArtifacts}
-          artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectory}
           cancelPending={cancelPending}
           detailCache={detailCache}
@@ -1109,8 +1091,6 @@ function AllRoundsPanel({
   canCancelRuns,
   canReadLogs,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   runnerDirectory,
   cancelPending,
   actionError,
@@ -1124,8 +1104,6 @@ function AllRoundsPanel({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   actionError: string;
@@ -1211,8 +1189,6 @@ function AllRoundsPanel({
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
           canReadAttemptEvents={canReadAttemptEvents}
-          canReadArtifacts={canReadArtifacts}
-          artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectory}
           cancelPending={cancelPending}
           detailCache={detailCache}
@@ -1233,8 +1209,6 @@ function RoundDetailPanel({
   canCancelRuns,
   canReadLogs,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   runnerDirectory,
   cancelPending,
   actionError,
@@ -1252,8 +1226,6 @@ function RoundDetailPanel({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   actionError: string;
@@ -1402,8 +1374,6 @@ function RoundDetailPanel({
               canCancelRuns={canCancelRuns}
               canReadLogs={canReadLogs}
               canReadAttemptEvents={canReadAttemptEvents}
-              canReadArtifacts={canReadArtifacts}
-              artifactsEnabled={artifactsEnabled}
               runnerDirectory={runnerDirectory}
               cancelPending={cancelPending}
               detailCache={detailCache}
@@ -1453,8 +1423,6 @@ function RoundCasesTable({
   canCancelRuns,
   canReadLogs,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   runnerDirectory,
   cancelPending,
   detailCache,
@@ -1468,8 +1436,6 @@ function RoundCasesTable({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   detailCache: ReadonlyMap<string, AttemptDetailEntry>;
@@ -1717,8 +1683,6 @@ function RoundCasesTable({
                   {...(batch.accessToken ? { publicRunShareToken: batch.accessToken } : {})}
                   publicLogAccess={batch.publicAccess ?? false}
                   canReadAttemptEvents={canReadAttemptEvents}
-                  canReadArtifacts={canReadArtifacts}
-                  artifactsEnabled={artifactsEnabled}
                   runnerDirectory={runnerDirectory}
                   cancelPending={cancelPending}
                   detailEntry={row.attempt ? detailCache.get(row.attempt.id) : undefined}
@@ -1829,8 +1793,6 @@ function RoundCaseRow({
   publicRunShareToken,
   publicLogAccess,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   runnerDirectory,
   cancelPending,
   detailEntry,
@@ -1848,8 +1810,6 @@ function RoundCaseRow({
   publicRunShareToken?: string;
   publicLogAccess: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   detailEntry: AttemptDetailEntry | undefined;
@@ -1866,7 +1826,7 @@ function RoundCaseRow({
   const hasDetail =
     attempt !== undefined &&
     isTerminalAttemptStatus(attempt.status) &&
-    (attempt.testNg !== undefined || canReadArtifacts);
+    (attempt.testNg !== undefined || canReadAttemptEvents);
   // 终态 attempt 可创建日志公开访问链接；后端校验项目权限并签发永久有效链接。
   const canShareLog =
     canReadLogs && attempt !== undefined && isTerminalAttemptStatus(attempt.status);
@@ -2094,8 +2054,6 @@ function RoundCaseRow({
             <AttemptInlineDetail
               attempt={attempt}
               canReadAttemptEvents={canReadAttemptEvents}
-              canReadArtifacts={canReadArtifacts}
-              artifactsEnabled={artifactsEnabled}
               cached={detailEntry}
               onRemember={onRememberDetail}
             />
@@ -2109,30 +2067,19 @@ function RoundCaseRow({
 function AttemptInlineDetail({
   attempt,
   canReadAttemptEvents,
-  canReadArtifacts,
-  artifactsEnabled,
   cached,
   onRemember,
 }: {
   attempt: RunAttempt;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
-  artifactsEnabled: boolean;
   cached: AttemptDetailEntry | undefined;
   onRemember: (attemptId: string, entry: AttemptDetailEntry) => void;
 }) {
-  const [artifacts, setArtifacts] = useState<AttemptArtifactList["items"] | undefined>(
-    cached?.artifacts,
-  );
   const [events, setEvents] = useState<AttemptEventPage["items"] | undefined>(cached?.events);
   const [error, setError] = useState(cached?.error ?? "");
-  const canLoadRemoteDetails = canReadAttemptEvents || (canReadArtifacts && artifactsEnabled);
+  const canLoadRemoteDetails = canReadAttemptEvents;
   // 已缓存的详情不再请求：展开/收起/翻页后重开复用首次加载结果。
-  const [loaded, setLoaded] = useState(
-    () =>
-      !canLoadRemoteDetails ||
-      (cached !== undefined && (cached.artifacts !== undefined || cached.events !== undefined)),
-  );
+  const [loaded, setLoaded] = useState(() => !canLoadRemoteDetails || cached?.events !== undefined);
 
   useEffect(() => {
     if (loaded) return;
@@ -2140,35 +2087,21 @@ function AttemptInlineDetail({
     const load = async (): Promise<void> => {
       setError("");
       try {
-        const [artifactResponse, eventResponse] = await Promise.all([
-          canReadArtifacts && artifactsEnabled
-            ? fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/artifacts`, {
-                cache: "no-store",
-              })
-            : null,
-          canReadAttemptEvents
-            ? fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/events?limit=200`, {
-                cache: "no-store",
-              })
-            : null,
-        ]);
-        if (artifactResponse && !artifactResponse.ok) {
-          throw new Error((await readApiErrorMessage(artifactResponse, "读取产物失败。"))!);
-        }
+        const eventResponse = canReadAttemptEvents
+          ? await fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/events?limit=200`, {
+              cache: "no-store",
+            })
+          : null;
         if (eventResponse && !eventResponse.ok) {
           throw new Error((await readApiErrorMessage(eventResponse, "读取执行时间线失败。"))!);
         }
         if (disposed) return;
-        const nextArtifacts = artifactResponse
-          ? ((await artifactResponse.json()) as AttemptArtifactList).items
-          : undefined;
         const nextEvents = eventResponse
           ? ((await eventResponse.json()) as AttemptEventPage).items
           : undefined;
-        setArtifacts(nextArtifacts);
         setEvents(nextEvents);
         setLoaded(true);
-        onRemember(attempt.id, { artifacts: nextArtifacts, events: nextEvents });
+        onRemember(attempt.id, { events: nextEvents });
       } catch (loadError) {
         if (!disposed) {
           setError(loadError instanceof Error ? loadError.message : "读取执行详情失败。");
@@ -2180,7 +2113,7 @@ function AttemptInlineDetail({
       disposed = true;
       window.clearTimeout(kick);
     };
-  }, [attempt.id, artifactsEnabled, canReadArtifacts, canReadAttemptEvents, loaded, onRemember]);
+  }, [attempt.id, canReadAttemptEvents, loaded, onRemember]);
 
   return (
     <div className={cn("attempt-inline-detail", runBatchRoundsStyles["attempt-inline-detail"])}>
@@ -2193,74 +2126,6 @@ function AttemptInlineDetail({
         <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
           <h3>结构化测试结果</h3>
           <TestNgResults result={attempt.testNg} />
-        </div>
-      ) : null}
-      {/* 产物收集全局开关关闭时，不展示产物区块（服务端也未收集任何产物）。 */}
-      {artifactsEnabled ? (
-        <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
-          <h3>产物</h3>
-          {!canReadArtifacts ? (
-            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
-              当前账号没有读取执行产物的权限。
-            </EmptyState>
-          ) : artifacts === undefined ? (
-            <LoadingStateMessage className={cn("inline-empty", uiPatterns["inline-empty"])}>
-              正在读取产物...
-            </LoadingStateMessage>
-          ) : artifacts.length === 0 ? (
-            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
-              当前尝试没有已声明产物。
-            </EmptyState>
-          ) : (
-            <div className={cn("artifact-list", runBatchRoundsStyles["artifact-list"])}>
-              {artifacts.map((artifact) => (
-                <div
-                  className={cn("artifact-row", runBatchRoundsStyles["artifact-row"])}
-                  key={artifact.artifactId}
-                >
-                  <FileText size={17} />
-                  <span>
-                    <strong>{artifact.relativePath}</strong>
-                    <small>
-                      {formatArtifactBytes(artifact.sizeBytes)} · {artifact.status}
-                    </small>
-                  </span>
-                  {artifact.downloadPath ? (
-                    <span
-                      className={cn("artifact-actions", runBatchRoundsStyles["artifact-actions"])}
-                    >
-                      {isPreviewable(artifact.mediaType) ? (
-                        <LinkButton
-                          className={cn(
-                            "icon-button small-icon-button",
-                            uiPatterns["icon-button"],
-                            uiPatterns["small-icon-button"],
-                          )}
-                          href={`${artifact.downloadPath}?preview=1`}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label={`预览 ${artifact.relativePath}`}
-                        >
-                          <Eye size={15} />
-                        </LinkButton>
-                      ) : null}
-                      <LinkButton
-                        className={cn(
-                          "icon-button small-icon-button",
-                          uiPatterns["icon-button"],
-                          uiPatterns["small-icon-button"],
-                        )}
-                        href={artifact.downloadPath}
-                        aria-label={`下载 ${artifact.relativePath}`}
-                      >
-                        <Download size={15} />
-                      </LinkButton>
-                    </span>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       ) : null}
       {canReadAttemptEvents ? (
@@ -2415,17 +2280,6 @@ function TestNgCount({ label, value }: { label: string; value: number }) {
   );
 }
 
-function isPreviewable(mediaType: string): boolean {
-  return [
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
-    "application/pdf",
-    "text/plain",
-  ].includes(mediaType);
-}
-
 function testNgStatusLabel(status: "passed" | "failed" | "skipped"): string {
   return { passed: "通过", failed: "失败", skipped: "跳过" }[status];
 }
@@ -2444,11 +2298,6 @@ function eventLabel(eventType: string): string {
 }
 
 const runBatchRoundsStyles = {
-  "artifact-actions": "inline-flex items-center gap-1",
-  "artifact-list": "grid gap-px mt-4.5 [border-block:1px_solid_var(--border)]",
-  "artifact-row":
-    "[&_small]:block [&_small]:text-muted-foreground [&_small]:text-xs grid grid-cols-[24px_minmax(0,_1fr)_auto] items-center gap-2.5 py-[11px] px-1 border-b border-solid border-border [&:last-child]:border-b-0 [&_span]:min-w-0 [&_strong]:block [&_strong]:overflow-hidden [&_strong]:text-sm [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap",
-
   "attempt-inline-block": "grid gap-2.5 [&_>_h3]:m-0 [&_>_h3]:text-sm",
   "attempt-inline-detail": "grid gap-4.5 py-1.5 px-1",
   "batch-status": uiPatterns["batch-status"],

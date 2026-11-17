@@ -35,19 +35,16 @@ describe("worker configuration", () => {
     );
     const worker = loadWorkerConfig({ dataDirectory, workspaceRoot: "/workspace" });
 
-    expect(worker.artifactCollectionEnabled()).toBe(true);
     expect(worker.scheduling.memoryAdmissionMode).toBe("disabled");
 
     store.replace(
       {
         ...fullConfiguration,
-        limits: { ...fullConfiguration.limits, artifactCollectionEnabled: false },
         scheduler: { ...fullConfiguration.scheduler, memoryAdmissionMode: "threshold" },
       },
       fullConfiguration.revision,
     );
 
-    expect(worker.artifactCollectionEnabled()).toBe(false);
     expect(worker.readSchedulingConfiguration().memoryAdmissionMode).toBe("threshold");
   });
 });

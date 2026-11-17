@@ -173,7 +173,7 @@ export function prioritizedExecutionControlRepository(
     "completeAttempt",
     "appendLogChunks",
     "authorizeLogUpload",
-    "declareArtifacts",
+    "beginAttemptUpload",
     "recoverExpired",
     "terminateBatch",
     "changeBatchScheduling",
@@ -233,10 +233,10 @@ export function workerBackedExecutionControlRepository(
             dispatcher.completeAttempt(input) as ReturnType<
               ExecutionControlRepository["completeAttempt"]
             >;
-        case "declareArtifacts":
-          return (input: Parameters<ExecutionControlRepository["declareArtifacts"]>[0]) =>
-            dispatcher.declareArtifacts(input) as ReturnType<
-              ExecutionControlRepository["declareArtifacts"]
+        case "beginAttemptUpload":
+          return (input: Parameters<ExecutionControlRepository["beginAttemptUpload"]>[0]) =>
+            dispatcher.beginAttemptUpload(input) as ReturnType<
+              ExecutionControlRepository["beginAttemptUpload"]
             >;
         case "recoverExpired":
           return (input: Parameters<ExecutionControlRepository["recoverExpired"]>[0]) =>

@@ -31,6 +31,8 @@ final class AutoforgeTestNgLauncher {
     }
 
     TestNG testng = new TestNG();
+    testng.setUseDefaultListeners(false);
+    testng.addListener(new org.testng.reporters.XMLReporter());
     testng.setOutputDirectory(launch.outputDirectory());
     XmlSuite suite = new XmlSuite();
     suite.setName("AutoForge suite");

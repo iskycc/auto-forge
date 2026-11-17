@@ -24,6 +24,7 @@ import Link from "next/link";
 import { Button } from "./ui";
 import { useLoginDialog } from "./login-dialog-provider";
 import { ColorModeToggle } from "./color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 import { PublicControlPreview, publicSnapshotPresentation } from "./public-control-preview";
 import { usePublicStatistics } from "./use-public-statistics";
 import styles from "./public-dashboard.styles";
@@ -65,6 +66,7 @@ export function PublicDashboard({
           <a href="#deployment">部署方式</a>
         </nav>
         <div className="flex shrink-0 items-center gap-2">
+          <DocumentationLink iconOnly />
           <ColorModeToggle />
           {setupRequired ? (
             <LinkButton className={"button " + styles.headerEntry} href="/setup">

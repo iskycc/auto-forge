@@ -164,7 +164,11 @@ export const executionEnvironmentIpsSchema = z
   );
 
 export const caseSuiteAdapterConfigurationSchema = z.object({
-  enabled: z.boolean().default(false),
+  // Older clients may still submit this flag; CoTest is now always selected.
+  enabled: z
+    .boolean()
+    .default(true)
+    .transform((): boolean => true),
   suiteName: z.string().trim().max(512).default(""),
   testName: z.string().trim().max(512).default(""),
   environmentAddresses: z
@@ -418,7 +422,11 @@ export const caseSuiteExecutionPolicySchema = z
       .optional(),
     runnerGroupId: z.string().trim().max(128).optional(),
     runnerLabels: z.array(z.string().trim().min(1).max(64)).max(64).optional(),
-    artifactPatterns: z.array(caseSuiteArtifactPatternSchema).max(32).optional(),
+    artifactPatterns: z
+      .array(caseSuiteArtifactPatternSchema)
+      .max(32)
+      .transform((): string[] => [])
+      .optional(),
     retryConcurrencyRules: z.array(retryConcurrencyRuleSchema).max(20).optional(),
     roundRecoveryRules: z.array(roundRecoveryRuleInputSchema).max(10).optional(),
   })

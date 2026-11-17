@@ -10,6 +10,45 @@ import {
 } from "../src/execution";
 
 describe("Runner Protocol v1 contracts", () => {
+  it("discards saved artifact rules while retaining execution timing and inputs", () => {
+    const parsed = executionSpecSchema.parse({
+      ...validExecutionSpec(),
+      artifactRules: [{ pattern: "reports/**", required: true }],
+    });
+    expect(parsed.artifactRules).toEqual([]);
+    expect(parsed.timeoutMs).toBe(validExecutionSpec().timeoutMs);
+    expect(parsed.inputs).toHaveLength(1);
+  });
+
+  it("preserves legacy completion metadata for stable duplicate receipts", () => {
+    const parsed = completeAttemptInputSchema.parse({
+      schemaVersion: 1,
+      completionId: "completed-with-old-files",
+      leaseToken: "x".repeat(32),
+      result: {
+        status: "failed",
+        resultCode: "TESTNG_FAILED",
+        summary: "Assertion failed",
+        durationMs: 100,
+        artifacts: [
+          {
+            artifactId: "old-report",
+            relativePath: "reports/testng/testng-results.xml",
+            mediaType: "application/xml",
+            sizeBytes: 10,
+            sha256: "a".repeat(64),
+            required: true,
+          },
+        ],
+      },
+    });
+    expect(parsed.result.artifacts).toHaveLength(1);
+    expect(parsed.result).toMatchObject({
+      status: "failed",
+      resultCode: "TESTNG_FAILED",
+      summary: "Assertion failed",
+    });
+  });
   it("accepts a bounded TestNG execution specification", () => {
     expect(
       executionSpecSchema.parse({

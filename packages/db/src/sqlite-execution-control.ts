@@ -15,7 +15,6 @@ import {
   completeAttemptResponseSchema,
   executionSpecSchema,
   reconcileAttemptsResponseSchema,
-  type ArtifactDeclaration,
   type AssignmentDto,
   type CompleteAttemptResponse,
   type CompletionResult,
@@ -100,18 +99,6 @@ type AttemptControlRow = {
   project_id: string;
   run_cancel_requested_at: string | null;
   batch_termination_requested_at: string | null;
-};
-
-type ArtifactRow = {
-  id: string;
-  attempt_id: string;
-  relative_path: string;
-  object_key: string | null;
-  media_type: string;
-  size_bytes: number;
-  sha256: string;
-  required: number;
-  status: "declared" | "uploaded" | "rejected";
 };
 
 type AttemptEventRow = {
@@ -785,86 +772,18 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     );
   }
 
-  async declareArtifacts(
-    input: Parameters<ExecutionControlRepository["declareArtifacts"]>[0],
-  ): ReturnType<ExecutionControlRepository["declareArtifacts"]> {
-    return retrySqliteWriteTransaction(this.handle, () => {
-      this.authorizedTransferContext({ ...input, now: input.declaredAt });
-      this.handle.client
-        .prepare(
-          `UPDATE run_attempts SET upload_started_at = COALESCE(upload_started_at, ?), version = version + 1
-           WHERE id = ? AND status = 'running'`,
-        )
-        .run(input.declaredAt, input.attemptId);
-      const result = [];
-      for (const artifact of input.artifacts) {
-        const existing = this.artifactRow(input.attemptId, artifact.artifactId);
-        if (existing) {
-          if (!sameArtifact(existing, artifact)) {
-            throw new DomainError("ARTIFACT_DECLARATION_CONFLICT", "产物声明与已保存元数据冲突。");
-          }
-          result.push({ ...artifact, status: existing.status as "declared" | "uploaded" });
-          continue;
-        }
-        this.handle.client
-          .prepare(
-            `INSERT INTO attempt_artifacts
-             (id, attempt_id, relative_path, media_type, size_bytes, sha256, required, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'declared', ?, ?)`,
-          )
-          .run(
-            artifact.artifactId,
-            input.attemptId,
-            artifact.relativePath,
-            artifact.mediaType,
-            artifact.sizeBytes,
-            artifact.sha256,
-            artifact.required ? 1 : 0,
-            input.declaredAt,
-            input.declaredAt,
-          );
-        result.push({ ...artifact, status: "declared" as const });
-      }
-      return result;
-    });
-  }
-
-  async resolveArtifactUpload(
-    input: Parameters<ExecutionControlRepository["resolveArtifactUpload"]>[0],
-  ): ReturnType<ExecutionControlRepository["resolveArtifactUpload"]> {
-    this.authorizedTransferContext(input);
-    const row = this.artifactRow(input.attemptId, input.artifactId);
-    if (!row) throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
-    if (row.status === "rejected") {
-      throw new DomainError("ARTIFACT_REJECTED", "指定的产物声明已被拒绝。");
-    }
-    return { ...mapArtifactRow(row), status: row.status };
-  }
-
-  async markArtifactUploaded(
-    input: Parameters<ExecutionControlRepository["markArtifactUploaded"]>[0],
+  async beginAttemptUpload(
+    input: Parameters<ExecutionControlRepository["beginAttemptUpload"]>[0],
   ): Promise<void> {
     await retrySqliteWriteTransaction(this.handle, () => {
-      const result = this.handle.client
+      this.authorizedTransferContext({ ...input, now: input.startedAt });
+      this.handle.client
         .prepare(
-          `UPDATE attempt_artifacts SET object_key = ?, status = 'uploaded', updated_at = ?
-         WHERE id = ? AND attempt_id = ? AND status IN ('declared', 'uploaded')`,
+          `UPDATE run_attempts SET upload_started_at=COALESCE(upload_started_at, ?), version=version+1
+         WHERE id=? AND status='running' AND upload_started_at IS NULL`,
         )
-        .run(input.objectKey, input.uploadedAt, input.artifactId, input.attemptId);
-      if (result.changes !== 1)
-        throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
+        .run(input.startedAt, input.attemptId);
     });
-  }
-
-  async listArtifacts(attemptId: string): ReturnType<ExecutionControlRepository["listArtifacts"]> {
-    const attempt = this.handle.client
-      .prepare("SELECT id FROM run_attempts WHERE id = ?")
-      .get(attemptId);
-    if (!attempt) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    const rows = this.handle.client
-      .prepare("SELECT * FROM attempt_artifacts WHERE attempt_id = ? ORDER BY relative_path, id")
-      .all(attemptId) as ArtifactRow[];
-    return Promise.resolve(rows.map(mapArtifactRow));
   }
 
   async recoverExpired(
@@ -1235,7 +1154,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       row.lease_status !== "active" ||
       row.expires_at <= input.now
     ) {
-      throw new DomainError("ATTEMPT_TRANSFER_FORBIDDEN", "日志或产物传输未获得有效租约授权。");
+      throw new DomainError("ATTEMPT_TRANSFER_FORBIDDEN", "日志传输未获得有效租约授权。");
     }
     return { assignment: row };
   }
@@ -1264,12 +1183,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     rememberBounded(this.recordedAttemptLogPaths, batchId);
   }
 
-  private artifactRow(attemptId: string, artifactId: string): ArtifactRow | undefined {
-    return this.handle.client
-      .prepare("SELECT * FROM attempt_artifacts WHERE attempt_id = ? AND id = ?")
-      .get(attemptId, artifactId) as ArtifactRow | undefined;
-  }
-
   /** 批次内是否仍有可调度（queued 且未扣留）的 run。 */
   private hasSchedulableRuns(batchId: string): boolean {
     const row = this.handle.client
@@ -1289,26 +1202,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     result: CompletionResult,
     recordedAt: string,
   ): void {
-    for (const artifact of result.artifacts) {
-      this.handle.client
-        .prepare(
-          `INSERT INTO attempt_artifacts
-           (id, attempt_id, relative_path, media_type, size_bytes, sha256, required, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'declared', ?, ?)
-           ON CONFLICT(attempt_id, relative_path) DO NOTHING`,
-        )
-        .run(
-          artifact.artifactId,
-          attemptId,
-          artifact.relativePath,
-          artifact.mediaType,
-          artifact.sizeBytes,
-          artifact.sha256,
-          artifact.required ? 1 : 0,
-          recordedAt,
-          recordedAt,
-        );
-    }
     if (result.logWatermarks) {
       // Agent 上报的水位写入批次日志文件；主库不再保存日志水位。
       this.attemptLogs.recordWatermarks({
@@ -2084,7 +1977,7 @@ function attemptExpiration(reason: AttemptRecoveryReason): {
       return {
         eventType: "attempt.upload_timed_out",
         resultCode: "UPLOAD_TIMEOUT",
-        summary: "Artifact upload and completion exceeded the configured timeout.",
+        summary: "Log upload and completion exceeded the configured timeout.",
       };
     case "lease_expired":
       return {
@@ -2120,29 +2013,6 @@ function cancellationResult(
     status: "cancelled",
     resultCode: "CANCELLED_BY_CONTROL_PLANE",
     summary: "控制面取消请求先于完成上报生效。",
-  };
-}
-
-function sameArtifact(row: ArtifactRow, artifact: ArtifactDeclaration): boolean {
-  return (
-    row.relative_path === artifact.relativePath &&
-    row.media_type === artifact.mediaType &&
-    row.size_bytes === artifact.sizeBytes &&
-    row.sha256 === artifact.sha256 &&
-    Boolean(row.required) === artifact.required
-  );
-}
-
-function mapArtifactRow(row: ArtifactRow) {
-  return {
-    artifactId: row.id,
-    relativePath: row.relative_path,
-    mediaType: row.media_type,
-    sizeBytes: row.size_bytes,
-    sha256: row.sha256,
-    required: Boolean(row.required),
-    status: row.status,
-    ...(row.object_key ? { objectKey: row.object_key } : {}),
   };
 }
 

@@ -45,9 +45,7 @@ export function ExecutionBatchDetails({
   canRetryRuns,
   canReadLogs,
   canReadAttemptEvents,
-  canReadArtifacts,
   canReadConcurrencyDiagnostics = false,
-  artifactsEnabled,
   runnerDirectory,
   accessToken,
   publicAccess = false,
@@ -66,9 +64,7 @@ export function ExecutionBatchDetails({
   canRetryRuns: boolean;
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
-  canReadArtifacts: boolean;
   canReadConcurrencyDiagnostics?: boolean;
-  artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
   accessToken?: string;
   publicAccess?: boolean;
@@ -421,8 +417,6 @@ export function ExecutionBatchDetails({
         canReadLogs={canReadLogs}
         canRetryRuns={canRetryRuns}
         canReadAttemptEvents={canReadAttemptEvents}
-        canReadArtifacts={canReadArtifacts}
-        artifactsEnabled={artifactsEnabled}
         runnerDirectory={currentRunnerDirectory}
         onRefresh={() => void refreshVisibleBatch()}
       />

@@ -15,7 +15,6 @@ export type WorkThreadConfiguration = {
   attemptLogsDirectory: string;
   dataDirectory: string;
   caseExecutionTimeoutSeconds: number;
-  artifactCollectionEnabled: boolean;
   scheduler: {
     memoryAdmissionMode?: MemoryAdmissionMode;
     maximumCpuUtilizationPercent: number;
@@ -93,7 +92,7 @@ export type WorkTask =
   | { kind: "claim-assignments"; runnerId: string; input: unknown }
   | { kind: "renew-lease"; leaseId: string; input: unknown }
   | { kind: "complete-attempt"; attemptId: string; input: unknown }
-  | { kind: "declare-artifacts"; attemptId: string; input: unknown }
+  | { kind: "begin-attempt-upload"; attemptId: string; input: unknown }
   | { kind: "recover-expired"; input: unknown }
   | { kind: "resolve-attempt-contexts"; attemptIds: string[] }
   | { kind: "change-batch-scheduling"; batchId: string; input: unknown }

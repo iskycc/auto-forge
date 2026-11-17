@@ -97,6 +97,31 @@ async function seed(f: Fixture, count = 1): Promise<void> {
 
 for (const dialect of ["sqlite", "postgresql"] as const) {
   describe.skipIf(dialect === "postgresql" && !postgresUrl)(`${dialect} personal task pins`, () => {
+    it("reads legacy task Adapter flags as CoTest without rewriting stored configuration or revision", async () => {
+      const f = await fixture(dialect);
+      try {
+        await seed(f);
+        const adapter = {
+          enabled: false,
+          suiteName: "Payments",
+          testName: "Regression",
+          environmentAddresses: ["10.0.0.21", "10.0.0.22"],
+        };
+        const storedPolicy = JSON.stringify({ ...defaultCaseSuiteExecutionPolicy, adapter });
+        await f.execute("UPDATE case_suites SET policy_json=? WHERE id=?", [
+          storedPolicy,
+          "suite-0",
+        ]);
+        const before = await f.rows("SELECT policy_json, revision FROM case_suites");
+        const summary = await f.suites.getSummary("suite-0");
+        expect(summary?.policy.adapter).toEqual({ ...adapter, enabled: true });
+        const page = await f.suites.list(10);
+        expect(page[0]?.policy.adapter.enabled).toBe(true);
+        expect(await f.rows("SELECT policy_json, revision FROM case_suites")).toEqual(before);
+      } finally {
+        await f.close();
+      }
+    });
     it("keeps an older pinned task inside a bounded list while preserving other users' default ordering", async () => {
       const f = await fixture(dialect);
       try {

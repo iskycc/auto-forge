@@ -49,7 +49,6 @@ for (const mode of ["lite", "full"] as const) {
             migrationsFolder,
             attemptLogsDirectory: resolve(directory, "logs"),
             caseExecutionTimeoutSeconds: 60,
-            artifactCollectionEnabled: false,
             scheduler: {
               maximumCpuUtilizationPercent: 90,
               maximumMemoryUtilizationPercent: 90,

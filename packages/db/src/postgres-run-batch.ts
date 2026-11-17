@@ -84,7 +84,6 @@ import type {
 } from "@autoforge/application";
 import { testNgResultDetailsSchema, type ExecutionSpec } from "@autoforge/contracts";
 import {
-  artifactMediaType,
   assessRunnerCompatibility,
   DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_PROJECT_ID,
@@ -2712,11 +2711,7 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
       runnerLabels: Array.isArray(record.runnerLabels)
         ? record.runnerLabels.filter((label): label is string => typeof label === "string")
         : [],
-      artifactPatterns: Array.isArray(record.artifactPatterns)
-        ? record.artifactPatterns.filter(
-            (pattern): pattern is string => typeof pattern === "string",
-          )
-        : ["reports/testng/**"],
+      artifactPatterns: [],
       retryConcurrencyRules: retryConcurrencyRules(record.retryConcurrencyRules),
     };
   } catch {
@@ -2787,7 +2782,6 @@ function executionSpec(input: {
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
   // 产物开关属于批次策略快照；Full worker 不再用启动时配置二次覆盖它。
-  const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   const executionInputs: ExecutionSpec["inputs"] = [
     {
@@ -2855,11 +2849,7 @@ function executionSpec(input: {
       ),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ],
-    artifactRules: artifactPatterns.map((pattern) => ({
-      pattern,
-      required: false,
-      mediaType: artifactMediaType(pattern),
-    })),
+    artifactRules: [],
     timeoutMs: input.executionTimeoutMs,
     uploadTimeoutMs: input.uploadTimeoutMs,
     resourceLimits: executionResourceLimitsForInputs(
@@ -2933,7 +2923,7 @@ async function postgresProjectAdapterRuntime(
   if (!jarBundle) {
     throw new DomainError(
       "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",
-      "任务已启用 CoTest Adapter，但项目尚未配置完整依赖 JAR 压缩包。",
+      "CoTest 执行所需的完整依赖 JAR 压缩包尚未配置，请到项目版本的运行依赖中配置。",
     );
   }
   return {

@@ -371,10 +371,10 @@ export class WorkerPool implements WorkDispatcher {
     });
   }
 
-  declareArtifacts(input: unknown): Promise<unknown> {
+  beginAttemptUpload(input: unknown): Promise<unknown> {
     const attemptId = stringProperty(input, "attemptId");
     return this.keyedControlLane(`attempt:${attemptId}`).dispatch({
-      kind: "declare-artifacts",
+      kind: "begin-attempt-upload",
       attemptId,
       input,
     });

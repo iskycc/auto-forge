@@ -105,10 +105,8 @@ export class PublicSuiteExecutionService {
       concurrency: suite.policy.concurrency,
       retryLimit: suite.policy.retryLimit,
       unlimitedRetries: suite.policy.unlimitedRetries ?? false,
-      adapterEnabled: suite.policy.adapter.enabled,
-      environmentAddresses: suite.policy.adapter.enabled
-        ? suite.policy.adapter.environmentAddresses
-        : [],
+      adapterEnabled: true,
+      environmentAddresses: suite.policy.adapter.environmentAddresses,
       publisher,
       environment,
       executable: !unavailableReason,
@@ -129,8 +127,7 @@ export class PublicSuiteExecutionService {
     const suite = await this.requireSuite(suiteId);
     if (!suite.enabled || suite.status !== "active")
       throw new DomainError("CASE_SUITE_DISABLED", "任务已停用或归档，不能修改执行环境。");
-    if (!suite.policy.adapter.enabled)
-      throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "任务未启用 Adapter，不能修改环境 IP。");
+
     // A link grants execution configuration only; the task's lock and default policy are untouched.
     return this.links.changeEnvironment(
       suiteId,
@@ -168,8 +165,7 @@ export class PublicSuiteExecutionService {
         "环境 IP 已被其他人修改，请刷新后确认最新 IP 再执行。",
       );
     const useShared = validated.environmentAddresses === undefined;
-    const sharedEnabled =
-      useShared && !replay ? (await this.requireSuite(suiteId)).policy.adapter.enabled : false;
+    const sharedEnabled = useShared && !replay;
     const batch = replay
       ? await this.runs.getSummary(replay)
       : await this.runs.create(

@@ -81,7 +81,17 @@ describe("createRunBatchInputSchema", () => {
   });
 
   it("accepts exactly one resource selection mode for a single-case shortcut", () => {
-    expect(createSingleCaseRunInputSchema.parse({ runnerGroupId: "group-1" })).toMatchObject({
+    expect(
+      createSingleCaseRunInputSchema.parse({
+        runnerGroupId: "group-1",
+        adapter: {
+          enabled: true,
+          suiteName: "Project",
+          testName: "Version",
+          environmentAddresses: ["10.0.0.1"],
+        },
+      }),
+    ).toMatchObject({
       runnerIds: [],
       runnerGroupId: "group-1",
     });

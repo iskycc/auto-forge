@@ -3,7 +3,6 @@ import type {
   ClaimAssignmentsResponse,
   CompleteAttemptInput,
   CompletionResult,
-  DeclareArtifactsInput,
   LogChunk,
   ReconcileAttemptsInput,
   RenewLeaseInput,
@@ -16,7 +15,6 @@ import type {
   Clock,
   ExecutionControlRepository,
   IdGenerator,
-  JarObjectStorePort,
   RunBatchRepository,
   RunBatchSchedulingPort,
   RunnerCredentialPort,
@@ -47,7 +45,6 @@ export class ExecutionControlService {
     private readonly runners: RunnerRepository,
     private readonly credentials: RunnerCredentialPort,
     private readonly credentialCipher: SecretCipherPort,
-    private readonly objectStore: JarObjectStorePort,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly batches: RunBatchRepository,
@@ -438,141 +435,6 @@ export class ExecutionControlService {
     return this.executions.listAttemptEvents(input);
   }
 
-  async declareArtifacts(
-    runnerId: string,
-    credential: string,
-    attemptId: string,
-    input: DeclareArtifactsInput,
-  ) {
-    const runner = await this.authenticateRunner(runnerId, credential);
-    await this.protocolAdmission?.assertAllowed({
-      operation: "artifacts",
-      runnerId,
-      maximumConcurrency: runner.maxConcurrency,
-    });
-    const projectId = await this.requiredAttemptProjectId(attemptId);
-    const artifacts = await this.executions.declareArtifacts({
-      runnerId,
-      attemptId,
-      leaseTokenHash: this.credentials.hash(input.leaseToken),
-      artifacts: input.artifacts,
-      declaredAt: this.clock.now().toISOString(),
-    });
-    const controlPlanePath = (artifactId: string) =>
-      `/api/v1/run-attempts/${encodeURIComponent(attemptId)}/artifacts/${encodeURIComponent(artifactId)}`;
-    return {
-      schemaVersion: 1 as const,
-      artifacts: await Promise.all(
-        artifacts.map(async (artifact) => {
-          if (artifact.status === "uploaded") {
-            return {
-              ...artifact,
-              uploadPath: controlPlanePath(artifact.artifactId),
-              uploadMethod: "control-plane" as const,
-            };
-          }
-          const target = await this.objectStore.prepareArtifactUpload({
-            projectId,
-            attemptId,
-            artifactId: artifact.artifactId,
-            sha256: artifact.sha256,
-            sizeBytes: artifact.sizeBytes,
-            mediaType: artifact.mediaType,
-          });
-          if (target.kind === "control-plane") {
-            return {
-              ...artifact,
-              uploadPath: controlPlanePath(artifact.artifactId),
-              uploadMethod: target.kind,
-            };
-          }
-          return {
-            ...artifact,
-            uploadPath: target.uploadUrl,
-            uploadMethod: target.kind,
-            finalizePath: `${controlPlanePath(artifact.artifactId)}/finalize`,
-          };
-        }),
-      ),
-    };
-  }
-
-  async uploadArtifact(input: {
-    runnerId: string;
-    credential: string;
-    attemptId: string;
-    artifactId: string;
-    leaseToken: string;
-    content: AsyncIterable<Uint8Array>;
-  }) {
-    await this.authenticateRunner(input.runnerId, input.credential);
-    const leaseTokenHash = this.credentials.hash(input.leaseToken);
-    const declaration = await this.executions.resolveArtifactUpload({
-      runnerId: input.runnerId,
-      attemptId: input.attemptId,
-      artifactId: input.artifactId,
-      leaseTokenHash,
-      now: this.clock.now().toISOString(),
-    });
-    if (declaration.status === "uploaded" && declaration.objectKey) return declaration;
-    const projectId = await this.requiredAttemptProjectId(input.attemptId);
-    const stored = await this.objectStore.putArtifact({
-      projectId,
-      attemptId: input.attemptId,
-      artifactId: input.artifactId,
-      sha256: declaration.sha256,
-      sizeBytes: declaration.sizeBytes,
-      mediaType: declaration.mediaType,
-      content: input.content,
-    });
-    await this.executions.markArtifactUploaded({
-      attemptId: input.attemptId,
-      artifactId: input.artifactId,
-      objectKey: stored.objectKey,
-      uploadedAt: this.clock.now().toISOString(),
-    });
-    return { ...declaration, status: "uploaded" as const, objectKey: stored.objectKey };
-  }
-
-  async finalizeArtifactUpload(input: {
-    runnerId: string;
-    credential: string;
-    attemptId: string;
-    artifactId: string;
-    leaseToken: string;
-  }) {
-    await this.authenticateRunner(input.runnerId, input.credential);
-    const declaration = await this.executions.resolveArtifactUpload({
-      runnerId: input.runnerId,
-      attemptId: input.attemptId,
-      artifactId: input.artifactId,
-      leaseTokenHash: this.credentials.hash(input.leaseToken),
-      now: this.clock.now().toISOString(),
-    });
-    if (declaration.status === "uploaded" && declaration.objectKey) return declaration;
-    const projectId = await this.requiredAttemptProjectId(input.attemptId);
-    const stored = await this.objectStore.verifyArtifactUpload({
-      projectId,
-      attemptId: input.attemptId,
-      artifactId: input.artifactId,
-      sha256: declaration.sha256,
-      sizeBytes: declaration.sizeBytes,
-      mediaType: declaration.mediaType,
-    });
-    await this.executions.markArtifactUploaded({
-      attemptId: input.attemptId,
-      artifactId: input.artifactId,
-      objectKey: stored.objectKey,
-      uploadedAt: this.clock.now().toISOString(),
-    });
-    return { ...declaration, status: "uploaded" as const, objectKey: stored.objectKey };
-  }
-
-  async listArtifacts(attemptId: string, projectIds?: readonly string[]) {
-    await this.assertAttemptScope(attemptId, projectIds);
-    return this.executions.listArtifacts(attemptId);
-  }
-
   private async assertAttemptScope(
     attemptId: string,
     projectIds: readonly string[] | undefined,
@@ -584,10 +446,16 @@ export class ExecutionControlService {
     }
   }
 
-  private async requiredAttemptProjectId(attemptId: string): Promise<string> {
-    const projectId = await this.executions.resolveAttemptProjectId(attemptId);
-    if (!projectId) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    return projectId;
+  async beginUpload(runnerId: string, credential: string, attemptId: string, leaseToken: string) {
+    await this.authenticateRunner(runnerId, credential);
+    const acceptedAt = this.clock.now().toISOString();
+    await this.executions.beginAttemptUpload({
+      runnerId,
+      attemptId,
+      leaseTokenHash: this.credentials.hash(leaseToken),
+      startedAt: acceptedAt,
+    });
+    return { schemaVersion: 1 as const, acceptedAt };
   }
 
   async changeBatchScheduling(actorId: string, batchId: string, action: "pause" | "resume") {

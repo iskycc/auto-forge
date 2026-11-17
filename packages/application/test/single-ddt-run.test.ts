@@ -143,7 +143,7 @@ describe("single DDT execution", () => {
   });
 
   it.each(["testng", "ddt"] as const)(
-    "applies the existing Adapter disable rule to %s",
+    "uses CoTest for %s even when an old caller tries to disable it",
     async (kind) => {
       const { service, create, item } = fixture();
       const execution = service.createVersionCaseExecution(
@@ -156,14 +156,9 @@ describe("single DDT execution", () => {
         },
         { username: "api-user", source: "local" },
       );
-      if (kind === "ddt") {
-        await expect(execution).rejects.toMatchObject({ code: "DDT_ADAPTER_REQUIRED" });
-        expect(create).not.toHaveBeenCalled();
-      } else {
-        await execution;
-        expect(create).toHaveBeenCalledTimes(1);
-        expect(create.mock.calls[0]![0].adapter.enabled).toBe(false);
-      }
+      await execution;
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create.mock.calls[0]![0].adapter.enabled).toBe(true);
     },
   );
 
@@ -381,7 +376,6 @@ describe("single DDT execution", () => {
     ["disabled", "CASE_DEFINITION_DISABLED"],
     ["wrong-stage", "DDT_EXECUTION_CLASS_UNAVAILABLE"],
     ["source-only", "CASE_SOURCE_NOT_EXECUTABLE"],
-    ["no-adapter", "DDT_ADAPTER_REQUIRED"],
   ])("rejects %s before creating a batch", async (condition, code) => {
     const { service, getCase, create, item, definition, getSource } = fixture();
     if (condition === "missing") getCase.mockResolvedValue(null);
@@ -390,13 +384,9 @@ describe("single DDT execution", () => {
     if (condition === "wrong-stage") definition.testStageId = "other-stage";
     if (condition === "source-only")
       getSource.mockResolvedValue({ inspection: { executable: false }, source: {} });
-    await expect(
-      service.createSingleDdtCase(
-        scope,
-        item.caseId,
-        condition === "no-adapter" ? { runnerIds: ["runner"] } : input,
-      ),
-    ).rejects.toMatchObject({ code });
+    await expect(service.createSingleDdtCase(scope, item.caseId, input)).rejects.toMatchObject({
+      code,
+    });
     expect(create).not.toHaveBeenCalled();
   });
 });
@@ -409,7 +399,7 @@ describe("case debug execution", () => {
         ...scope,
         kind: "testng",
         caseDefinitionId: "class",
-        execution: { runnerIds: ["runner"] },
+        execution: input,
       }),
     );
     expect(create).toHaveBeenCalledWith(

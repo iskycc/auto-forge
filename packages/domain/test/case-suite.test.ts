@@ -10,7 +10,23 @@ import {
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("case suite execution policy", () => {
-  it("overrides only the provided fields and replaces collections wholesale", () => {
+  it("always uses CoTest without changing saved names or environment addresses", () => {
+    expect(defaultCaseSuiteExecutionPolicy.adapter.enabled).toBe(true);
+    const adapter = {
+      enabled: false,
+      suiteName: "Payments",
+      testName: "Release · Regression",
+      environmentAddresses: ["10.0.0.21", "10.0.0.22"],
+    };
+    const merged = mergeCaseSuiteExecutionPolicy(
+      { ...defaultCaseSuiteExecutionPolicy, adapter },
+      {},
+    );
+    expect(merged.adapter).toEqual({ ...adapter, enabled: true });
+    expect(adapter.enabled).toBe(false);
+    expect(merged.adapter.environmentAddresses).not.toBe(adapter.environmentAddresses);
+  });
+  it("overrides provided fields, preserves Runner labels and ignores retired artifact patterns", () => {
     const base = {
       ...defaultCaseSuiteExecutionPolicy,
       runnerLabels: ["gpu"],
@@ -24,7 +40,7 @@ describe("case suite execution policy", () => {
     expect(merged.priority).toBe(10);
     expect(merged.concurrency).toBe(base.concurrency);
     expect(merged.runnerLabels).toEqual(["gpu"]);
-    expect(merged.artifactPatterns).toEqual(["reports/**"]);
+    expect(merged.artifactPatterns).toEqual([]);
   });
 
   it("treats explicit undefined fields as absent", () => {

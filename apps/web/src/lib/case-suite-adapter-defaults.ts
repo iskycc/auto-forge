@@ -1,7 +1,7 @@
 import type { ProjectVersion, TestStage } from "@autoforge/domain";
 import { executionAdapterNameDefaults } from "@autoforge/domain";
 
-// New execution forms share this default; saved task policies and debug drafts retain their choice.
+// Execution entrypoints share the CoTest runtime and name defaults.
 export { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@autoforge/domain";
 
 export type AdapterNameDefaults = { suiteName: string; testName: string };

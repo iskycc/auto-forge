@@ -5,7 +5,6 @@ import {
   consumeSuiteExecutionEnvironment,
   useSuiteExecutionEnvironment,
 } from "@/lib/suite-execution-environment";
-import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@/lib/case-suite-adapter-defaults";
 import { LoadingIcon } from "@/components/ui/loading-icon";
 
 import { Segmented } from "./ui/segmented";
@@ -150,7 +149,6 @@ export function GlobalRunDialog({
   const [runnerGroupId, setRunnerGroupId] = useState("");
   const [retryLimit, setRetryLimit] = useState(0);
   const [retryMode, setRetryMode] = useState(defaultCaseSuiteExecutionPolicy.retryMode);
-  const [adapterEnabled, setAdapterEnabled] = useState<boolean>(DEFAULT_EXECUTION_ADAPTER_ENABLED);
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");
   const [environmentAddresses, setEnvironmentAddresses] = useState<string[]>([]);
@@ -200,7 +198,7 @@ export function GlobalRunDialog({
       setSuiteId("");
       setCaseDefinitionId("");
       setDdtCase(requestedDdtCase);
-      setAdapterEnabled(DEFAULT_EXECUTION_ADAPTER_ENABLED);
+
       if (requestedDdtCase) {
         requestedCaseId = requestedDdtCase.executionClass?.caseDefinitionId;
       }
@@ -364,7 +362,7 @@ export function GlobalRunDialog({
         const requestBody = {
           suiteId,
           delaySeconds: configuredDelaySeconds,
-          ...(selectedSuite?.policy.adapter.enabled && suiteEnvironment.addresses
+          ...(selectedSuite && suiteEnvironment.addresses
             ? { environmentAddresses: [...suiteEnvironment.addresses] }
             : {}),
         };
@@ -393,9 +391,8 @@ export function GlobalRunDialog({
             ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
             retryLimit,
             retryMode,
-            artifactPatterns: ["reports/testng/**"],
             adapter: {
-              enabled: adapterEnabled,
+              enabled: true,
               suiteName: adapterSuiteName,
               testName: adapterTestName,
               environmentAddresses,
@@ -639,9 +636,13 @@ export function GlobalRunDialog({
                           <div>
                             <dt>Adapter 地址</dt>
                             <dd>
-                              {selectedSuite.policy.adapter.enabled
-                                ? `${(suiteEnvironment.addresses ?? selectedSuite.policy.adapter.environmentAddresses).length} 个`
-                                : "未启用 Adapter"}
+                              {
+                                (
+                                  suiteEnvironment.addresses ??
+                                  selectedSuite.policy.adapter.environmentAddresses
+                                ).length
+                              }{" "}
+                              个
                             </dd>
                           </div>
                         </dl>
@@ -826,50 +827,37 @@ export function GlobalRunDialog({
                           globalRunDialogStyles["single-run-advanced"],
                         )}
                       >
-                        <label
-                          className={cn("adapter-toggle", globalRunDialogStyles["adapter-toggle"])}
+                        <div
+                          className={cn(
+                            "adapter-run-fields",
+                            globalRunDialogStyles["adapter-run-fields"],
+                          )}
                         >
-                          <Input
-                            checked={adapterEnabled}
-                            disabled={Boolean(ddtCase)}
-                            onChange={(event) => setAdapterEnabled(event.target.checked)}
-                            type="checkbox"
-                          />
-                          使用 CoTest TestNG Adapter
-                        </label>
-                        {adapterEnabled ? (
-                          <div
-                            className={cn(
-                              "adapter-run-fields",
-                              globalRunDialogStyles["adapter-run-fields"],
-                            )}
-                          >
-                            <label className={cn("field-stack", uiPatterns["field-stack"])}>
-                              <span>Adapter Suite Name</span>
-                              <Input
-                                aria-label="单用例 Adapter Suite Name"
-                                onChange={(event) => setAdapterSuiteName(event.target.value)}
-                                value={adapterSuiteName}
-                              />
-                            </label>
-                            <label className={cn("field-stack", uiPatterns["field-stack"])}>
-                              <span>Adapter Test Name</span>
-                              <Input
-                                aria-label="单用例 Adapter Test Name"
-                                onChange={(event) => setAdapterTestName(event.target.value)}
-                                value={adapterTestName}
-                              />
-                            </label>
-                            <EnvironmentAddressesField
-                              purpose="execution"
-                              addresses={environmentAddresses}
-                              onChange={setEnvironmentAddresses}
-                              validation="address"
-                              allowEmpty={false}
-                              description="只用于本次单用例执行，不修改用例或任务配置。"
+                          <label className={cn("field-stack", uiPatterns["field-stack"])}>
+                            <span>Adapter Suite Name</span>
+                            <Input
+                              aria-label="单用例 Adapter Suite Name"
+                              onChange={(event) => setAdapterSuiteName(event.target.value)}
+                              value={adapterSuiteName}
                             />
-                          </div>
-                        ) : null}
+                          </label>
+                          <label className={cn("field-stack", uiPatterns["field-stack"])}>
+                            <span>Adapter Test Name</span>
+                            <Input
+                              aria-label="单用例 Adapter Test Name"
+                              onChange={(event) => setAdapterTestName(event.target.value)}
+                              value={adapterTestName}
+                            />
+                          </label>
+                          <EnvironmentAddressesField
+                            purpose="execution"
+                            addresses={environmentAddresses}
+                            onChange={setEnvironmentAddresses}
+                            validation="address"
+                            allowEmpty={false}
+                            description="只用于本次单用例执行，不修改用例或任务配置。"
+                          />
+                        </div>
                       </div>
                     </section>
                   </>
@@ -1190,7 +1178,6 @@ function formatCountdown(totalSeconds: number): string {
 const globalRunDialogStyles = {
   "adapter-address-field": "[grid-column:span_2]",
   "adapter-run-fields": "grid gap-3 grid-cols-2",
-  "adapter-toggle": "flex items-center gap-2 mt-3 text-muted-foreground text-xs font-semibold",
   "delay-presets":
     "flex flex-wrap [align-content:center] gap-1.5 [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:[border-color:color-mix(in_srgb,_var(--info)_16%,_var(--border))] [&_button]:[background:color-mix(in_srgb,_var(--card)_86%,_transparent)] [&_button]:text-xs",
   "delay-start-panel":

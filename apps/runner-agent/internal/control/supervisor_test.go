@@ -67,15 +67,12 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 				AcknowledgedSequence: acknowledgedLogChunks(upload.Chunks),
 			})
 		case "/api/v1/run-attempts/attempt-1/artifacts":
-			var declaration declareArtifactsRequest
+			var declaration map[string]json.RawMessage
 			if err := json.NewDecoder(request.Body).Decode(&declaration); err != nil {
 				http.Error(writer, err.Error(), http.StatusBadRequest)
 				return
 			}
-			_ = json.NewEncoder(writer).Encode(declareArtifactsResponse{
-				SchemaVersion: 1,
-				Artifacts:     []declaredArtifact{},
-			})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"schemaVersion": 1, "artifacts": []any{}})
 		default:
 			http.NotFound(writer, request)
 		}

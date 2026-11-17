@@ -22,7 +22,6 @@ import {
   completeAttemptResponseSchema,
   executionSpecSchema,
   reconcileAttemptsResponseSchema,
-  type ArtifactDeclaration,
   type AssignmentDto,
   type CompleteAttemptResponse,
   type CompletionResult,
@@ -105,18 +104,6 @@ type AttemptControlRow = {
   project_id: string;
   run_cancel_requested_at: string | null;
   batch_termination_requested_at: string | null;
-};
-
-type ArtifactRow = {
-  id: string;
-  attempt_id: string;
-  relative_path: string;
-  object_key: string | null;
-  media_type: string;
-  size_bytes: string;
-  sha256: string;
-  required: boolean;
-  status: "declared" | "uploaded" | "rejected";
 };
 
 type AttemptEventRow = {
@@ -864,90 +851,18 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     });
   }
 
-  async declareArtifacts(
-    input: Parameters<ExecutionControlRepository["declareArtifacts"]>[0],
-  ): ReturnType<ExecutionControlRepository["declareArtifacts"]> {
-    await this.handle.ready;
-    return this.transaction(async (client) => {
-      await authorizedTransferContext(client, { ...input, now: input.declaredAt }, true);
-      await client.query(
-        `UPDATE run_attempts
-         SET upload_started_at = COALESCE(upload_started_at, $1), version = version + 1
-         WHERE id = $2 AND status = 'running'`,
-        [input.declaredAt, input.attemptId],
-      );
-      const declared = [];
-      for (const artifact of input.artifacts) {
-        const existing = await artifactRow(client, input.attemptId, artifact.artifactId);
-        if (existing) {
-          if (!sameArtifact(existing, artifact) || existing.status === "rejected") {
-            throw new DomainError("ARTIFACT_DECLARATION_CONFLICT", "产物声明与已保存元数据冲突。");
-          }
-          declared.push({ ...artifact, status: existing.status });
-          continue;
-        }
-        await client.query(
-          `INSERT INTO attempt_artifacts
-           (id, attempt_id, relative_path, media_type, size_bytes, sha256, required, status, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'declared', $8, $8)`,
-          [
-            artifact.artifactId,
-            input.attemptId,
-            artifact.relativePath,
-            artifact.mediaType,
-            artifact.sizeBytes,
-            artifact.sha256,
-            artifact.required,
-            input.declaredAt,
-          ],
-        );
-        declared.push({ ...artifact, status: "declared" as const });
-      }
-      return declared;
-    });
-  }
-
-  async resolveArtifactUpload(
-    input: Parameters<ExecutionControlRepository["resolveArtifactUpload"]>[0],
-  ): ReturnType<ExecutionControlRepository["resolveArtifactUpload"]> {
-    await this.handle.ready;
-    await authorizedTransferContext(this.handle.pool, input);
-    const row = await artifactRow(this.handle.pool, input.attemptId, input.artifactId);
-    if (!row) throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
-    if (row.status === "rejected") {
-      throw new DomainError("ARTIFACT_REJECTED", "指定的产物声明已被拒绝。");
-    }
-    return { ...mapArtifactRow(row), status: row.status };
-  }
-
-  async markArtifactUploaded(
-    input: Parameters<ExecutionControlRepository["markArtifactUploaded"]>[0],
+  async beginAttemptUpload(
+    input: Parameters<ExecutionControlRepository["beginAttemptUpload"]>[0],
   ): Promise<void> {
     await this.handle.ready;
-    const result = await retryPostgresWrite(() =>
-      this.handle.pool.query(
-        `UPDATE attempt_artifacts SET object_key = $1, status = 'uploaded', updated_at = $2
-       WHERE id = $3 AND attempt_id = $4 AND status IN ('declared', 'uploaded')`,
-        [input.objectKey, input.uploadedAt, input.artifactId, input.attemptId],
-      ),
-    );
-    if (result.rowCount !== 1)
-      throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
-  }
-
-  async listArtifacts(attemptId: string): ReturnType<ExecutionControlRepository["listArtifacts"]> {
-    await this.handle.ready;
-    const attempt = await this.handle.pool.query("SELECT id FROM run_attempts WHERE id = $1", [
-      attemptId,
-    ]);
-    if (!attempt.rows[0]) {
-      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    }
-    const result = await this.handle.pool.query<ArtifactRow>(
-      "SELECT * FROM attempt_artifacts WHERE attempt_id = $1 ORDER BY relative_path, id",
-      [attemptId],
-    );
-    return result.rows.map(mapArtifactRow);
+    await this.transaction(async (client) => {
+      await authorizedTransferContext(client, { ...input, now: input.startedAt });
+      await client.query(
+        `UPDATE run_attempts SET upload_started_at=COALESCE(upload_started_at,$1),version=version+1
+         WHERE id=$2 AND status='running' AND upload_started_at IS NULL`,
+        [input.startedAt, input.attemptId],
+      );
+    });
   }
 
   async recoverExpired(
@@ -1240,7 +1155,6 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 async function authorizedTransferContext(
   client: Pick<PoolClient, "query">,
   input: { runnerId: string; attemptId: string; leaseTokenHash: string; now: string },
-  lock = false,
 ): Promise<{ assignment: AssignmentRow; batchId: string }> {
   const result = await client.query<
     AssignmentRow & {
@@ -1254,7 +1168,7 @@ async function authorizedTransferContext(
      FROM assignments a
      JOIN assignment_leases l ON l.assignment_id = a.id
      JOIN execution_runs r ON r.id = a.execution_run_id
-     WHERE a.attempt_id = $1 ORDER BY l.created_at DESC LIMIT 1${lock ? " FOR UPDATE OF l" : ""}`,
+     WHERE a.attempt_id = $1 ORDER BY l.created_at DESC LIMIT 1`,
     [input.attemptId],
   );
   const row = result.rows[0];
@@ -1265,44 +1179,9 @@ async function authorizedTransferContext(
     row.lease_status !== "active" ||
     new Date(row.expires_at).toISOString() <= input.now
   ) {
-    throw new DomainError("ATTEMPT_TRANSFER_FORBIDDEN", "日志或产物传输未获得有效租约授权。");
+    throw new DomainError("ATTEMPT_TRANSFER_FORBIDDEN", "日志传输未获得有效租约授权。");
   }
   return { assignment: row, batchId: row.batch_id };
-}
-
-async function artifactRow(
-  client: Pick<PoolClient, "query">,
-  attemptId: string,
-  artifactId: string,
-): Promise<ArtifactRow | undefined> {
-  const result = await client.query<ArtifactRow>(
-    "SELECT * FROM attempt_artifacts WHERE attempt_id = $1 AND id = $2",
-    [attemptId, artifactId],
-  );
-  return result.rows[0];
-}
-
-function sameArtifact(row: ArtifactRow, artifact: ArtifactDeclaration): boolean {
-  return (
-    row.relative_path === artifact.relativePath &&
-    row.media_type === artifact.mediaType &&
-    Number(row.size_bytes) === artifact.sizeBytes &&
-    row.sha256 === artifact.sha256 &&
-    row.required === artifact.required
-  );
-}
-
-function mapArtifactRow(row: ArtifactRow) {
-  return {
-    artifactId: row.id,
-    relativePath: row.relative_path,
-    mediaType: row.media_type,
-    sizeBytes: Number(row.size_bytes),
-    sha256: row.sha256,
-    required: row.required,
-    status: row.status,
-    ...(row.object_key ? { objectKey: row.object_key } : {}),
-  };
 }
 
 type CompletionOpening = {
@@ -1770,24 +1649,6 @@ async function persistCompletionMetadata(
   result: CompletionResult,
   recordedAt: string,
 ): Promise<void> {
-  for (const artifact of result.artifacts) {
-    await client.query(
-      `INSERT INTO attempt_artifacts
-       (id, attempt_id, relative_path, media_type, size_bytes, sha256, required, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'declared', $8, $8)
-       ON CONFLICT(attempt_id, relative_path) DO NOTHING`,
-      [
-        artifact.artifactId,
-        attemptId,
-        artifact.relativePath,
-        artifact.mediaType,
-        artifact.sizeBytes,
-        artifact.sha256,
-        artifact.required,
-        recordedAt,
-      ],
-    );
-  }
   if (result.logWatermarks) {
     // 单机水位随本地日志保存；分布式水位与完成元数据共同写入 PostgreSQL。
     const watermarks = { batchId, attemptId, watermarks: result.logWatermarks, recordedAt };
@@ -2510,7 +2371,7 @@ function attemptExpiration(reason: AttemptRecoveryReason): {
       return {
         eventType: "attempt.upload_timed_out",
         resultCode: "UPLOAD_TIMEOUT",
-        summary: "Artifact upload and completion exceeded the configured timeout.",
+        summary: "Log upload and completion exceeded the configured timeout.",
       };
     case "lease_expired":
       return {

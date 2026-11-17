@@ -310,4 +310,4 @@ export E2E_REAL_TEST_JAR="${acceptance_directory}/real-agent-tests.jar"
 export E2E_REAL_DEPENDENCY_ARCHIVE="${acceptance_directory}/adapter-dependencies.zip"
 
 run_browser_flow
-printf 'Real Go Agent, distributed Adapter, nested dependency archive, logs, structured result and artifacts passed.\n'
+printf 'Real Go Agent, distributed Adapter, nested dependency archive, logs and structured results passed.\n'

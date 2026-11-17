@@ -54,6 +54,5 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
     maxJarBytes: configuration.limits.maxJarBytes,
     testNgTargetJavaVersion: configuration.limits.testNgTargetJavaVersion,
     caseExecutionTimeoutSeconds: configuration.limits.caseExecutionTimeoutSeconds,
-    artifactCollectionEnabled: () => configurationStore.read().limits.artifactCollectionEnabled,
   };
 }

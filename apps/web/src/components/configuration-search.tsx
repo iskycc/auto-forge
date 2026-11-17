@@ -67,12 +67,6 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "caseExecutionTimeoutSeconds",
   ),
   platformField(
-    "执行产物收集",
-    "控制 Runner 是否收集声明的产物",
-    "artifact",
-    "artifactCollectionEnabled",
-  ),
-  platformField(
     "DDT 单次上传文件上限",
     "单次导入可上传的 Excel、CSV、ODS 或 ZIP 文件数量",
     "ddt excel csv upload 表格 文件 数量",

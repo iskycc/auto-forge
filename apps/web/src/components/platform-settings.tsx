@@ -94,7 +94,6 @@ export function PlatformSettings({
             sessionTtlHours: numberValue(form, "sessionTtlHours"),
             authLoginAttemptsPerWindow: numberValue(form, "authLoginAttemptsPerWindow"),
             caseExecutionTimeoutSeconds: numberValue(form, "caseExecutionTimeoutSeconds"),
-            artifactCollectionEnabled: form.get("artifactCollectionEnabled") === "on",
             ddtImportFileLimit: numberValue(form, "ddtImportFileLimit"),
             ddtImportZipSpreadsheetLimit: numberValue(form, "ddtImportZipSpreadsheetLimit"),
           },
@@ -216,7 +215,7 @@ export function PlatformSettings({
             <ServerCog size={22} aria-hidden="true" />
           </div>
           <p className={cn("settings-note", uiPatterns["settings-note"])}>
-            配置保存在平台数据目录中。平台时区、外部/内部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
+            配置保存在平台数据目录中。平台时区、外部/内部访问地址保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
           </p>
           <div className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}>
             <div
@@ -407,21 +406,7 @@ export function PlatformSettings({
               name="ddtImportZipSpreadsheetLimit"
               value={initial.limits.ddtImportZipSpreadsheetLimit}
             />
-            <label
-              className={cn(
-                "checkbox-field",
-                uiPatterns["checkbox-field"],
-                uiPatterns["settings-wide-field"],
-              )}
-            >
-              <Input
-                defaultChecked={initial.limits.artifactCollectionEnabled}
-                name="artifactCollectionEnabled"
-                type="checkbox"
-              />
-              启用产物收集（关闭后执行不扫描、不上传产物，详情页不展示产物）
-              <small>保存后立即应用到新建批次；已创建批次保持原有执行快照。</small>
-            </label>
+
             <label className={uiPatterns["settings-wide-field"]}>
               内存调度策略
               <Select

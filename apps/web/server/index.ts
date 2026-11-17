@@ -60,7 +60,6 @@ const workPool = new WorkerPool(
     attemptLogsDirectory: join(platformConfiguration.dataDirectory, "attempt-logs"),
     dataDirectory: platformConfiguration.dataDirectory,
     caseExecutionTimeoutSeconds: platformConfiguration.caseExecutionTimeoutSeconds,
-    artifactCollectionEnabled: platformConfiguration.artifactCollectionEnabled,
     scheduler: { ...platformConfiguration.scheduler },
     ...(platformConfiguration.mode === "lite"
       ? { sqlite: { databasePath: platformConfiguration.databasePath } }

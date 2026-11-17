@@ -4,6 +4,32 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.21 - 2026-11-17
+
+### Added
+
+- 新增面向平台使用者的站内使用文档 `/docs`，包含 18 篇操作指南、流程示意图、分类与搜索。顶栏及公开任务、执行详情、日志、分析等页面可直达对应说明；使用统一 Ant Design 主题，支持匿名阅读、浅色／深色及离线交付。README 和 AGENTS 明确要求功能变更同步维护使用文档。
+- 公开执行详情支持匿名导出失败用例分析清单，与工作台共用轮次范围、结果筛选和 Excel 生成逻辑；已有人工结论及已完成的 AI 结论随清单导出，AI 列位于堆栈之后。有效公开链接与批次绑定仍为前提，不扩大编辑、附件或原始日志 ZIP 权限。
+
+### Changed
+
+- 任务创建／配置、单用例快捷执行、调试及版本 API 统一使用 Cotest Adapter，移除“使用 Cotest Adapter”开关；保留 Suite／Test 名称、环境 IP 和版本依赖配置。旧任务的关闭标记在读取时归一为启用，不改写已创建的执行快照。
+- 旧非 Adapter 日志发起单例重跑时，使用当前版本的 Cotest 资源及默认名称，缺少环境 IP、依赖或可用快照时给出明确提示。公开任务的本次环境 IP 继续参与预检，不要求修改任务默认 IP。
+- 退役 TestNG 执行产物的扫描、上传、重传、展示和下载入口，移除平台产物开关、任务产物规则及 Adapter 默认报告生成；只保留本地最小 XML 供结构化结果解析。stdout／stderr、Agent 诊断、执行结果以及 JDK／用例依赖导入、分析附件和日志归档继续使用原有链路。
+
+### Compatibility
+
+- 从 v1.22.20 升级无新增数据库迁移、外部生产依赖或配置项。Lite／Full 共用执行与导出规则；Full 同步升级 Web 和全部 Worker。请更新执行节点 Agent 及版本使用的 Cotest Adapter，以完整停用节点侧的产物处理。
+- Runner Protocol v1 保留有界历史字段以兼容旧 Agent；旧版空产物登记仍可进入上传阶段，非空产物请求明确返回退役提示。新 Agent 在 JVM 退出后单独登记上传阶段，保留日志排空期限；重启时清理旧文件上传暂存，不改写已提交完成回执的摘要。
+- 旧产物 schema、历史引用与通用存储清理保留，不删除历史业务记录。任务新执行默认使用 Cotest，历史执行快照不追溯更改；已公开的失败分析结论可被持有有效公开链接的人读取。
+
+### Verification
+
+- 完整非集成 TypeScript 单元测试串行运行通过：365 个文件、2,450 项测试，无失败。最终可选字段修正后，4 个文件的 82 项契约／任务回归及全部工作区、测试类型检查再次通过。
+- 相关领域、契约、应用、Web、Worker 和数据库回归通过；真实 SQLite／PostgreSQL 验证上传阶段幂等、旧任务配置兼容及原配置不被改写，MinIO 通用对象存储契约通过。Go Agent 全包测试与 vet、Java 8／TestNG 6 和 Java 21／TestNG 7 的离线 Adapter 验证通过，真实 Java 启动器确认只生成结果解析所需 XML。
+- 使用文档、产物退役、默认 Adapter 与公开导出共 9 项 Lite 和 8 项 Full Playwright 场景通过，另有 4 项既有 Lite 执行／恢复／调试回归通过。公开 Excel 已用 ExcelJS 读回并校验内容和 XML；实际查看 1024×768 与 1536×960、浅色／深色截图，修正移除开关后的多余字符并复验，无按钮溢出或弹窗变形。
+- Web／Worker 生产构建、相关类型检查、全仓格式／许可证／ESLint、Go vet、E2E 覆盖矩阵及发布／运维脚本测试通过。标准发布保留双架构构建、内置资源、SBOM、签名及完整资产检查；发布后的源码检查和已发布资产验收继续运行，其实际状态以对应流水线为准。
+
 ## 1.22.20 - 2026-11-16
 
 ### Fixed

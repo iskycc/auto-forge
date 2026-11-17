@@ -292,7 +292,7 @@ export const DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS = 600;
 export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   executor: "testng",
   adapter: {
-    enabled: false,
+    enabled: true,
     suiteName: "",
     testName: "",
     environmentAddresses: [],
@@ -306,7 +306,7 @@ export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   uploadTimeoutMs: 600_000,
   runnerIds: [],
   runnerLabels: [],
-  artifactPatterns: ["reports/testng/**"],
+  artifactPatterns: [],
   retryConcurrencyRules: [],
   roundRecoveryRules: [],
 };
@@ -331,13 +331,13 @@ export function mergeCaseSuiteExecutionPolicy(
     executor: override.executor ?? base.executor,
     adapter: override.adapter
       ? {
-          enabled: override.adapter.enabled,
+          enabled: true,
           suiteName: override.adapter.suiteName,
           testName: override.adapter.testName,
           environmentAddresses: [...override.adapter.environmentAddresses],
         }
       : {
-          enabled: base.adapter.enabled,
+          enabled: true,
           suiteName: base.adapter.suiteName,
           testName: base.adapter.testName,
           environmentAddresses: [...base.adapter.environmentAddresses],
@@ -375,9 +375,8 @@ export function mergeCaseSuiteExecutionPolicy(
         ? { runnerGroupId: base.runnerGroupId }
         : {}),
     runnerLabels: override.runnerLabels ? [...override.runnerLabels] : [...base.runnerLabels],
-    artifactPatterns: override.artifactPatterns
-      ? [...override.artifactPatterns]
-      : [...base.artifactPatterns],
+    // Compatibility with old snapshots only; artifacts cannot be re-enabled.
+    artifactPatterns: [],
     retryConcurrencyRules: normalizeStoredRetryConcurrencyRules(
       override.retryConcurrencyRules ?? base.retryConcurrencyRules,
     ),

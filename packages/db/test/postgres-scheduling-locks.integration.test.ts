@@ -231,14 +231,13 @@ describe.skipIf(!connectionString)("PostgreSQL scheduling lock isolation", () =>
           ).resolves.toMatchObject({ disposition: "accepted" });
         } else if (operation === "begin-upload") {
           await expect(
-            executions.declareArtifacts({
+            executions.beginAttemptUpload({
               runnerId,
               attemptId: current.attemptId,
               leaseTokenHash: current.tokenHash,
-              artifacts: [],
-              declaredAt: now,
+              startedAt: now,
             }),
-          ).resolves.toEqual([]);
+          ).resolves.toBeUndefined();
         } else {
           await expect(
             executions.cancelRun({

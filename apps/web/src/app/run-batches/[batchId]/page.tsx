@@ -116,10 +116,7 @@ export default async function RunBatchDetailsPage({
         canReadConcurrencyDiagnostics={canAuthorize(() =>
           services.identityAccess.authorize(identity, "runner.read", batch.projectId),
         )}
-        canReadArtifacts={canAuthorize(() =>
-          services.identityAccess.authorize(identity, "artifact.read", batch.projectId),
-        )}
-        artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
+
         runnerDirectory={runnerDirectory}
       />
     </div>

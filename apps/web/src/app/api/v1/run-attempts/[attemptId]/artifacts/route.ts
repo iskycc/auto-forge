@@ -1,56 +1,33 @@
-import { admitRunnerProtocolResource } from "@/lib/runner-protocol-admission";
 import { NextResponse } from "next/server";
-
-import { apiErrorResponse, bearerToken, readJsonBody } from "@/lib/api-response";
-import { authenticateRequest } from "@/lib/auth";
-import { getPlatformServices } from "@/lib/services";
 import { DomainError } from "@autoforge/domain";
+import { declareArtifactsInputSchema } from "@autoforge/contracts";
+import { apiErrorResponse, bearerToken, readJsonBody } from "@/lib/api-response";
+import { getPlatformServices } from "@/lib/services";
+import { admitRunnerProtocolResource } from "@/lib/runner-protocol-admission";
 
-type Context = { params: Promise<{ attemptId: string }> };
-
-export async function GET(request: Request, context: Context): Promise<NextResponse> {
-  try {
-    const identity = await authenticateRequest(request);
-    const { attemptId } = await context.params;
-    const services = await getPlatformServices();
-    const projectIds = services.identityAccess.projectScope(identity, "artifact.read");
-    const artifacts = await services.executionControl.listArtifacts(attemptId, projectIds);
-    return NextResponse.json({
-      items: artifacts.map(({ objectKey, ...artifact }) => ({
-        ...artifact,
-        ...(artifact.status === "uploaded" && objectKey
-          ? {
-              downloadPath: `/api/v1/run-attempts/${encodeURIComponent(attemptId)}/artifacts/${encodeURIComponent(artifact.artifactId)}`,
-            }
-          : {}),
-      })),
-    });
-  } catch (error) {
-    return apiErrorResponse(error);
-  }
-}
-
-export async function POST(request: Request, context: Context): Promise<NextResponse> {
+// Adjacent protocol-v1 Agents used an empty declaration to start the log-upload clock.
+// Only this timing handshake survives; no artifact is accepted or stored.
+export async function POST(request: Request, context: { params: Promise<{ attemptId: string }> }) {
   try {
     const runnerId = request.headers.get("x-autoforge-runner-id")?.trim();
     if (!runnerId) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机标识。");
     const { attemptId } = await context.params;
+    const input = declareArtifactsInputSchema.parse(await readJsonBody(request, 512 * 1024));
     const services = await getPlatformServices();
     await admitRunnerProtocolResource(
       services.runnerRequestLimiter,
-      "artifacts",
+      "upload-phase",
       runnerId,
       attemptId,
     );
-    return NextResponse.json(
-      await services.runnerProtocol.declareArtifacts(
-        runnerId,
-        bearerToken(request),
-        attemptId,
-        await readJsonBody(request, 512 * 1024),
-      ),
-    );
-  } catch (error) {
-    return apiErrorResponse(error);
+    await services.runnerProtocol.beginUpload(runnerId, bearerToken(request), attemptId, input);
+    if (input.artifacts.length)
+      throw new DomainError(
+        "EXECUTION_ARTIFACTS_RETIRED",
+        "执行产物上传已移除，请更新执行节点 Agent；用例结果和日志继续保留。",
+      );
+    return NextResponse.json({ schemaVersion: 1, artifacts: [] });
+  } catch (cause) {
+    return apiErrorResponse(cause);
   }
 }

@@ -24,7 +24,7 @@ func TestFinishedJavaEntersUploadPhaseBeforeWaitingForLogFlush(t *testing.T) {
 	defer releaseLogs()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(request.URL.Path, "/artifacts") {
+		if strings.HasSuffix(request.URL.Path, "/upload-phase") {
 			uploadPhase.Store(true)
 			releaseLogs()
 			_, _ = io.WriteString(writer, `{"schemaVersion":1,"artifacts":[]}`)
@@ -81,9 +81,10 @@ func TestFinishedJavaEntersUploadPhaseBeforeWaitingForLogFlush(t *testing.T) {
 	}
 	claimed := testClaimedAssignment(strings.Repeat("a", 64))
 	claimed.Assignment.ExecutionSpec.UploadTimeoutMs = 1000
+	claimed.Assignment.ExecutionSpec.ArtifactRules = []ArtifactRule{{Pattern: "missing-retired-report/**", Required: true}}
 	completed := make(chan completionResult, 1)
 	go func() {
-		completed <- supervisor.runTestNG(context.Background(), claimed, func(completionResult, []artifactUploadState) error { return nil }, func(executor.ProcessIdentity) error { return nil })
+		completed <- supervisor.runTestNG(context.Background(), claimed, func(completionResult) error { return nil }, func(executor.ProcessIdentity) error { return nil })
 	}()
 	var result completionResult
 	select {

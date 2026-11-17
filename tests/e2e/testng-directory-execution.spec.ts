@@ -101,6 +101,8 @@ test("TestNG directories remain browsable during a running task and a deferred r
   } while (cursor);
   expect(caseIds).toHaveLength(120);
   const capabilities = [
+    "adapter:cotest-testng-v1",
+    "runtime:project-assets-v1",
     "executor:testng-v1",
     "isolation:cgroup-v2",
     "java:21.0.8",

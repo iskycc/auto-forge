@@ -25,6 +25,7 @@ import { expectUiIntegrity } from "./support/ui-guard";
 type ClaimedAssignment = ClaimAssignmentsResponse["assignments"][number];
 
 const capabilities = [
+  "runtime:project-assets-v1",
   "executor:testng-v1",
   "isolation:cgroup-v2",
   "java:21.0.8",
@@ -59,6 +60,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
       }),
     }),
   );
+  await configureDebugRuntime(page, scope, jar, 0);
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
     data: {
@@ -116,24 +118,24 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await casePicker.getByRole("button", { name: "取消", exact: true }).click();
   await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
   await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
-  await expect(panel.getByLabel("调试启用 Adapter")).toBeChecked();
+  await expect(panel.getByLabel("调试启用 Adapter")).toHaveCount(0);
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
-  await panel.getByLabel("调试启用 Adapter").scrollIntoViewIfNeeded();
+  await panel.getByLabel("调试 Suite Name").scrollIntoViewIfNeeded();
   await screenshotReview(page, "ordinary-adapter-default-enabled");
   await panel.getByLabel("调试 Suite Name").fill("Remembered ordinary suite");
   await panel.getByLabel("调试 Test Name").fill("Remembered ordinary test");
   await editEnvironmentAddresses(page, panel, ["127.0.0.1"]);
-  await panel.getByLabel("调试启用 Adapter").uncheck();
+
   await page.goto("/cases");
   await page.goto("/case-debug");
   await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
   await expect(panel.locator('select[aria-label="调试执行机"]')).toHaveValue(runner.runnerId);
-  await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
-  await panel.getByLabel("调试启用 Adapter").check();
+  await expect(panel.getByLabel("调试启用 Adapter")).toHaveCount(0);
+
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Remembered ordinary suite");
   await expect(panel.getByLabel("调试 Test Name")).toHaveValue("Remembered ordinary test");
   await expect(panel.getByLabel("本次执行环境 IP")).toContainText("127.0.0.1");
-  await panel.getByLabel("调试启用 Adapter").uncheck();
+
   await expect(panel.getByLabel("调试配置保存状态")).toHaveText("配置已自动保存到当前浏览器");
   await screenshotReview(page, "ordinary-existing");
   await heartbeat(page, runner);
@@ -236,29 +238,8 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   expect(formalClasses.body.items).toHaveLength(1);
   expect(formalClasses.body.items[0]).toMatchObject({ id: source.classId, currentVersion: 2 });
 
-  const asset = await page.request.post(
-    `/api/v1/projects/${scope.projectId}/runtime-assets/upload?kind=jar-bundle&archiveFormat=zip`,
-    {
-      headers: {
-        ...headers,
-        "content-type": "application/octet-stream",
-        "x-autoforge-file-name": encodeURIComponent("debug-runtime.zip"),
-      },
-      data: Buffer.from(zipSync({ "tests.jar": jar })),
-    },
-  );
-  expect(asset.status(), await asset.text()).toBe(201);
-  const assetId = ((await asset.json()) as { id: string }).id;
-  expect(
-    (
-      await browserJson(
-        page,
-        `/api/v1/projects/${scope.projectId}/versions/${scope.projectVersionId}/adapter-configuration`,
-        { method: "PUT", body: { jarBundleAssetId: assetId, expectedRevision: 0 } },
-      )
-    ).status,
-  ).toBe(200);
-  await panel.getByLabel("调试启用 Adapter").check();
+  await configureDebugRuntime(page, scope, jar, 1);
+
   await editEnvironmentAddresses(page, panel, ["127.0.0.1"]);
   await heartbeat(page, runner);
   await panel.getByRole("button", { name: "再次执行", exact: true }).click();
@@ -281,8 +262,8 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(page.getByLabel("调试用例结果")).toHaveText("执行通过");
   await page.getByRole("tab", { name: "DDT 调试", exact: true }).click();
   panel = page.getByRole("region", { name: "DDT调试配置" });
-  await expect(panel.getByLabel("调试启用 Adapter")).toBeChecked();
-  await expect(panel.getByLabel("调试启用 Adapter")).toBeDisabled();
+  await expect(panel.getByLabel("调试启用 Adapter")).toHaveCount(0);
+  await expect(panel.getByLabel("调试启用 Adapter")).toHaveCount(0);
   const ddtInput = panel.getByLabel("DDT 用例输入", { exact: true });
   await ddtInput.getByRole("radio", { name: "复制现有用例", exact: true }).locator("..").click();
   await expect(ddtInput.locator("option")).toHaveCount(51);
@@ -505,7 +486,15 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
       testStageId: "other-stage",
       kind: "testng",
       caseDefinitionId: source.classId,
-      execution: { runnerIds: [runner.runnerId] },
+      execution: {
+        runnerIds: [runner.runnerId],
+        adapter: {
+          enabled: true,
+          suiteName: "Scope guard",
+          testName: "Regression",
+          environmentAddresses: ["127.0.0.1"],
+        },
+      },
     },
   });
   expect(badScope.status).toBe(409);
@@ -515,7 +504,15 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
       ...scope,
       kind: "testng",
       caseDefinitionId: "missing",
-      execution: { runnerIds: [runner.runnerId] },
+      execution: {
+        runnerIds: [runner.runnerId],
+        adapter: {
+          enabled: true,
+          suiteName: "Scope guard",
+          testName: "Regression",
+          environmentAddresses: ["127.0.0.1"],
+        },
+      },
     },
   });
   expect(missingCase.status).toBe(404);
@@ -557,7 +554,15 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
           ...scope,
           kind: "testng",
           caseDefinitionId: source.classId,
-          execution: { runnerIds: [runner.runnerId] },
+          execution: {
+            runnerIds: [runner.runnerId],
+            adapter: {
+              enabled: true,
+              suiteName: "Scope guard",
+              testName: "Regression",
+              environmentAddresses: ["127.0.0.1"],
+            },
+          },
         },
       },
     );
@@ -577,7 +582,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(page.getByLabel("调试执行结果")).toHaveCount(0);
   await expect(ordinaryPanel.locator('select[aria-label="调试测试类"]')).toHaveValue("");
   await expect(ordinaryPanel.locator('select[aria-label="调试执行机"]')).toHaveValue("");
-  await expect(ordinaryPanel.getByLabel("调试启用 Adapter")).toBeChecked();
+  await expect(ordinaryPanel.getByLabel("调试启用 Adapter")).toHaveCount(0);
   await ordinaryPanel.getByLabel("调试 Suite Name").fill("Other stage draft");
   await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
   await page.goto(savedUrl);
@@ -600,7 +605,7 @@ test("debug drafts isolate accounts in the same browser and remain usable when s
   await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
   await page.goto("/case-debug");
   const panel = page.getByRole("region", { name: "普通用例调试配置" });
-  await panel.getByLabel("调试启用 Adapter").check();
+
   await panel.getByLabel("调试 Suite Name").fill("Administrator draft");
   const draftKey = await page.evaluate(() =>
     Object.keys(localStorage).find((key) => key.startsWith("autoforge.case-debug-draft.v1:"))!,
@@ -639,7 +644,7 @@ test("debug drafts isolate accounts in the same browser and remain usable when s
   ).toBe(200);
   await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
   await page.goto("/case-debug");
-  await expect(panel.getByLabel("调试启用 Adapter")).toBeChecked();
+  await expect(panel.getByLabel("调试启用 Adapter")).toHaveCount(0);
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
   await panel.getByLabel("调试 Suite Name").fill("Peer draft");
   expect((await page.request.post("/api/v1/auth/logout", { headers })).ok()).toBe(true);
@@ -657,7 +662,7 @@ test("debug drafts isolate accounts in the same browser and remain usable when s
   await page.evaluate((key) => localStorage.setItem(key, "{broken"), draftKey);
   await page.reload();
   await expect(panel.getByLabel("调试配置保存状态")).toContainText("已保存配置无法读取");
-  await panel.getByLabel("调试启用 Adapter").check();
+
   await panel.getByLabel("调试 Suite Name").fill("Recovered draft");
   await page.reload();
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Recovered draft");
@@ -980,4 +985,34 @@ async function screenshotReview(page: Page, name: string) {
       fullPage: true,
     });
   }
+}
+
+async function configureDebugRuntime(
+  page: Page,
+  scope: { projectId: string; projectVersionId: string },
+  jar: Buffer,
+  expectedRevision: number,
+): Promise<void> {
+  const asset = await page.request.post(
+    `/api/v1/projects/${scope.projectId}/runtime-assets/upload?kind=jar-bundle&archiveFormat=zip`,
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "content-type": "application/octet-stream",
+        "x-autoforge-file-name": encodeURIComponent("debug-runtime.zip"),
+      },
+      data: Buffer.from(zipSync({ "tests.jar": jar })),
+    },
+  );
+  expect(asset.status(), await asset.text()).toBe(201);
+  const assetId = ((await asset.json()) as { id: string }).id;
+  expect(
+    (
+      await browserJson(
+        page,
+        `/api/v1/projects/${scope.projectId}/versions/${scope.projectVersionId}/adapter-configuration`,
+        { method: "PUT", body: { jarBundleAssetId: assetId, expectedRevision } },
+      )
+    ).status,
+  ).toBe(200);
 }

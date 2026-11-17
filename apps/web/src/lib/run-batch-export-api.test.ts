@@ -17,6 +17,8 @@ const {
   readConfiguration,
   listClaims,
   isBatchPublic,
+  hasAnalysis,
+  exportConclusions,
   paths,
 } = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
@@ -26,6 +28,8 @@ const {
   readConfiguration: vi.fn(),
   listClaims: vi.fn(),
   isBatchPublic: vi.fn(),
+  hasAnalysis: vi.fn(),
+  exportConclusions: vi.fn(),
   paths: { dataDirectory: "" },
 }));
 vi.mock("./auth", () => ({ authenticateRequest }));
@@ -38,6 +42,7 @@ vi.mock("./services", () => ({
     publicExecutionAccess: { ensureLinksForAttemptsInBatch: ensureShares, isBatchPublic },
     configurationStore: { read: readConfiguration, paths },
     failureAnalysis: { listExportClaims: listClaims },
+    aiAnalysis: { repository: { hasAnalysis, exportConclusions } },
   }),
 }));
 
@@ -78,6 +83,8 @@ beforeEach(async () => {
   );
   listClaims.mockResolvedValue([]);
   isBatchPublic.mockResolvedValue(true);
+  hasAnalysis.mockResolvedValue(false);
+  exportConclusions.mockResolvedValue([]);
   readConfiguration.mockReturnValue({
     web: { timeZone: "Asia/Shanghai", publicBaseUrl: "http://localhost" },
   });
@@ -132,7 +139,7 @@ describe("validated Excel downloads", () => {
     expect(ensureShares).not.toHaveBeenCalled();
     expect(listClaims).not.toHaveBeenCalled();
   });
-  it("rejects unpublished IDs and private analysis templates through the anonymous export boundary", async () => {
+  it("rejects unpublished IDs for both anonymous workbook templates", async () => {
     isBatchPublic.mockResolvedValue(false);
     const request = (query: string) =>
       GET(
@@ -143,11 +150,42 @@ describe("validated Excel downloads", () => {
       );
     expect((await request("")).status).toBe(400);
     expect(buildExport).not.toHaveBeenCalled();
-    isBatchPublic.mockResolvedValue(true);
-    expect((await request("&template=failure-analysis")).status).toBe(403);
+    expect((await request("&template=failure-analysis")).status).toBe(400);
     expect(buildExport).not.toHaveBeenCalled();
     expect(ensureShares).not.toHaveBeenCalled();
   });
+  it.each(["public=1", "access_token=legacy"])(
+    "exports the same failure-analysis workbook and AI column through %s",
+    async (access) => {
+      const token = issuePermanentShareToken("a".repeat(64), "run_batch", "batch");
+      const query = access === "public=1" ? access : `access_token=${encodeURIComponent(token)}`;
+      hasAnalysis.mockResolvedValue(true);
+      exportConclusions.mockResolvedValue([
+        { attemptId: row.attemptId, conclusion: "可能重跑通过：环境偶发抖动；依据：连接被重置。" },
+      ]);
+      const response = await GET(
+        new Request(
+          `http://localhost/api/v1/run-batches/batch/export?${query}&scope=final&template=failure-analysis`,
+        ),
+        { params: Promise.resolve({ batchId: "batch" }) },
+      );
+      expect(response.status).toBe(200);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await response.arrayBuffer());
+      const sheet = workbook.worksheets[0]!;
+      const headers = sheet.getRow(1).values as string[];
+      const aiColumn = headers.indexOf("AI 初步分析");
+      expect(aiColumn).toBe(headers.indexOf("失败堆栈") + 1);
+      expect(sheet.getCell(2, aiColumn).text).toContain("连接被重置");
+      expect(listClaims).toHaveBeenCalledWith({
+        projectId: "project",
+        batchId: "batch",
+        executionRunIds: ["run-failed"],
+      });
+      expect(authenticateRequest).not.toHaveBeenCalled();
+      expect(ensureShares).not.toHaveBeenCalled();
+    },
+  );
   it.each(["results", "failure-analysis"] as const)(
     "downloads %s DDT cells across pages without shifting result fields or public links",
     async (template) => {

@@ -9,7 +9,6 @@ import type {
   ExecutionException,
   ExecutionExceptionCursor,
   AssignmentDto,
-  ArtifactDeclaration,
   AttemptEventPage,
   CompleteAttemptResponse,
   CompletionResult,
@@ -574,34 +573,12 @@ export interface ExecutionControlRepository {
     afterEventId?: string;
     limit: number;
   }): Promise<AttemptEventPage>;
-  declareArtifacts(input: {
+  beginAttemptUpload(input: {
     runnerId: string;
     attemptId: string;
     leaseTokenHash: string;
-    artifacts: ArtifactDeclaration[];
-    declaredAt: string;
-  }): Promise<Array<ArtifactDeclaration & { status: "declared" | "uploaded" }>>;
-  resolveArtifactUpload(input: {
-    runnerId: string;
-    attemptId: string;
-    artifactId: string;
-    leaseTokenHash: string;
-    now: string;
-  }): Promise<ArtifactDeclaration & { status: "declared" | "uploaded"; objectKey?: string }>;
-  markArtifactUploaded(input: {
-    attemptId: string;
-    artifactId: string;
-    objectKey: string;
-    uploadedAt: string;
+    startedAt: string;
   }): Promise<void>;
-  listArtifacts(attemptId: string): Promise<
-    Array<
-      ArtifactDeclaration & {
-        status: "declared" | "uploaded" | "rejected";
-        objectKey?: string;
-      }
-    >
-  >;
   recoverExpired(input: {
     now: string;
     eventIds: string[];
@@ -723,18 +700,6 @@ export type ObjectWriteResult = {
   created: boolean;
 };
 
-export type ArtifactUploadTarget =
-  { kind: "control-plane" } | { kind: "direct"; uploadUrl: string; objectKey: string };
-
-export type ArtifactObjectIdentity = {
-  projectId: string;
-  attemptId: string;
-  artifactId: string;
-  sha256: string;
-  sizeBytes: number;
-  mediaType: string;
-};
-
 export interface JarObjectStorePort {
   putJar(projectId: string, sha256: string, content: Uint8Array): Promise<ObjectWriteResult>;
   putObject(input: {
@@ -744,17 +709,6 @@ export interface JarObjectStorePort {
     mediaType: string;
     content: AsyncIterable<Uint8Array>;
   }): Promise<ObjectWriteResult>;
-  putArtifact(input: {
-    projectId: string;
-    attemptId: string;
-    artifactId: string;
-    sha256: string;
-    sizeBytes: number;
-    mediaType: string;
-    content: AsyncIterable<Uint8Array>;
-  }): Promise<ObjectWriteResult>;
-  prepareArtifactUpload(input: ArtifactObjectIdentity): Promise<ArtifactUploadTarget>;
-  verifyArtifactUpload(input: ArtifactObjectIdentity): Promise<ObjectWriteResult>;
   delete(objectKey: string): Promise<void>;
   exists(objectKey: string): Promise<boolean>;
   list(input: { cursor?: string; limit: number; prefix?: string }): Promise<{

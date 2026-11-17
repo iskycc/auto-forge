@@ -3,6 +3,7 @@
 import { Alert, Tag } from "antd";
 import { SearchCheck, UserRound } from "lucide-react";
 import { ColorModeToggle } from "./color-mode-toggle";
+import { DocumentationLink } from "./documentation-link";
 import { SessionLoginButton } from "./session-login-button";
 import { useLoginDialog } from "./login-dialog-provider";
 import { FailureAnalysisSheet } from "./failure-analysis-sheet";
@@ -56,6 +57,7 @@ export function PublicFailureAnalysis({
           ) : (
             <SessionLoginButton label="登录后认领与分析" />
           )}
+          <DocumentationLink topic="failure-analysis" section="public-analysis" />
           <ColorModeToggle />
         </div>
       </header>

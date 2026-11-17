@@ -63,8 +63,8 @@ export function VersionCaseExecutionApi({
       <Typography.Title level={5}>默认配置</Typography.Title>
       <Descriptions column={1} size="small" bordered styles={{ label: { whiteSpace: "nowrap" } }}>
         <Descriptions.Item label="Adapter">
-          默认开启。Suite Name 取项目名，Test Name 取“版本名 - 测试阶段名”，环境地址使用
-          environmentIp。
+          统一使用 CoTest Adapter。Suite Name 取项目名，Test Name 取“版本名 -
+          测试阶段名”，环境地址使用 environmentIp。
         </Descriptions.Item>
         <Descriptions.Item label="执行机">
           自动从在线、兼容且具备所需能力的节点中调度；没有合适节点时返回明确错误。
@@ -83,11 +83,11 @@ export function VersionCaseExecutionApi({
           execution.runnerIds 或 execution.runnerGroupId 可选，二者不能同时填写。
         </Descriptions.Item>
         <Descriptions.Item label="Adapter 覆盖">
-          execution.adapter.suiteName、testName 可选；普通用例可显式关闭 Adapter，DDT 必须开启。
+          execution.adapter.suiteName、testName 可选，普通用例与 DDT 均使用 CoTest Adapter。
         </Descriptions.Item>
         <Descriptions.Item label="其他策略">
-          execution 内可选重跑策略、delaySeconds、priority、排队/领取/上传时限和
-          artifactPatterns；用例执行超时由平台统一配置。
+          execution 内可选重跑策略、delaySeconds、priority
+          和排队/领取/上传时限；用例执行超时由平台统一配置。
         </Descriptions.Item>
       </Descriptions>
       <Space wrap className="justify-between">

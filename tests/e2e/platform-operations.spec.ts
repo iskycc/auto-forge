@@ -225,14 +225,11 @@ test("configuration conflicts, diagnostics and retention controls remain observa
       ? "http://10.20.30.41:3000"
       : "http://10.20.30.40:3000";
   const artifactCollection = page.getByLabel(/启用产物收集/);
-  const originalArtifactCollection = await artifactCollection.isChecked();
+  await expect(artifactCollection).toHaveCount(0);
   await publicBaseUrl.fill(testPublicBaseUrl);
   await runnerBaseUrl.fill(testRunnerBaseUrl);
-  await artifactCollection.setChecked(!originalArtifactCollection);
   await page.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(
-    page.getByText(/外部访问地址、内部访问地址、产物收集已立即生效.*无需重启/),
-  ).toBeVisible();
+  await expect(page.getByText(/外部访问地址、内部访问地址已立即生效.*无需重启/)).toBeVisible();
   const savedConfiguration = await page.request.get("/api/v1/settings/platform");
   expect(savedConfiguration.status()).toBe(200);
   expect(await savedConfiguration.json()).toMatchObject({
@@ -247,11 +244,8 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await page.goto("/settings/platform");
   await page.locator('input[name="publicBaseUrl"]').fill(originalPublicBaseUrl);
   await page.locator('input[name="runnerBaseUrl"]').fill(originalRunnerBaseUrl);
-  await artifactCollection.setChecked(originalArtifactCollection);
   await page.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(
-    page.getByText(/外部访问地址、内部访问地址、产物收集已立即生效.*无需重启/),
-  ).toBeVisible();
+  await expect(page.getByText(/外部访问地址、内部访问地址已立即生效.*无需重启/)).toBeVisible();
 
   await expandAdministrationGroup(page, "平台运维");
   await page.getByRole("link", { name: "系统信息" }).click();

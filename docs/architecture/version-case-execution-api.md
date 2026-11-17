@@ -36,7 +36,7 @@ DDT 最小请求：
 
 ## 默认行为
 
-- 普通用例和 DDT 均默认启用 Adapter，使用当前项目版本已配置的运行资产；需预先配置完整依赖包，缺失时沿用现有执行校验明确拒绝。
+- 普通用例和 DDT 均使用 CoTest Adapter，不提供关闭选项，使用当前项目版本已配置的运行资产；需预先配置完整依赖包，缺失时沿用现有执行校验明确拒绝。
 - Suite Name 默认取项目名，Test Name 默认取“版本名 - 测试阶段名”。阶段来自最终定位到的用例范围，API 与已有任务/快捷执行表单复用同一命名实现。
 - 省略执行资源时，从在线、身份有效、协议/平台兼容且具备所需标签和能力的执行机中形成最多 64 台的候选快照，再由原有资源感知调度器选择节点。普通用例需要 Adapter 能力，DDT 还需中文 CaseID / DDT API 地址能力。读取采用主键游标分页，不受列表页首屏数量影响；无合适节点返回 `RUNNER_AUTO_SELECTION_EMPTY`，不创建执行记录。忙碌节点仍可进入候选池，按原有并发/负载/排队规则等待。
 - 执行资源、名称和环境地址写入本次快照，后续重试、恢复和日志诊断重跑沿用已有规则；不读取调用者浏览器的执行偏好。
@@ -49,12 +49,11 @@ DDT 最小请求：
 | `caseDefinitionId`                                                                  | 兼容普通用例的平台 ID，可替代 `className` 作精确定位；`className`、`caseDefinitionId`、`caseId` 只能提供一个。普通调用无需先查询平台 ID。                                                                |
 | `execution.runnerIds` / `execution.runnerGroupId`                                   | 可显式限制执行机/机组，二者不能同时提供；省略则自动选取。显式资源继续使用原有校验与排队行为。                                                                                                            |
 | `execution.adapter.suiteName`、`execution.adapter.testName`                         | 可覆盖默认名称；空白值仍使用默认名称。                                                                                                                                                                   |
-| `execution.adapter.enabled`                                                         | 默认 `true`；普通用例可显式关闭，DDT 不允许关闭。环境地址始终来自必填的 `environmentIp`，不接受第二份 `environmentAddresses` 覆盖。                                                                      |
+| 旧 `execution.adapter.enabled`                                                      | 仅兼容旧调用，传入 `false` 也归一为启用。新调用省略此字段；环境地址始终来自必填的 `environmentIp`，不接受第二份 `environmentAddresses` 覆盖。                                                            |
 | `execution.retryLimit`、`execution.retryMode`                                       | 默认不重跑（`retryLimit: 0`），重跑方式默认 `round`。                                                                                                                                                    |
 | `execution.delaySeconds`                                                            | 默认立即进入调度，可设置延迟秒数。                                                                                                                                                                       |
 | `execution.priority`                                                                | 默认 0，可指定 -100 到 100。                                                                                                                                                                             |
 | `execution.queueTimeoutMs`、`execution.claimTimeoutMs`、`execution.uploadTimeoutMs` | 分别默认 86,400,000、300,000、600,000 毫秒；不属于用例进程执行超时。                                                                                                                                     |
-| `execution.artifactPatterns`                                                        | 沿用已有单用例采集规则，受平台产物采集开关约束。                                                                                                                                                         |
 
 普通用例按完整 Java 类路径精确匹配，区分大小写；不按显示名称、简单类名、方法名、子串或通配符推测。嵌套类保留 `$`，例如 `com.example.CheckoutTest$Nested`。
 同一版本不同有效阶段存在相同类路径或 DDT CaseID 时，分别返回 HTTP 409、`CASE_CLASS_SCOPE_CONFLICT` 或 `DDT_CASE_SCOPE_CONFLICT`，提示使用带阶段的 URL，不随机选择第一条，也不创建执行记录：

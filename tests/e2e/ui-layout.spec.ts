@@ -2687,10 +2687,10 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
-  await expect(suiteDialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await expect(suiteDialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
   await expect(suiteDialog.getByText("TestNG Suite Name")).toBeVisible();
-  await suiteDialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
-  await expect(suiteDialog.getByText("TestNG Suite Name")).toHaveCount(0);
+
+  await expect(suiteDialog.getByLabel("TestNG Suite Name", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 
   await page.goto("/route-that-does-not-exist");
@@ -3174,14 +3174,14 @@ test("global execution dialog covers and centers within the whole viewport", asy
     await expectStartModeChoicesFit(dialog);
 
     await dialog.getByRole("radio", { name: "单个用例", exact: true }).locator("..").click();
-    const adapterToggle = dialog.getByLabel("使用 CoTest TestNG Adapter");
-    await expect(adapterToggle).toBeChecked();
+    const adapterConfigurationField = dialog.getByLabel("单用例 Adapter Suite Name");
+    await expect(adapterConfigurationField).toBeVisible();
     await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
     await expect(dialog.locator('[name="parameters"]')).toHaveCount(0);
     await dialog.locator(".global-run-form-content").evaluate((form) => {
       form.scrollTop = form.scrollHeight;
     });
-    await expect(adapterToggle).toBeInViewport();
+    await expect(adapterConfigurationField).toBeInViewport();
     await expectViewportDialog(backdrop, dialog, viewport);
     await captureUi(page, "/global-run-dialog-single-case", viewport.width, false);
     await expectStartModeChoicesFit(dialog);

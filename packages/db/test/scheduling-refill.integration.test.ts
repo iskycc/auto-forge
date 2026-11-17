@@ -1598,12 +1598,11 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         now: "2026-08-10T00:09:59.000Z",
         expiresAt: "2026-08-10T00:20:00.000Z",
       });
-      await harness.executions.declareArtifacts({
+      await harness.executions.beginAttemptUpload({
         runnerId: harness.runnerId,
         attemptId,
         leaseTokenHash: trace.second.token,
-        artifacts: [],
-        declaredAt: "2026-08-10T00:14:59.000Z",
+        startedAt: "2026-08-10T00:14:59.000Z",
       });
       const recover = (now: string) =>
         harness.executions.recoverExpired({
@@ -2232,7 +2231,6 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         undefined,
         128,
         5,
-        undefined,
         undefined,
         undefined,
         undefined,

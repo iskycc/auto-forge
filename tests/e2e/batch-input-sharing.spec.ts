@@ -419,7 +419,7 @@ async function createSharedSuite(page: Page): Promise<void> {
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
   await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
   await createSuiteDialog.getByLabel("说明").fill("批次级输入共享端到端验收任务");
-  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+
   await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
   await createSuiteDialog.getByLabel("TestNG Test Name").fill("JavaCasesConcurrent");
   // 三个 fixture 都断言注入地址为 environmentAddress，只填一个地址保证

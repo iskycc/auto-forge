@@ -24,6 +24,7 @@ import { expectUiIntegrity } from "./support/ui-guard";
 import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
 
 const lifecycleRunnerCapabilities = [
+  "runtime:project-assets-v1",
   "executor:testng-v1",
   "java:21.0.8",
   "testng:7.11.0",
@@ -2093,7 +2094,7 @@ test("task adapter names default to project, version and stage without replacing
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "创建用例任务", exact: true });
-  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
   await expect(dialog.getByLabel("TestNG Suite Name", { exact: true })).toHaveValue(project.name);
   await expect(dialog.getByLabel("TestNG Test Name", { exact: true })).toHaveValue(
     "Lifecycle version - SIT",
@@ -2124,8 +2125,8 @@ test("task adapter names default to project, version and stage without replacing
   });
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "创建任务", exact: true }).click();
-  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
-  await dialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
+
   await dialog.getByLabel("任务名称", { exact: true }).fill(`Direct execution ${suffix}`);
   const directCreated = page.waitForResponse(
     (response) =>
@@ -2139,10 +2140,10 @@ test("task adapter names default to project, version and stage without replacing
     id: string;
     policy: { adapter: { enabled: boolean } };
   };
-  expect(directSuite.policy.adapter.enabled).toBe(false);
+  expect(directSuite.policy.adapter.enabled).toBe(true);
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "创建任务", exact: true }).click();
-  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toHaveCount(0);
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   const directCopy = await browserJson<{ id: string; policy: { adapter: { enabled: boolean } } }>(
     page,
@@ -2150,9 +2151,9 @@ test("task adapter names default to project, version and stage without replacing
     { method: "POST", body: { name: `Direct copy ${suffix}`, includeCases: false } },
   );
   expect(directCopy.status).toBe(201);
-  expect(directCopy.body.policy.adapter.enabled).toBe(false);
+  expect(directCopy.body.policy.adapter.enabled).toBe(true);
   await page.goto(`/case-suites/${directCopy.body.id}`);
-  await expect(page.locator('input[name="adapterEnabled"]')).not.toBeChecked();
+  await expect(page.locator('input[name="adapterEnabled"]')).toHaveCount(0);
   const runner = await registerRunner(page, suffix);
   await configureTaskExecution(page, suite.id, runner.id);
 
@@ -2192,7 +2193,9 @@ test("task adapter names default to project, version and stage without replacing
     },
   });
   expect(legacy.status).toBe(201);
-  await configureTaskExecution(page, legacy.body.id, runner.id);
+  await configureTaskExecution(page, legacy.body.id, runner.id, {
+    adapter: { enabled: true, suiteName: "", testName: "", environmentAddresses: ["10.0.0.21"] },
+  });
   await selectProjectContext(page, project.id, project.versionId, stage.body.id);
   await page.goto(`/case-suites/${legacy.body.id}`);
   await expect(page.getByText("任务配置有未保存的修改", { exact: true })).toBeVisible();
@@ -2222,7 +2225,7 @@ test("task adapter names default to project, version and stage without replacing
 
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务", exact: true }).click();
-  await dialog.getByLabel("使用 CoTest TestNG Adapter").check();
+
   await expect(dialog.getByLabel("TestNG Suite Name", { exact: true })).toHaveValue(project.name);
   await expect(dialog.getByLabel("TestNG Test Name", { exact: true })).toHaveValue(
     "Lifecycle version - Lifecycle stage",
@@ -3689,7 +3692,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("Runner 标签（逗号分隔）").fill("linux, lifecycle");
   await expect(page.getByText("参数模板")).toHaveCount(0);
   await expect(page.locator('[name="parameters"]')).toHaveCount(0);
-  const adapterToggle = page.getByLabel("使用 CoTest TestNG Adapter");
+  const adapterConfigurationField = page.locator('input[name="adapterSuiteName"]');
   const retryOrchestrationCards = page.locator(".retry-orchestration-card");
   for (const viewport of [
     { width: 1536, height: 1024 },
@@ -3704,11 +3707,10 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     await retryOrchestrationCards.nth(1).scrollIntoViewIfNeeded();
     await expectHorizontalIntegrity(retryOrchestrationCards.nth(1));
     await captureUi(page, `case-suite-round-recovery-${viewport.width}`);
-    await adapterToggle.scrollIntoViewIfNeeded();
+    await adapterConfigurationField.scrollIntoViewIfNeeded();
     await captureUi(page, `case-suite-execution-policy-${viewport.width}`);
   }
   await page.setViewportSize({ width: 1536, height: 1024 });
-  await page.getByLabel("产物规则（每行一个相对路径 glob）").fill("reports/**/*.xml");
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
   const retryPolicy = await browserJson<{

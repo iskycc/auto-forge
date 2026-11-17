@@ -4,7 +4,6 @@ import {
   createCaseDebugDraftStore,
   type CaseDebugDraft,
 } from "./case-debug-draft";
-import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "./case-suite-adapter-defaults";
 
 const scope = {
   userId: "user",
@@ -17,7 +16,6 @@ const defaults: CaseDebugDraft = {
   runnerKind: "runner",
   runnerId: "",
   groupId: "",
-  adapterEnabled: DEFAULT_EXECUTION_ADAPTER_ENABLED,
   suiteName: "Project",
   testName: "V1 SIT",
   addresses: "",
@@ -37,6 +35,20 @@ function fixture() {
 }
 
 describe("case debug automatic configuration saving", () => {
+  it("ignores the retired Adapter switch in an existing browser draft", () => {
+    const { values, create } = fixture();
+    values.set(
+      caseDebugDraftKey(scope),
+      JSON.stringify({
+        schemaVersion: 1,
+        draft: { ...defaults, adapterEnabled: false, addresses: "10.0.0.21" },
+      }),
+    );
+    const store = create();
+    store.subscribe(vi.fn());
+    expect(store.getSnapshot().draft).not.toHaveProperty("adapterEnabled");
+    expect(store.getSnapshot().draft.addresses).toBe("10.0.0.21");
+  });
   it("restores edits without executing, including empty text, choices and inactive resource selection", () => {
     const { create, values } = fixture();
     const store = create();
@@ -50,7 +62,6 @@ describe("case debug automatic configuration saving", () => {
       runnerKind: "group",
       groupId: "group",
       addresses: "10.0.0.1\n10.0.0.2",
-      adapterEnabled: false,
     });
     unsubscribe();
     const beforeMount = [...values];
@@ -63,7 +74,6 @@ describe("case debug automatic configuration saving", () => {
       suiteName: "",
       runnerId: "runner",
       groupId: "group",
-      adapterEnabled: false,
     });
     expect([...values]).toEqual(beforeMount);
   });

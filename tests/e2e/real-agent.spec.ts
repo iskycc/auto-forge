@@ -33,10 +33,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
   try {
     await waitForOnlineRunner(page, agent);
     await importTestJar(page);
-    await createExecutableSuite(page, successSuiteName, "RealAgentFixture", 0, [
-      "reports/testng/testng-results.xml",
-      "artifacts/*.txt",
-    ]);
+    await createExecutableSuite(page, successSuiteName, "RealAgentFixture", 0);
     const batchId = await scheduleExecution(page, successSuiteName);
 
     // 实时 stdout 捕获验证：attempt 运行期间日志即出现在详情页。
@@ -79,7 +76,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
 
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
     await openExecutionCaseDetails(page);
-    // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果与产物。
+    // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果。
     await page
       .getByRole("row", { name: "RealAgentFixture" })
       .getByRole("button", { name: "详情" })
@@ -88,15 +85,8 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await expect(page.getByLabel("TestNG 结果汇总")).toContainText("通过1");
     await expect(page.getByText("executesThroughRealAgent", { exact: true })).toBeVisible();
 
-    await expect(page.getByText(/reports\/testng\/testng-results\.xml/)).toBeVisible();
-    await expect(page.getByLabel(/下载 reports\/testng\/testng-results\.xml/)).toBeVisible();
-    const customArtifact = page.getByLabel("下载 artifacts/real-agent.txt");
-    await expect(customArtifact).toBeVisible();
-    const artifactHref = await customArtifact.getAttribute("href");
-    expect(artifactHref).toBeTruthy();
-    const artifactDownload = await page.request.get(artifactHref!);
-    expect(artifactDownload.status()).toBe(200);
-    expect(await artifactDownload.text()).toBe("REAL_AGENT_ARTIFACT_SAFE\n");
+    await expect(page.getByRole("heading", { name: "产物", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("下载 artifacts/real-agent.txt")).toHaveCount(0);
     await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
 
     await page.getByRole("button", { name: "查看日志" }).click();
@@ -471,14 +461,13 @@ async function createExecutableSuite(
   suiteName: string,
   caseDisplayName: string,
   retryLimit: number,
-  artifactPatterns: string[] = ["reports/testng/testng-results.xml"],
 ): Promise<void> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
   await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
   await createSuiteDialog.getByLabel("说明").fill("由真实 Go Agent 与离线 TestNG 工具链执行");
-  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+
   await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
   await createSuiteDialog.getByLabel("TestNG Test Name").fill(caseDisplayName);
   if (caseDisplayName === "RealAgentFixture") {
@@ -498,7 +487,6 @@ async function createExecutableSuite(
   await configureTaskExecution(page, suiteId, runnerId);
   await suiteLink.click();
   await page.getByLabel("重试次数上限").fill(String(retryLimit));
-  await page.getByLabel("产物规则（每行一个相对路径 glob）").fill(artifactPatterns.join("\n"));
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
 
@@ -653,10 +641,7 @@ async function exerciseFullDependencyRecovery(
   await exerciseFailedJarImportRetry(page, controlDirectory);
   await exerciseAnalyticsExportCancellation(page, controlDirectory);
   const suiteName = "真实 Agent Full 依赖恢复验收";
-  await createExecutableSuite(page, suiteName, "RealAgentRecoveryFixture", 0, [
-    "reports/testng/testng-results.xml",
-    "artifacts/*.txt",
-  ]);
+  await createExecutableSuite(page, suiteName, "RealAgentRecoveryFixture", 0);
 
   const natsBatchId = await duringPausedDependency(controlDirectory, "nats", () =>
     scheduleExecution(page, suiteName),
@@ -684,21 +669,20 @@ async function exerciseFullDependencyRecovery(
   await rm(minioAcknowledgement, { force: true });
   await writeFile(minioMarker, `${new Date().toISOString()}\n`, { mode: 0o600 });
   const minioBatchId = await scheduleExecution(page, suiteName);
-  await waitForSucceededBatch(page, minioBatchId, agent);
+  const recovered = await waitForSucceededBatch(page, minioBatchId, agent);
   await waitForFile(minioAcknowledgement, 60_000);
+  expect(recovered.attempts[0]?.testNg).toMatchObject({ total: 1, passed: 1, failed: 0 });
+  expect(await readAttemptLogs(page, recovered.attempts[0]!.id, "stdout")).toContain(
+    "REAL_AGENT_FULL_RECOVERY_STARTED",
+  );
   await page.goto(`/run-batches/${encodeURIComponent(minioBatchId)}`);
   await openExecutionCaseDetails(page);
-  // 行内详情默认收起，先展开才能看到产物下载入口。
   await page
     .getByRole("row", { name: "RealAgentRecoveryFixture" })
     .getByRole("button", { name: "详情" })
     .click();
-  const artifact = page.getByLabel("下载 artifacts/full-recovery.txt");
-  await expect(artifact).toBeVisible();
-  const href = await artifact.getAttribute("href");
-  expect(href).toBeTruthy();
-  const download = await page.request.get(href!);
-  expect(await download.text()).toBe("FULL_RECOVERY_ARTIFACT\n");
+  await expect(page.getByLabel("TestNG 结果汇总")).toContainText("通过1");
+  await expect(page.getByRole("heading", { name: "产物", exact: true })).toHaveCount(0);
   await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
 }
 

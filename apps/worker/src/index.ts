@@ -131,7 +131,6 @@ const batches = new RunBatchSchedulingService(
   undefined,
   undefined,
   config.caseExecutionTimeoutSeconds * 1_000,
-  config.artifactCollectionEnabled,
   config.readSchedulingConfiguration,
   new PostgresLogWriteAdmission(database),
 );
@@ -219,7 +218,6 @@ const backgroundPool = new BackgroundWorkerPool(
     attemptLogsDirectory: join(config.dataDirectory, "attempt-logs"),
     dataDirectory: config.dataDirectory,
     caseExecutionTimeoutSeconds: config.caseExecutionTimeoutSeconds,
-    artifactCollectionEnabled: config.artifactCollectionEnabled(),
     scheduler: config.scheduling,
     full: {
       masterKey: config.masterKey,

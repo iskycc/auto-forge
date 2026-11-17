@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -51,65 +53,6 @@ func TestClientDownloadsOnlyTheDeclaredInputSizeWithRunnerAndLeaseCredentials(t 
 	}
 	if destination.String() != "jar" {
 		t.Fatalf("downloaded input = %q", destination.String())
-	}
-}
-
-func TestClientUploadsDirectArtifactWithoutLeakingCredentialsAndFinalizes(t *testing.T) {
-	artifactReceived := false
-	objectServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "" || request.Header.Get("X-AutoForge-Lease-Token") != "" || request.Header.Get("X-AutoForge-Runner-Id") != "" {
-			t.Error("direct upload leaked control-plane credentials")
-		}
-		content := new(bytes.Buffer)
-		if _, err := content.ReadFrom(request.Body); err != nil {
-			t.Error(err)
-		}
-		artifactReceived = content.String() == "artifact"
-		writer.WriteHeader(http.StatusOK)
-	}))
-	defer objectServer.Close()
-
-	finalized := false
-	controlServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/run-attempts/attempt-1/artifacts/artifact-1/finalize" {
-			http.NotFound(writer, request)
-			return
-		}
-		if request.Header.Get("Authorization") != "Bearer runner-credential" || request.Header.Get("X-AutoForge-Lease-Token") != "lease-token" || request.Header.Get("X-AutoForge-Runner-Id") != "runner-1" {
-			http.Error(writer, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		finalized = true
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(uploadArtifactResponse{ArtifactID: "artifact-1", Status: "uploaded"})
-	}))
-	defer controlServer.Close()
-
-	client, err := NewClient(testConfiguration(t, controlServer.URL))
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "artifact.xml")
-	if err := os.WriteFile(path, []byte("artifact"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err = client.UploadArtifact(
-		context.Background(),
-		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
-		Lease{Token: "lease-token"},
-		declaredArtifact{
-			artifactDeclaration: artifactDeclaration{ArtifactID: "artifact-1", MediaType: "application/xml", SizeBytes: 8},
-			UploadMethod:        "direct",
-			UploadPath:          objectServer.URL + "/signed-object",
-			FinalizePath:        "/api/v1/run-attempts/attempt-1/artifacts/artifact-1/finalize",
-		},
-		path,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !artifactReceived || !finalized {
-		t.Fatalf("artifactReceived=%v finalized=%v", artifactReceived, finalized)
 	}
 }
 
@@ -432,5 +375,52 @@ func testConfiguration(t testing.TB, serverURL string) config.Config {
 			MaxSessions:     1,
 			MaximumDuration: time.Hour,
 		},
+	}
+}
+
+func TestClientBeginsLogUploadWithCurrentAndAdjacentLegacyServers(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%v", legacy), func(t *testing.T) {
+			requests := []string{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.URL.Path)
+				if r.Header.Get("x-autoforge-runner-id") != "runner-phase" || r.Header.Get("authorization") != "Bearer phase-credential" {
+					t.Error("missing Runner authentication")
+				}
+				if strings.HasSuffix(r.URL.Path, "/upload-phase") && legacy {
+					http.NotFound(w, r)
+					return
+				}
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				if legacy && string(body["artifacts"]) != "[]" {
+					t.Error("legacy handshake must not declare files")
+				}
+				if !legacy && body["artifacts"] != nil {
+					t.Error("current upload phase must not contain file metadata")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{ "schemaVersion":1 }`)
+			}))
+			defer server.Close()
+			client, err := NewClient(config.Config{ServerURL: mustParseURL(t, server.URL)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			if err := client.BeginUpload(context.Background(), Identity{RunnerID: "runner-phase", Credential: "phase-credential"}, "attempt-phase", "lease-token"); err != nil {
+				t.Fatal(err)
+			}
+			expected := 1
+			if legacy {
+				expected = 2
+			}
+			if len(requests) != expected {
+				t.Fatalf("unexpected phase requests: %v", requests)
+			}
+		})
 	}
 }

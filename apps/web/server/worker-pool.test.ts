@@ -56,7 +56,6 @@ function pool() {
       migrationsFolder: "unused",
       attemptLogsDirectory: "unused",
       caseExecutionTimeoutSeconds: 60,
-      artifactCollectionEnabled: false,
       scheduler: {
         maximumCpuUtilizationPercent: 90,
         maximumMemoryUtilizationPercent: 90,
@@ -333,7 +332,6 @@ function diagnosticPool(mode: "lite" | "full") {
       migrationsFolder: "unused",
       attemptLogsDirectory: "unused",
       caseExecutionTimeoutSeconds: 60,
-      artifactCollectionEnabled: false,
       scheduler: {
         maximumCpuUtilizationPercent: 90,
         maximumMemoryUtilizationPercent: 90,

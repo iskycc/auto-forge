@@ -77,7 +77,7 @@ export function AttemptRerunEnvironment({
           type="button"
           aria-label="执行此用例"
           aria-busy={pending}
-          disabled={pending || !configuration || (configuration.adapterEnabled && !environmentIp)}
+          disabled={pending || !configuration || !environmentIp}
           onClick={() => void execute()}
         >
           <RotateCcw size={15} />
@@ -86,7 +86,7 @@ export function AttemptRerunEnvironment({
         <Button
           type="button"
           variant="secondary"
-          disabled={pending || !configuration?.adapterEnabled}
+          disabled={pending || !configuration}
           onClick={() => setEditing(true)}
         >
           <Settings2 size={15} />
@@ -96,15 +96,9 @@ export function AttemptRerunEnvironment({
       <div className="flex min-w-0 max-w-xl flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-muted px-3 py-2 text-xs">
         <span className="text-muted-foreground">下一次手动执行 IP</span>
         <span className="min-w-0 font-mono [overflow-wrap:anywhere]">
-          {configuration
-            ? configuration.adapterEnabled
-              ? environmentIp || "尚未配置"
-              : "未启用 Adapter"
-            : error
-              ? "读取失败"
-              : "正在读取…"}
+          {configuration ? environmentIp || "尚未配置" : error ? "读取失败" : "正在读取…"}
         </span>
-        {configuration?.adapterEnabled ? (
+        {configuration ? (
           <span className="text-muted-foreground">
             · {environmentOverride === undefined ? "本次执行环境" : "本页自定义"}
           </span>

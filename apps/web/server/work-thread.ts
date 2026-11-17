@@ -507,9 +507,9 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
         ),
       );
     }
-    case "declare-artifacts":
-      return executionRepository().declareArtifacts(
-        task.input as Parameters<ExecutionControlRepository["declareArtifacts"]>[0],
+    case "begin-attempt-upload":
+      return executionRepository().beginAttemptUpload(
+        task.input as Parameters<ExecutionControlRepository["beginAttemptUpload"]>[0],
       );
     case "recover-expired":
       return executionRepository().recoverExpired(
@@ -769,7 +769,6 @@ function schedulingService(): RunBatchSchedulingService {
       collaborators.projectStructures,
       collaborators.runnerGroups,
       configuration.caseExecutionTimeoutSeconds * 1_000,
-      () => platformConfigurationStore.read().limits.artifactCollectionEnabled,
       () => platformConfigurationStore.readScheduler(),
       configuration.mode === "full" ? new PostgresLogWriteAdmission(postgresHandle()) : undefined,
     );

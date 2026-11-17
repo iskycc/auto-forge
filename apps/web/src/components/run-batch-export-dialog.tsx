@@ -81,7 +81,7 @@ export function RunBatchExportDialog({
         title="导出执行结果"
         description={
           publicExport
-            ? "按所选范围导出已公开的标准执行结果。"
+            ? "按所选范围导出公开执行结果或失败用例分析清单。"
             : "选择导出范围，可分别下载 Excel 或失败日志 ZIP。"
         }
         onClose={onClose}
@@ -106,32 +106,30 @@ export function RunBatchExportDialog({
         }
       >
         <div className="grid min-w-0 gap-4">
-          {!publicExport ? (
-            <fieldset className={groupClassName}>
-              <legend>导出内容</legend>
-              <Radio.Group
-                name="export-template"
-                value={template}
-                onChange={(event) => setTemplate(event.target.value as RunBatchExportTemplate)}
-                disabled={exporting}
-                className="w-full grid-cols-2 gap-3"
-                style={{ display: "grid" }}
-              >
-                <ExportChoice
-                  value="results"
-                  selected={template === "results"}
-                  label="标准执行结果"
-                  description="按筛选结果导出执行时间、耗时和日志链接"
-                />
-                <ExportChoice
-                  value="failure-analysis"
-                  selected={template === "failure-analysis"}
-                  label="失败用例分析清单"
-                  description="仅包含失败或异常结束的用例，附带可填写的分析字段"
-                />
-              </Radio.Group>
-            </fieldset>
-          ) : null}
+          <fieldset className={groupClassName}>
+            <legend>导出内容</legend>
+            <Radio.Group
+              name="export-template"
+              value={template}
+              onChange={(event) => setTemplate(event.target.value as RunBatchExportTemplate)}
+              disabled={exporting}
+              className="w-full grid-cols-2 gap-3"
+              style={{ display: "grid" }}
+            >
+              <ExportChoice
+                value="results"
+                selected={template === "results"}
+                label="标准执行结果"
+                description="按筛选结果导出执行时间、耗时和日志链接"
+              />
+              <ExportChoice
+                value="failure-analysis"
+                selected={template === "failure-analysis"}
+                label="失败用例分析清单"
+                description="仅包含失败或异常结束的用例，附带可填写的分析字段"
+              />
+            </Radio.Group>
+          </fieldset>
           <fieldset className={groupClassName}>
             <legend>导出范围</legend>
             <Radio.Group

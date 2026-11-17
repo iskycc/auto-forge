@@ -94,9 +94,23 @@ function derivedBatchAdapterRuntime(input: {
   snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>;
   runtimeAssetSource: DerivedRuntimeAssetSource;
   adapterEnvironmentAddresses?: string[];
+  adapterDefaults?: ReturnType<typeof executionAdapterNameDefaults>;
 }): Pick<CreateRunBatchRecord, "adapter" | "adapterRuntimeSnapshot" | "ddtDebug"> {
   const runtime = input.snapshot.adapterRuntime;
-  if (!runtime) return {};
+  if (!runtime) {
+    if (input.runtimeAssetSource !== "current_project_version" || !input.adapterDefaults)
+      throw new DomainError(
+        "ADAPTER_RUNTIME_SNAPSHOT_MISSING",
+        "原执行未记录 CoTest 运行配置，请以未通过用例创建任务并配置执行环境后执行。",
+      );
+    return {
+      adapter: {
+        enabled: true,
+        ...input.adapterDefaults,
+        environmentAddresses: [...(input.adapterEnvironmentAddresses ?? [])],
+      },
+    };
+  }
   const environmentAddresses = [
     ...(input.adapterEnvironmentAddresses ?? runtime.environmentAddresses),
   ];
@@ -180,7 +194,6 @@ export class RunBatchSchedulingService {
     private readonly projectStructures?: ProjectStructureRepository,
     private readonly runnerGroups?: RunnerGroupRepository,
     private readonly caseExecutionTimeoutMs = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS * 1_000,
-    private readonly artifactCollectionEnabled: () => boolean = () => true,
     private readonly readSchedulingConfiguration?: () => LiveSchedulingConfiguration,
     private readonly logWriteAdmission?: import("./ports").ExecutionLogWriteAdmission,
   ) {}
@@ -219,10 +232,11 @@ export class RunBatchSchedulingService {
     const validated = createRunBatchInputSchema.parse(input);
     const suite = await this.suites.get(validated.suiteId);
     const environmentAddresses = context?.environmentAddresses ?? validated.environmentAddresses;
-    if (environmentAddresses && !suite?.policy.adapter.enabled) {
-      throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "任务未启用 Adapter，不能修改环境 IP。");
-    }
-    const preflight = await this.preflightValidated(validated, { suite });
+
+    const preflight = await this.preflightValidated(
+      { ...validated, ...(environmentAddresses ? { environmentAddresses } : {}) },
+      { suite },
+    );
     if (!preflight.ready) {
       throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "执行配置预检未通过。", {
         details: preflight,
@@ -355,9 +369,7 @@ export class RunBatchSchedulingService {
             ? { projectVersionId: suitePolicy.projectVersionId }
             : {}),
           runnerLabels: [...suitePolicy.runnerLabels],
-          artifactPatterns: this.artifactCollectionEnabled()
-            ? [...suitePolicy.artifactPatterns]
-            : [],
+          artifactPatterns: [],
           retryConcurrencyRules: (suitePolicy.retryConcurrencyRules ?? []).map((rule) => ({
             ...rule,
           })),
@@ -447,9 +459,7 @@ export class RunBatchSchedulingService {
       environmentAddresses: [validated.environmentIp],
     };
     const isDdt = "caseId" in target;
-    if (isDdt && !adapter.enabled) {
-      throw new DomainError("DDT_ADAPTER_REQUIRED", "DDT 用例执行必须启用 Adapter。");
-    }
+
     const execution = {
       ...validated.execution,
       projectId,
@@ -617,12 +627,7 @@ export class RunBatchSchedulingService {
         "请先在 SR 测试类关联页面配置当前用例的执行类。",
       );
     }
-    if (!validated.adapter.enabled) {
-      throw new DomainError(
-        "DDT_ADAPTER_REQUIRED",
-        "DDT 用例执行必须启用 CoTest Adapter，以传递当前 CaseID。",
-      );
-    }
+
     return this.createSingleExecution(
       item.executionClass.caseDefinitionId,
       {
@@ -765,11 +770,7 @@ export class RunBatchSchedulingService {
         concurrency: 1,
         ...(definition.projectVersionId ? { projectVersionId: definition.projectVersionId } : {}),
         runnerLabels: [],
-        artifactPatterns: this.artifactCollectionEnabled()
-          ? validated.artifactPatterns.length > 0
-            ? [...validated.artifactPatterns]
-            : [...defaultCaseSuiteExecutionPolicy.artifactPatterns]
-          : [],
+        artifactPatterns: [],
         retryConcurrencyRules: [],
       },
       adapter: {
@@ -899,7 +900,7 @@ export class RunBatchSchedulingService {
     if (!environment) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
     if (environment.attemptStatus === "assigned" || environment.attemptStatus === "running")
       throw new DomainError("RUN_ATTEMPT_NOT_TERMINAL", "用例执行完成后才能重新执行。");
-    return { adapterEnabled: environment.adapterEnabled, environmentIp: environment.environmentIp };
+    return { adapterEnabled: true, environmentIp: environment.environmentIp };
   }
 
   async rerunCaseFromAttempt(
@@ -910,14 +911,8 @@ export class RunBatchSchedulingService {
     const overrides = rerunCaseFromAttemptInputSchema.parse(input);
     const { snapshot, run, runIndex, rootBatchId, rootExecutionRunId, policy, configuration } =
       await this.resolveCaseLogRerunSource(attemptId);
-    if (overrides.environmentIp && !configuration.adapterEnabled) {
-      throw new DomainError(
-        "RUN_RERUN_ENVIRONMENT_UNAVAILABLE",
-        "原执行未启用 Adapter，无法修改重跑环境 IP。",
-      );
-    }
     const environmentIp = overrides.environmentIp ?? configuration.environmentIp;
-    if (configuration.adapterEnabled && !environmentIp) {
+    if (!environmentIp) {
       throw new DomainError(
         "RUN_RERUN_ENVIRONMENT_UNAVAILABLE",
         "原执行未记录环境 IP，请填写本次重跑环境 IP。",
@@ -939,7 +934,7 @@ export class RunBatchSchedulingService {
         unlimitedRetries: false,
         retryStopRules: [],
         runnerLabels: [...policy.runnerLabels],
-        artifactPatterns: [...policy.artifactPatterns],
+        artifactPatterns: [],
         retryConcurrencyRules: [],
       },
       roundRecoveries: [],
@@ -1069,7 +1064,7 @@ export class RunBatchSchedulingService {
         ...snapshot.batch.policy,
         concurrency: validated.concurrency,
         runnerLabels: [...snapshot.batch.policy.runnerLabels],
-        artifactPatterns: [...snapshot.batch.policy.artifactPatterns],
+        artifactPatterns: [],
         retryConcurrencyRules: validated.enableRetryConcurrencyRules
           ? (snapshot.batch.policy.retryConcurrencyRules ?? []).map((rule) => ({ ...rule }))
           : [],
@@ -1101,6 +1096,10 @@ export class RunBatchSchedulingService {
     const createdAt = this.clock.now().toISOString();
     const batchId = this.ids.next();
     const runs = input.selectedRuns.map(({ run }) => ({ ...run, id: this.ids.next() }));
+    const adapterDefaults =
+      !input.snapshot.adapterRuntime && input.runtimeAssetSource === "current_project_version"
+        ? await this.legacyRerunAdapterNames(input.snapshot.batch)
+        : undefined;
     await this.batches.create({
       id: batchId,
       projectId: input.snapshot.batch.projectId,
@@ -1125,7 +1124,7 @@ export class RunBatchSchedulingService {
       runnerIds: [...input.snapshot.batch.selectedRunnerIds],
       policy: freshBatchPolicy(input.policy),
       roundRecoveries: input.roundRecoveries.map((recovery) => ({ ...recovery })),
-      ...derivedBatchAdapterRuntime(input),
+      ...derivedBatchAdapterRuntime({ ...input, ...(adapterDefaults ? { adapterDefaults } : {}) }),
       runs,
       dispatchJob: {
         schemaVersion: 1,
@@ -1141,6 +1140,24 @@ export class RunBatchSchedulingService {
       createdAt,
     });
     return this.schedule(batchId);
+  }
+
+  private async legacyRerunAdapterNames(batch: Pick<RunBatch, "projectId" | "policy">) {
+    if (!this.executionInputs?.projects || !this.projectStructures)
+      throw new DomainError("ADAPTER_RUNTIME_UNAVAILABLE", "无法读取项目版本的 CoTest 执行配置。");
+    const [projects, structure] = await Promise.all([
+      this.executionInputs.projects.listProjects([batch.projectId]),
+      this.projectStructures.list(batch.projectId),
+    ]);
+    const project = projects[0];
+    const version = structure.versions.find((item) => item.id === batch.policy?.projectVersionId);
+    if (!project || !version)
+      throw new DomainError("CASE_VERSION_UNAVAILABLE", "原执行所属项目或版本已不可用。");
+    return executionAdapterNameDefaults(
+      project.name,
+      version.name,
+      version.stages.find((stage) => stage.status === "active")?.name,
+    );
   }
 
   async schedule(batchId: string): Promise<RunBatch> {
@@ -1530,13 +1547,6 @@ export class RunBatchSchedulingService {
         }),
       );
     } else {
-      if (input.environmentAddresses && !suite.policy.adapter.enabled) {
-        blockers.push(
-          blocker("ADAPTER_DISABLED", "parameter", "任务未启用 Adapter，不能修改环境 IP。", {
-            path: ["environmentAddresses"],
-          }),
-        );
-      }
       for (const item of suite.items) {
         if (!item.caseDefinition.className.trim()) {
           blockers.push(
@@ -1576,16 +1586,7 @@ export class RunBatchSchedulingService {
           );
         }
       }
-      if (ddtCases.length > 0 && !usesTaskAdapter(suite.policy.adapter)) {
-        blockers.push(
-          blocker(
-            "DDT_ADAPTER_REQUIRED",
-            "parameter",
-            "任务包含 DDT 用例，必须启用 CoTest Adapter。",
-            { path: ["suiteId"] },
-          ),
-        );
-      }
+
       if (enabledCases.length + enabledDdtCases.length === 0) {
         blockers.push(
           blocker("RUN_BATCH_EMPTY", "parameter", "用例任务中没有可执行的启用用例。", {
@@ -1607,6 +1608,23 @@ export class RunBatchSchedulingService {
         );
       }
       if (usesTaskAdapter(suite.policy.adapter)) {
+        for (const [field, label] of [
+          ["suiteName", "Suite Name"],
+          ["testName", "Test Name"],
+        ] as const) {
+          if (!suite.policy.adapter[field].trim())
+            blockers.push(
+              blocker("ADAPTER_NAME_REQUIRED", "parameter", `请在任务配置中填写 ${label}。`, {
+                path: ["policy", "adapter", field],
+              }),
+            );
+        }
+        if (!(input.environmentAddresses ?? suite.policy.adapter.environmentAddresses).length)
+          blockers.push(
+            blocker("ADAPTER_ENVIRONMENT_REQUIRED", "parameter", "请配置本次执行的环境 IP。", {
+              path: ["environmentAddresses"],
+            }),
+          );
         await this.inspectAdapterRuntime(suite.projectId, blockers, suite.policy.projectVersionId);
       }
     }
@@ -1702,7 +1720,7 @@ export class RunBatchSchedulingService {
         blocker(
           "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",
           "input",
-          "任务已启用 CoTest Adapter，但项目尚未配置完整依赖 JAR 压缩包。",
+          "CoTest 执行所需的完整依赖 JAR 压缩包尚未配置，请到项目版本的运行依赖中配置。",
         ),
       );
       return;

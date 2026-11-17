@@ -3,7 +3,6 @@ import { ExecutionControlService } from "../src/control-executions";
 import { DomainError } from "@autoforge/domain";
 import type {
   ExecutionControlRepository,
-  JarObjectStorePort,
   RunBatchRepository,
   RunBatchSchedulingPort,
   RunnerRepository,
@@ -26,7 +25,6 @@ it("uses persisted authenticated capacity and rejects traffic before accessing t
       verifyBootstrapToken: () => false,
     },
     { available: true, encrypt: (value) => value, decrypt: (value) => value },
-    {} as JarObjectStorePort,
     { now: () => new Date("2026-11-13T14:00:00Z") },
     { next: () => "id" },
     {} as RunBatchRepository,
@@ -86,7 +84,6 @@ it("authorizes the lease before staging logs and never sends credentials into th
       verifyBootstrapToken: () => false,
     },
     { available: true, encrypt: (value) => value, decrypt: (value) => value },
-    {} as JarObjectStorePort,
     { now: () => new Date("2026-11-14T01:00:00Z") },
     { next: () => "id" },
     {} as RunBatchRepository,

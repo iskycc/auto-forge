@@ -3093,7 +3093,7 @@ function AddDdtToSuiteDialog({
   return (
     <Dialog
       title={`将 ${caseIds.length} 条 DDT 用例加入任务`}
-      subtitle="可加入已有任务与普通用例混合执行，也可新建仅含 DDT 的任务。执行前所有 DDT 用例必须完成 SR 测试类关联，并在任务设置中启用 Adapter。"
+      subtitle="可加入已有任务与普通用例混合执行，也可新建仅含 DDT 的任务。执行前所有 DDT 用例必须完成 SR 测试类关联，并配置执行环境及运行依赖。"
       onClose={onClose}
       closeDisabled={busy}
       footer={
