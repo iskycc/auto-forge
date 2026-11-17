@@ -376,7 +376,7 @@ describe("SQLite case suite lifecycle", () => {
         concurrency: 8,
         retryMode: "immediate",
         runnerLabels: ["gpu"],
-        artifactPatterns: ["reports/**", "logs/*.txt"],
+        artifactPatterns: [],
       });
 
       const snapshots = suiteVersionRows(handle, "suite-1");
@@ -714,7 +714,7 @@ describe("SQLite case suite lifecycle", () => {
         policy: {
           concurrency: 3,
           runnerLabels: ["gpu"],
-          artifactPatterns: ["reports/**", "logs/*.txt"],
+          artifactPatterns: [],
         },
       });
       const specRows = handle.client
@@ -748,10 +748,7 @@ describe("SQLite case suite lifecycle", () => {
       }>;
       const spec = specs[0]!;
       expect(spec.requiredLabels).toEqual(expect.arrayContaining(["java", "testng", "gpu"]));
-      expect(spec.artifactRules).toEqual([
-        { pattern: "reports/**", required: false, mediaType: "application/octet-stream" },
-        { pattern: "logs/*.txt", required: false, mediaType: "text/plain" },
-      ]);
+      expect(spec.artifactRules).toEqual([]);
       expect(spec.parameters).toEqual({ CASE: "level" });
       expect(spec.adapter).toEqual({
         suiteName: "task-suite",

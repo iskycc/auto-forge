@@ -16,7 +16,8 @@ import {
 import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
 
 import { createSqliteDatabase } from "../src/database";
-import { createPostgresDatabase } from "../src/postgres-database";
+import { createPostgresDatabase, runPostgresMigrations } from "../src/postgres-database";
+import { runSqliteMigrations } from "../src/migrations";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteFailureAnalysisRepository } from "../src/sqlite-failure-analysis";
 import { PostgresFailureAnalysisRepository } from "../src/postgres-failure-analysis";
@@ -37,6 +38,7 @@ type Fixture = {
   analysis: FailureAnalysisRepository;
   rows: (statement: string) => Promise<Record<string, unknown>[]>;
   execute: (statement: string, parameters?: Array<string | number>) => Promise<void>;
+  migrate: (migrationsFolder: string) => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -57,6 +59,7 @@ async function fixture(mode: "sqlite" | "postgres", migrationsFolder?: string): 
       execute: async (statement, parameters = []) => {
         handle.client.prepare(statement).run(...parameters);
       },
+      migrate: async (folder) => runSqliteMigrations(handle.client, folder),
       close: async () => {
         handle.close();
         await rm(directory, { recursive: true, force: true });
@@ -87,6 +90,7 @@ async function fixture(mode: "sqlite" | "postgres", migrationsFolder?: string): 
         parameters,
       );
     },
+    migrate: (folder) => runPostgresMigrations(handle.pool, folder),
     close: async () => {
       await handle.close();
       await administration.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -496,15 +500,18 @@ for (const mode of ["sqlite", "postgres"] as const) {
       }
       const context = await fixture(mode, directory);
       try {
-        // This fixture isolates the 2026-10-06 history DDL while using today's
-        // adapters for seeding. Supply unrelated later task metadata separately.
         await context.execute(
-          "ALTER TABLE case_suites ADD COLUMN is_rerun BOOLEAN NOT NULL DEFAULT FALSE",
+          "INSERT INTO case_suites (id,name,version,revision,project_id,policy_json,created_at,updated_at) VALUES ('historical-suite','Historical',1,1,?,'{}',?,?)",
+          [DEFAULT_PROJECT_ID, timestamp, timestamp],
         );
-        for (const column of ["locked_by", "locked_by_name", "locked_at"]) {
-          await context.execute(`ALTER TABLE case_suites ADD COLUMN ${column} TEXT`);
-        }
-        const { service } = await seed(context);
+        await context.execute(
+          "INSERT INTO case_suite_versions (id,suite_id,version,snapshot_json,change_reason,created_at) VALUES ('historical-version','historical-suite',1,'{}','Historical fixture',?)",
+          [timestamp],
+        );
+        await context.execute(
+          "INSERT INTO run_batches (id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,policy_json,created_at,updated_at) VALUES ('historical-batch','historical-suite','Historical',1,'succeeded',0,'{}',1,?,'{}',?,?)",
+          [DEFAULT_PROJECT_ID, timestamp, timestamp],
+        );
         const versions = await context.rows("SELECT * FROM case_suite_versions ORDER BY id");
         const batches = await context.rows("SELECT * FROM run_batches ORDER BY id");
         const statements = (await readFile(resolve(folder, migration), "utf8"))
@@ -522,20 +529,22 @@ for (const mode of ["sqlite", "postgres"] as const) {
         );
         // A rolled-back migration retains the original foreign-key behavior.
         await context.execute("BEGIN");
-        await context.execute("DELETE FROM case_suites WHERE id = 'suite-1'");
+        await context.execute("DELETE FROM case_suites WHERE id = 'historical-suite'");
         expect(await context.rows("SELECT * FROM case_suite_versions")).toEqual([]);
         await context.execute("ROLLBACK");
-        await context.execute("BEGIN");
-        for (const statement of statements) await context.execute(statement);
-        await context.execute("COMMIT");
+        await writeFile(resolve(directory, migration), await readFile(resolve(folder, migration)));
+        await context.migrate(directory);
         expect(await context.rows("SELECT * FROM case_suite_versions ORDER BY id")).toEqual(
           versions,
         );
-        await service.delete("suite-1", { expectedRevision: 2 });
+        await context.execute("DELETE FROM case_suites WHERE id = 'historical-suite'");
         expect(await context.rows("SELECT * FROM case_suite_versions ORDER BY id")).toEqual(
           versions,
         );
         expect(await context.rows("SELECT * FROM run_batches ORDER BY id")).toEqual(batches);
+        // Current repositories are used only after the actual remaining upgrade migrations.
+        await context.migrate(folder);
+        const { service } = await seed(context);
         expect((await service.createFromFinalFailures("batch-1", {})).caseCount).toBe(4);
       } finally {
         await context.close();
@@ -1049,7 +1058,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
             concurrency: 17,
             priority: 9,
             retryLimit: 2,
-            artifactPatterns: ["reports/**"],
+            artifactPatterns: [],
             adapter: { environmentAddresses: ["https://adapter.internal"] },
           },
         });

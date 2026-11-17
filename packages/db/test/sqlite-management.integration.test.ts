@@ -957,6 +957,30 @@ describe("SQLite management repositories", () => {
   it("retries queued batches when a selected runner reports fresh metrics", async () => {
     const { handle, catalog, suites, runners, batches } = await fixture();
     try {
+      const structures = new SqliteProjectStructureRepository(handle);
+      handle.client
+        .prepare(
+          `INSERT INTO project_runtime_assets
+           (id,project_id,kind,source_type,file_name,url,sha256,size_bytes,archive_format,created_at)
+           VALUES ('dynamic-dependencies',?,'jar-bundle','url','dependencies.zip',
+                   'http://192.0.2.1/dependencies.zip',?,1024,'zip',?)`,
+        )
+        .run("00000000-0000-7000-8000-000000000001", "b".repeat(64), timestamp);
+      await structures.updateAdapterConfiguration({
+        projectId: "00000000-0000-7000-8000-000000000001",
+        projectVersionId: "project-version-1",
+        jarBundleAssetId: "dynamic-dependencies",
+        expectedRevision: 0,
+        updatedAt: timestamp,
+      });
+      const capabilities = [
+        "executor:testng-v1",
+        "isolation:cgroup-v2",
+        "java:21.0.8",
+        "testng:7.11.0",
+        "adapter:cotest-testng-v1",
+        "runtime:project-assets-v1",
+      ];
       await suites.create({
         id: "suite-dynamic",
         name: "Dynamic",
@@ -965,6 +989,12 @@ describe("SQLite management repositories", () => {
           retryLimit: 1,
           projectVersionId: "project-version-1",
           runnerIds: ["runner-dynamic"],
+          adapter: {
+            enabled: true,
+            suiteName: "Dynamic",
+            testName: "Fresh metrics",
+            environmentAddresses: ["192.0.2.2"],
+          },
         },
         createdAt: timestamp,
       });
@@ -984,7 +1014,7 @@ describe("SQLite management repositories", () => {
         agentVersion: "0.2.0",
         protocolVersion: 1,
         labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities,
         maxConcurrency: 1,
         terminalEnabled: false,
         recordedAt: "2026-08-09T00:01:00.000Z",
@@ -1006,6 +1036,9 @@ describe("SQLite management repositories", () => {
           catalog,
           objectStore: { exists: async () => true } as unknown as JarObjectStorePort,
         },
+        128,
+        5,
+        structures,
       );
       const queued = await scheduler.create({ suiteId: "suite-dynamic" });
       expect(queued).toMatchObject({
@@ -1034,7 +1067,7 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-dynamic",
         labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities,
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
