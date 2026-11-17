@@ -1,27 +1,31 @@
 "use client";
 
-import { Alert, Button, Flex, Skeleton, Typography } from "antd";
+import { Alert, Badge, Button, Flex, Skeleton, Tooltip, Typography } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { postgresStorageCapacitySchema, type PostgresStorageCapacity } from "@autoforge/contracts";
-import { readApiError } from "@/lib/client-api";
+import type { LogDatabaseStatus, PostgresStorageCapacity } from "@autoforge/contracts";
 import { formatDiskBytes } from "@/lib/runner-disk";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { logDatabaseStatusClient } from "@/lib/log-database-status-client";
 import { ActionDialog } from "./action-dialog";
 import { StorageMonitoringSettings } from "./storage-monitoring-settings";
 import { PostgresCapacityPanel } from "./postgres-capacity-panel";
 
 export function LogDatabaseCapacity({
   databaseId,
-  active,
   canManage = false,
 }: {
   databaseId: string;
-  active: boolean;
   canManage?: boolean;
 }) {
-  const [capacity, setCapacity] = useState<PostgresStorageCapacity>();
+  const [status, setStatus] = useState<LogDatabaseStatus>();
+  const capacity = status?.capacity;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const displayedCapacity: PostgresStorageCapacity | undefined =
+    error && capacity?.status === "available"
+      ? { ...capacity, status: "stale", detail: "页面刷新失败，当前仅显示上次磁盘采样值。" }
+      : capacity;
   const pending = useRef<AbortController | null>(null);
   const refresh = useCallback(
     async (force = false) => {
@@ -31,45 +35,75 @@ export function LogDatabaseCapacity({
       setLoading(true);
       setError("");
       try {
-        const response = await fetch(
-          `/api/v1/settings/log-databases/${databaseId}/capacity${force ? "?refresh=1" : ""}`,
-          {
-            cache: "no-store",
-            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-          },
-        );
-        if (!response.ok) throw await readApiError(response, "读取日志库磁盘余量失败。");
-        const value = postgresStorageCapacitySchema.parse(await response.json());
-        if (!controller.signal.aborted) setCapacity(value);
+        const value = await logDatabaseStatusClient.read(databaseId, force, controller.signal);
+        if (!controller.signal.aborted) setStatus(value);
       } catch (cause) {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "读取磁盘余量失败。");
+          setError(cause instanceof Error ? cause.message : "读取日志库监控失败。");
       } finally {
+        if (pending.current === controller) pending.current = null;
         if (!controller.signal.aborted) setLoading(false);
       }
     },
     [databaseId],
   );
   useEffect(() => {
-    const timer = active ? window.setTimeout(() => void refresh(), 0) : undefined;
-    return () => {
+    let timer: number | undefined;
+    let stopped = false;
+    let running = false;
+    async function inspect() {
+      if (stopped || running || document.visibilityState !== "visible") return;
       if (timer !== undefined) window.clearTimeout(timer);
+      running = true;
+      await refresh();
+      running = false;
+      if (!stopped && document.visibilityState === "visible")
+        timer = window.setTimeout(() => void inspect(), 30_000);
+    }
+    function visibilityChanged() {
+      if (document.visibilityState === "visible") void inspect();
+      else {
+        if (timer !== undefined) window.clearTimeout(timer);
+        pending.current?.abort();
+        setLoading(false);
+      }
+    }
+    timer = window.setTimeout(() => void inspect(), 0);
+    document.addEventListener("visibilitychange", visibilityChanged);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visibilityChanged);
       pending.current?.abort();
     };
-  }, [active, refresh]);
+  }, [refresh]);
+  const heartbeat = status?.heartbeat;
+  const connection = heartbeatPresentation({ heartbeat, loading, error });
   return (
     <>
       <Flex gap="small" wrap align="center" className="!mt-2">
+        <Tooltip title={connection.detail}>
+          <span>
+            <Badge status={connection.status} text={connection.text} />
+          </span>
+        </Tooltip>
+        {heartbeat ? (
+          <Typography.Text type="secondary" title={heartbeat.checkedAt}>
+            最近心跳：{formatPlatformDateTime(heartbeat.checkedAt)} · {heartbeat.durationMs} ms
+          </Typography.Text>
+        ) : null}
+      </Flex>
+      <Flex gap="small" wrap align="center" className="!mt-2">
         <Typography.Text type="secondary">
           数据卷余量：
-          {capacitySummary(capacity, loading, error)}
+          {capacitySummary(displayedCapacity, loading, error)}
         </Typography.Text>
         <Button
           type="link"
           size="small"
           onClick={() => {
             setOpen(true);
-            if (!capacity && !loading) void refresh();
+            if (!loading) void refresh();
           }}
         >
           查看容量
@@ -80,8 +114,6 @@ export function LogDatabaseCapacity({
         title="日志库磁盘容量"
         description="通过 Node Exporter 读取数据库数据卷余量；数据库大小与文件系统容量分别计算。"
         onClose={() => {
-          pending.current?.abort();
-          setLoading(false);
           setOpen(false);
         }}
         className="w-[min(760px,calc(100vw-3rem))]"
@@ -100,10 +132,10 @@ export function LogDatabaseCapacity({
           </Flex>
           {error ? <Alert type="error" showIcon title={error} /> : null}
           {!capacity && loading ? <Skeleton active /> : null}
-          {capacity ? <PostgresCapacityPanel capacity={capacity} /> : null}
+          {displayedCapacity ? <PostgresCapacityPanel capacity={displayedCapacity} /> : null}
           <Typography.Paragraph type="secondary" className="!mb-0">
-            启动 Node Exporter
-            后配置其地址和数据卷挂载点；平台按需读取，不需要数据库文件权限或健康检查采样脚本。
+            后台每分钟检查所有已登记日志库；页面自动显示当前写入库和历史库的采样。
+            宿主机余量需配置对应 Node Exporter 地址与挂载点，不需要数据库文件权限或采样脚本。
           </Typography.Paragraph>
         </div>
       </ActionDialog>
@@ -126,4 +158,34 @@ function capacitySummary(
       not_configured: "待配置采样",
     }[capacity.status];
   return error ? "读取失败" : "尚未读取";
+}
+
+function heartbeatPresentation({
+  heartbeat,
+  loading,
+  error,
+}: {
+  heartbeat: LogDatabaseStatus["heartbeat"] | undefined;
+  loading: boolean;
+  error: string;
+}) {
+  if (error) return { status: "warning" as const, text: "心跳待更新", detail: error };
+  if (!heartbeat)
+    return {
+      status: "default" as const,
+      text: loading ? "检查中…" : "待心跳",
+      detail: "后台每分钟自动检查所有日志服务器。",
+    };
+  const detail = [
+    heartbeat.detail,
+    ...(heartbeat.errorCode ? [`错误码：${heartbeat.errorCode}`] : []),
+    ...(heartbeat.lastSucceededAt
+      ? [`最近正常：${formatPlatformDateTime(heartbeat.lastSucceededAt)}`]
+      : []),
+  ].join(" ");
+  return {
+    status: heartbeat.status === "healthy" ? ("success" as const) : ("error" as const),
+    text: heartbeat.status === "healthy" ? "连接正常" : "连接异常",
+    detail,
+  };
 }

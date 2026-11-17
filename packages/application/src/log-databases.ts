@@ -12,6 +12,10 @@ import {
 } from "@autoforge/contracts";
 import type { Clock, IdGenerator } from "./ports";
 import { DomainError } from "@autoforge/domain";
+import {
+  LogDatabaseMonitoringService,
+  type LogDatabaseMonitoringTargets,
+} from "./log-database-monitoring";
 
 export interface LogDatabaseRepository {
   list(cursor?: string): Promise<LogDatabasePage>;
@@ -21,6 +25,8 @@ export interface LogDatabaseRepository {
   updateDailyConnection(id: string, input: RegisterDailyLogServerInput): Promise<LogDatabase>;
   select(databaseId: string | null, revision: number): Promise<void>;
   check(id: string): Promise<void>;
+  heartbeat?(id: string): Promise<void>;
+  listMonitoringTargets?(cursor?: string): Promise<LogDatabaseMonitoringTargets>;
   updateConnection(id: string, input: RegisterLogDatabaseInput): Promise<LogDatabase>;
   storageCapacity?(id: string, now: Date): Promise<PostgresStorageCapacity>;
 }
@@ -32,11 +38,25 @@ export class LogDatabaseService {
   >();
   private readonly capacityRequests = new Map<string, Promise<PostgresStorageCapacity>>();
   private capacityEpoch = 0;
+  readonly monitoring: LogDatabaseMonitoringService;
   constructor(
     private readonly repository: LogDatabaseRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
-  ) {}
+  ) {
+    this.monitoring = new LogDatabaseMonitoringService(
+      {
+        list: (cursor) =>
+          this.repository.listMonitoringTargets
+            ? this.repository.listMonitoringTargets(cursor)
+            : this.repository.list(cursor),
+        check: (id) =>
+          this.repository.heartbeat ? this.repository.heartbeat(id) : this.repository.check(id),
+        capacity: (id) => this.storageCapacity(id, true),
+      },
+      clock,
+    );
+  }
 
   list(cursor?: string) {
     return this.repository.list(cursor);
@@ -58,8 +78,12 @@ export class LogDatabaseService {
     if (selected.databaseId) await this.repository.checkForWrite(selected.databaseId);
     await this.repository.select(selected.databaseId, selected.revision);
   }
-  check(id: string) {
-    return this.repository.check(id);
+  async check(id: string) {
+    try {
+      await this.repository.check(id);
+    } finally {
+      this.monitoring.invalidate();
+    }
   }
   storageCapacity(id: string, refresh = false): Promise<PostgresStorageCapacity> {
     if (!this.repository.storageCapacity)
@@ -91,6 +115,7 @@ export class LogDatabaseService {
   invalidateCapacity() {
     this.capacityEpoch++;
     this.capacities.clear();
+    this.monitoring.invalidate();
   }
   async updateConnection(
     id: string,

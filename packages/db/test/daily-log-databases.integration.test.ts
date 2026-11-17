@@ -219,11 +219,13 @@ describe.skipIf(!url)("daily PostgreSQL logs", () => {
       [serverId],
     );
     const capacity = await registry.storageCapacity(serverId, new Date());
+    await registry.heartbeat(serverId);
     const after = await db.pool.query(
       "SELECT count(*)::int AS count FROM log_databases WHERE parent_database_id=$1",
       [serverId],
     );
     expect(after.rows).toEqual(before.rows);
+    expect((await registry.listMonitoringTargets()).items.map(({ id }) => id)).toContain(serverId);
     expect(capacity.status).toMatch(/available|stale|not_configured|permission_denied/);
     const row = (await db.pool.query("SELECT * FROM log_databases WHERE id=$1", [serverId]))
       .rows[0]!;

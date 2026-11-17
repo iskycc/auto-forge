@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.22 - 2026-11-17
+
+### Added
+
+- Full 日志数据库增加后台只读心跳，启动后检查全部已登记日志服务器及旧版单库，之后每轮完成后间隔 60 秒采集；当前写入库和历史库均参与，按日物理库不逐库展开。页面展示连接状态、检查时间及耗时，并默认加载每个日志库的数据卷余量，不再只加载写入库。
+- 所有日志库卡片每 30 秒读取监控快照，隐藏标签页暂停；支持单库刷新、连接恢复和容量详情。数据库与磁盘采样独立，Node Exporter 不可用时不会将数据库误判为离线，旧容量值明确标为过期。
+
+### Changed
+
+- 心跳使用独立、有界的 PostgreSQL 只读连接池，不占用或淘汰日志正文连接；分页只读取监控目标标识，后台每批最多采集两个目标，繁忙或关闭时退让。同一目标在途请求合并，页面读取限制并发与排队，避免查看历史库增加执行链路负载。
+- 同步更新 README、站内“日志归档”使用说明和日志库监控架构文档，包含操作步骤、权限、状态及示意图，保留既有文档链接与章节。
+
+### Compatibility
+
+- 从 v1.22.21 升级无新增数据库迁移、外部依赖、部署组件或 Runner Protocol 字段；Full 同步升级 Web 与全部 Worker，本次无需更新 Agent。Lite 不启动 PostgreSQL 心跳，也不新增外部服务依赖。
+- 各日志服务器仍需配置对应的 Node Exporter 才能读取宿主机数据卷余量，未配置时明确提示。监控不建库、不修改日志归属、不自动切换写入目标；原连接检查及容量接口保持兼容。
+
+### Verification
+
+- 7 个相关文件的 48 项单元、契约及 UI 约束测试通过；真实 PostgreSQL 的 21 项集成测试通过，覆盖独立心跳池、锁竞争退让、身份检查、故障恢复、按日存储与历史读取。
+- Lite 2 项、Full 3 项 Playwright 场景通过；Full 使用真实 PostgreSQL／Redis／NATS／MinIO、一个 Web 和两个 Worker。验证全部卡片自动加载、关闭设置页仍采集、最多两个页面请求、离线恢复、过期容量和切换后历史公开日志。实际查看 1024×768、1536×1024 的浅色／深色四张截图，无溢出或布局变形。
+- Web 生产构建、Web／Application／DB／Worker／测试类型检查、相关 ESLint、全仓格式与许可证检查、97 项发布／运维／质量脚本测试、19 行 E2E 覆盖矩阵及差异空白检查通过。
+- 按明确要求采用最快发布路径，仅运行 Release，保留原生双架构构建、镜像启动、内置资源、SBOM、签名及资产完整性检查；结束后恢复临时暂停的发布后验收。未重跑完整标准 CI、完整发布后验收或用户真实业务长时负载。
+
 ## 1.22.21 - 2026-11-17
 
 ### Added

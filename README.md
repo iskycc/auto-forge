@@ -24,6 +24,8 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 
 ## 当前已实现
 
+- Full 日志库后台自动探活，写入库和历史库均默认加载心跳及数据卷余量；使用独立、有界的只读连接，异常不自动切换日志归属。详见[日志库心跳](./docs/architecture/log-database-monitoring.md)，站内操作说明为 `/docs/log-archives#heartbeat`。
+
 - 任务创建、任务配置、单用例快捷执行、调试及版本 API 统一使用 CoTest Adapter，不再提供开关；旧任务的关闭标记在读取配置时归一为启用，已经创建的执行快照保留原始含义。公开执行详情同时支持匿名导出标准结果与失败用例分析清单，使用相同的轮次范围及表格生成逻辑，已有人工和 AI 结论随分析清单导出；公开链接仍须有效。详见[执行入口与公开导出](./docs/architecture/cotest-default-and-public-export.md)。
 
 - TestNG 执行产物收集已退役：平台、Adapter 和 Runner 不再扫描、上传或展示报告附件。保留本地最小 XML 供结构化结果解析，日志与结果上报继续运行；升级及协议兼容见[退役说明](./docs/adr/0018-retire-testng-execution-artifacts.md)。

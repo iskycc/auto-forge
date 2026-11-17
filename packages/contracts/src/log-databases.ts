@@ -1,4 +1,20 @@
 import { z } from "zod";
+import { postgresStorageCapacitySchema } from "./infrastructure-usage.ts";
+
+export const logDatabaseHeartbeatSchema = z.object({
+  status: z.enum(["healthy", "unavailable"]),
+  checkedAt: z.string().datetime(),
+  durationMs: z.number().int().nonnegative(),
+  lastSucceededAt: z.string().datetime().optional(),
+  errorCode: z.string().max(128).optional(),
+  detail: z.string().max(1024),
+});
+
+export const logDatabaseStatusSchema = z.object({
+  heartbeat: logDatabaseHeartbeatSchema,
+  capacity: postgresStorageCapacitySchema,
+});
+export type LogDatabaseStatus = z.infer<typeof logDatabaseStatusSchema>;
 
 export const registerDailyLogServerSchema = z
   .object({

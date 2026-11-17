@@ -11,6 +11,7 @@ const access = vi.hoisted(() => ({
   list: vi.fn(),
   audit: vi.fn(),
   capacity: vi.fn(),
+  status: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({
   authorizeRequest: access.authorize,
@@ -26,6 +27,7 @@ vi.mock("@/lib/log-databases", () => ({
       updateConnection: access.update,
       list: access.list,
       storageCapacity: access.capacity,
+      monitoring: { read: access.status },
     },
     services: {
       identityAccess: { recordAuthorizedOperation: access.audit },
@@ -39,6 +41,7 @@ import { PATCH } from "../app/api/v1/settings/log-databases/[databaseId]/route";
 import { POST as check } from "../app/api/v1/settings/log-databases/[databaseId]/check/route";
 
 import { GET as capacity } from "../app/api/v1/settings/log-databases/[databaseId]/capacity/route";
+import { GET as status } from "../app/api/v1/settings/log-databases/[databaseId]/status/route";
 
 const id = "019a25a1-0000-7000-8000-000000000001";
 const context = { params: Promise.resolve({ databaseId: id }) };
@@ -66,6 +69,31 @@ beforeEach(() => {
   access.sameOrigin.mockImplementation(() => {});
 });
 describe("log database HTTP authorization and secret handling", () => {
+  it("requires settings.read for heartbeat snapshots and honors explicit refresh", async () => {
+    const snapshot = {
+      heartbeat: {
+        status: "healthy",
+        checkedAt: "2026-11-17T00:00:00.000Z",
+        durationMs: 2,
+        detail: "ready",
+      },
+      capacity: { status: "not_configured", detail: "no exporter" },
+    };
+    access.status.mockResolvedValue(snapshot);
+    const response = await status(
+      new Request(`http://localhost/api/v1/settings/log-databases/${id}/status?refresh=1`),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(snapshot);
+    expect(access.authorize).toHaveBeenCalledWith(expect.any(Request), "settings.read", undefined);
+    expect(access.status).toHaveBeenCalledWith(id, true);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    access.status.mockClear();
+    access.authorize.mockRejectedValue(new DomainError("AUTH_FORBIDDEN", "无权限"));
+    expect((await status(request("GET"), context)).status).toBe(403);
+    expect(access.status).not.toHaveBeenCalled();
+  });
   it.each(["register", "select", "check", "update", "list"] as const)(
     "rejects unauthorized %s before accessing any log database",
     async (operation) => {

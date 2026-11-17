@@ -15,6 +15,7 @@ import { PostgresDailyLogDatabases, type LogDatabaseRecord } from "./postgres-da
 import { logDatabaseError } from "./postgres-log-database-errors";
 import { fullLocalLogWriteDisabled } from "./full-log-write-policy";
 import { readPostgresStorageCapacity } from "./postgres-storage-capacity";
+import { isPostgresLockContentionError } from "./lock-contention";
 export { logDatabaseError } from "./postgres-log-database-errors";
 
 const MAX_OPEN_DATABASES = 4;
@@ -32,6 +33,10 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
   readonly daily: PostgresDailyLogDatabases;
   private readonly administrationPools = new PostgresConnectionPoolCache((url) =>
     this.createPool(url, 1),
+  );
+  private readonly heartbeatPools = new PostgresConnectionPoolCache(
+    (url) => this.createPool(url, 1, { connectionMs: 1000, statementMs: 1000, queryMs: 1500 }),
+    MAX_OPEN_DATABASES,
   );
   private allocation: Promise<void> = Promise.resolve();
   constructor(
@@ -77,6 +82,18 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
         ),
       ...(result.rows.length > 50 ? { nextCursor: result.rows[49]!.id } : {}),
       ...settings,
+    };
+  }
+
+  async listMonitoringTargets(cursor?: string) {
+    // Monitoring only needs identifiers; do not aggregate all batch log sizes every heartbeat.
+    const result = await this.database.pool.query<{ id: string }>(
+      "SELECT id FROM log_databases WHERE storage_mode<>'day' AND id>$1 ORDER BY id LIMIT 51",
+      [cursor ?? ""],
+    );
+    return {
+      items: result.rows.slice(0, 50),
+      ...(result.rows.length > 50 ? { nextCursor: result.rows[49]!.id } : {}),
     };
   }
 
@@ -216,12 +233,57 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     return this.view(updated.rows[0]!, (await this.settings()).activeDatabaseId, 0, 0);
   }
 
+  async heartbeat(id: string): Promise<void> {
+    const found = await this.database.pool.query<DatabaseRow>(
+      "SELECT * FROM log_databases WHERE id=$1 AND storage_mode<>'day'",
+      [id],
+    );
+    const row = found.rows[0];
+    if (!row) throw new DomainError("LOG_DATABASE_NOT_FOUND", "日志服务器未登记。");
+    const url = this.cipher.decrypt(row.connection_encrypted, `log-database:${id}`);
+    try {
+      await this.heartbeatPools.withConnection(url, async (pool) => {
+        if (row.storage_mode === "daily") {
+          const result = await pool.query<{ can_create: boolean; business: string | null }>(
+            "SELECT (rolsuper OR rolcreatedb) AS can_create,to_regclass('public.run_batches') AS business FROM pg_roles WHERE rolname=current_user",
+          );
+          if (!result.rows[0]?.can_create)
+            throw new DomainError(
+              "LOG_DATABASE_CREATE_PERMISSION_REQUIRED",
+              "日志管理员缺少建库权限。",
+            );
+          if (result.rows[0].business)
+            throw new DomainError("LOG_DATABASE_INVALID", "维护连接不能指向主平台业务库。");
+          return;
+        }
+        const identity = await pool.query<{ database_id: string; platform_id: string }>(
+          "SELECT database_id,platform_id FROM log_storage_identity WHERE id=1",
+        );
+        if (
+          identity.rows[0]?.database_id !== id ||
+          identity.rows[0]?.platform_id !== this.platformId
+        )
+          throw new DomainError("LOG_DATABASE_IDENTITY_CONFLICT", "日志数据库身份不匹配。");
+      });
+    } catch (cause) {
+      if (
+        isPostgresLockContentionError(cause) ||
+        (cause instanceof Error &&
+          (("code" in cause && cause.code === "57014") || cause.message === "Query read timeout"))
+      )
+        throw new DomainError("PLATFORM_LOG_BUSY", "日志库心跳暂缓，请稍后重试。", { cause });
+      throw logDatabaseError(cause, id);
+    }
+  }
+
   async check(id: string): Promise<void> {
     const found = await this.database.pool.query<DatabaseRow>(
       "SELECT * FROM log_databases WHERE id=$1",
       [id],
     );
-    if (found.rows[0]?.storage_mode === "daily") return this.daily.check(id);
+    const row = found.rows[0];
+    if (!row) throw new DomainError("LOG_DATABASE_NOT_FOUND", "日志数据库未登记。");
+    if (row.storage_mode === "daily") return this.daily.check(id);
     await this.withDatabase(id, async (pool) => {
       const result = await pool.query(
         "SELECT database_id,platform_id FROM log_storage_identity WHERE id=1",
@@ -355,17 +417,24 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
       [...this.pools.values()].flatMap((entry) => [entry.pool.end(), entry.lockPool.end()]),
     );
     this.pools.clear();
-    await this.administrationPools.close();
+    await Promise.all([this.administrationPools.close(), this.heartbeatPools.close()]);
   }
 
   connectionPoolSnapshot() {
     const administration = this.administrationPools.snapshot();
+    const heartbeat = this.heartbeatPools.snapshot();
     const pools = [...this.pools.values()].flatMap((entry) => [entry.pool, entry.lockPool]);
     return {
-      pools: pools.length + administration.pools,
-      connections: pools.reduce((n, pool) => n + pool.totalCount, administration.connections),
-      idle: pools.reduce((n, pool) => n + pool.idleCount, administration.idle),
-      waiting: pools.reduce((n, pool) => n + pool.waitingCount, administration.waiting),
+      pools: pools.length + administration.pools + heartbeat.pools,
+      connections: pools.reduce(
+        (n, pool) => n + pool.totalCount,
+        administration.connections + heartbeat.connections,
+      ),
+      idle: pools.reduce((n, pool) => n + pool.idleCount, administration.idle + heartbeat.idle),
+      waiting: pools.reduce(
+        (n, pool) => n + pool.waitingCount,
+        administration.waiting + heartbeat.waiting,
+      ),
     };
   }
 
@@ -401,15 +470,23 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     }
   }
 
-  private createPool(connectionString: string, max: number) {
+  private createPool(
+    connectionString: string,
+    max: number,
+    timeouts: { connectionMs: number; statementMs: number; queryMs?: number } = {
+      connectionMs: 3000,
+      statementMs: 5000,
+    },
+  ) {
     const pool = new Pool({
       connectionString,
       max,
-      connectionTimeoutMillis: 3000,
+      connectionTimeoutMillis: timeouts.connectionMs,
       idleTimeoutMillis: 600_000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10_000,
-      statement_timeout: 5000,
+      statement_timeout: timeouts.statementMs,
+      ...(timeouts.queryMs !== undefined ? { query_timeout: timeouts.queryMs } : {}),
       lock_timeout: 1000,
       application_name: "autoforge-logs",
     });

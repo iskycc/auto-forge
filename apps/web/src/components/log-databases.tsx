@@ -41,6 +41,7 @@ export function LogDatabases({
   const [editing, setEditing] = useState<LogDatabase>();
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState("");
+  const [monitoringRevision, setMonitoringRevision] = useState(0);
   async function act(key: string, url: string, method: string, body?: unknown) {
     if (pending) return;
     setPending(key);
@@ -63,6 +64,7 @@ export function LogDatabases({
       setError(cause instanceof Error ? cause.message : "日志数据库操作失败。");
     } finally {
       setPending(undefined);
+      setMonitoringRevision((revision) => revision + 1);
     }
   }
   function select(databaseId: string) {
@@ -81,7 +83,7 @@ export function LogDatabases({
       />
       <Flex justify="space-between" align="center" gap="middle" wrap>
         <Typography.Text type="secondary">
-          独立存储执行日志正文，主平台数据库保存库标识及确认水位。
+          后台每分钟检查所有日志库；本页自动刷新心跳与数据卷余量，历史库同样监控。
         </Typography.Text>
         {canManage ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setAdding(true)}>
@@ -110,6 +112,8 @@ export function LogDatabases({
       {initial.items.map((database) => (
         <Card
           key={database.id}
+          role="region"
+          aria-label={`日志服务器 ${database.name}`}
           size="small"
           title={
             <Space wrap>
@@ -132,9 +136,8 @@ export function LogDatabases({
               </Typography.Paragraph>
               <LogDatabaseCapacity
                 canManage={canManage}
-                key={`${database.id}:${database.address}`}
+                key={`${database.id}:${database.address}:${monitoringRevision}`}
                 databaseId={database.id}
-                active={database.active}
               />
             </div>
             {canManage ? (
@@ -184,6 +187,7 @@ export function LogDatabases({
           onClose={() => setAdding(false)}
           onSaved={() => {
             setAdding(false);
+            setMonitoringRevision((revision) => revision + 1);
             router.refresh();
             toast.success("日志数据库已登记，可检查连接并设为写入库。");
           }}
@@ -195,6 +199,7 @@ export function LogDatabases({
           onClose={() => setEditing(undefined)}
           onSaved={() => {
             setEditing(undefined);
+            setMonitoringRevision((revision) => revision + 1);
             router.refresh();
             toast.success("日志库连接已更新，库标识和历史归属保持不变。");
           }}

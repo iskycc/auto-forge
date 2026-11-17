@@ -1145,6 +1145,13 @@ async function createPlatformServices() {
           }
         })
       : Promise.resolve();
+  const logDatabaseHeartbeatLoop = logDatabases
+    ? runPeriodic(scheduleAbort.signal, 60_000, "logs.databases.heartbeat", () =>
+        logDatabases!.monitoring.refreshAll(scheduleAbort.signal, () =>
+          runtimePriority().backgroundAllowed(),
+        ),
+      )
+    : Promise.resolve();
   const retentionLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 3_600_000, "retention.cleanup", async () => {
@@ -1170,6 +1177,7 @@ async function createPlatformServices() {
         roundRecoveryLoop,
         executionRecoveryLoop,
         nodeCleanupLoop,
+        logDatabaseHeartbeatLoop,
         runtimeNoticeLoop,
       ]);
       await storageInventory.close();

@@ -125,6 +125,42 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
     if (directory) await rm(directory, { recursive: true, force: true });
   });
 
+  it("heartbeats historical databases through separate read-only pools without evicting live payload connections", async () => {
+    const probe = registryForTest();
+    const payloadProcess = () =>
+      probe.withDatabase(
+        firstId,
+        async (pool) =>
+          (await pool.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid,
+      );
+    const before = await payloadProcess();
+    await probe.heartbeat(firstId);
+    await probe.heartbeat(secondId);
+    expect(await payloadProcess()).toBe(before);
+    const targets = await probe.listMonitoringTargets();
+    expect(targets.items.map(({ id }) => id)).toEqual(expect.arrayContaining([firstId, secondId]));
+    await expect(probe.heartbeat(randomUUID())).rejects.toMatchObject({
+      code: "LOG_DATABASE_NOT_FOUND",
+    });
+  });
+
+  it("defers heartbeat during a database lock without marking the server offline", async () => {
+    const lockOwner = new Pool({ connectionString: urls[1]!, max: 1 });
+    const client = await lockOwner.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("LOCK TABLE log_storage_identity IN ACCESS EXCLUSIVE MODE");
+      await expect(registry.heartbeat(firstId)).rejects.toMatchObject({
+        code: "PLATFORM_LOG_BUSY",
+      });
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+      await lockOwner.end();
+    }
+    await expect(registry.heartbeat(firstId)).resolves.toBeUndefined();
+  });
+
   it("keeps complete batches in their original database across switches, process restarts and another reader", async () => {
     await select(firstId);
     const first = await batch();
@@ -259,6 +295,9 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
         firstId,
         cipher.encrypt(urls[2]!, purpose),
       ]);
+      await expect(registry.heartbeat(firstId)).rejects.toMatchObject({
+        code: "LOG_DATABASE_IDENTITY_CONFLICT",
+      });
       const invalid = new PostgresRoutedAttemptLogStore(
         registryForTest(),
         createAttemptLogStore(directory),
@@ -273,6 +312,9 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
         firstId,
         cipher.encrypt(unreachable.toString(), purpose),
       ]);
+      await expect(registry.heartbeat(firstId)).rejects.toMatchObject({
+        code: "PLATFORM_LOG_DATABASE_UNAVAILABLE",
+      });
       const offline = new PostgresRoutedAttemptLogStore(
         registryForTest(),
         createAttemptLogStore(directory),
