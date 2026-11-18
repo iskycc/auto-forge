@@ -38,12 +38,14 @@ class AutoForgeRunClientTest {
         AtomicReference<String> authorization = new AtomicReference<>();
         AtomicReference<String> progressAuthorization = new AtomicReference<>();
         AtomicReference<String> protocol = new AtomicReference<>();
+        AtomicReference<String> requestBody = new AtomicReference<>();
         AtomicInteger progressRequests = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress(0), 0);
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
         server.createContext("/api/v1/jenkins/runs", exchange -> {
             authorization.set(exchange.getRequestHeaders().getFirst("authorization"));
             protocol.set(exchange.getProtocol());
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, 201, """
                 {"batchId":"batch-1","progressUrl":"%sprogress/batch-1?access_token=read-only",
                  "resultUrl":"%sshare/run/permanent-result",
@@ -74,11 +76,13 @@ class AutoForgeRunClientTest {
 
         assertEquals("HTTP/1.1", protocol.get());
         assertEquals("Bearer af_api_unit-test", authorization.get());
+        assertEquals("{\"suiteId\":\"suite-1\"}", requestBody.get());
         assertNull(progressAuthorization.get());
         assertEquals(7_000, sleptMillis.get());
         assertEquals("batch-1", result.get("batchId"));
         assertEquals("succeeded", result.get("status"));
         assertEquals(1, result.get("finalFailed"));
+        assertEquals(90, result.get("actualPassPercent"));
         assertEquals(baseUrl + "share/run/permanent-result", result.get("resultUrl"));
         assertEquals(result.get("resultUrl"), result.get("progressUrl"));
         String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
@@ -91,7 +95,8 @@ class AutoForgeRunClientTest {
         assertTrue(log.contains("90.0%"));
         assertTrue(log.contains("完整结果"));
         assertTrue(log.contains("仍有 1 项用例失败"));
-        assertFalse(log.contains("http://"));
+        assertTrue(log.contains("reportUrl = " + result.get("resultUrl")));
+        assertTrue(log.lines().anyMatch(line -> line.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} : ActualPassPercent: 90\\.")));
         assertFalse(log.contains("access_token="));
         assertFalse(log.contains("Completed"));
     }
@@ -214,6 +219,7 @@ class AutoForgeRunClientTest {
         String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
         assertTrue(log.contains("请求终止"));
         assertTrue(log.contains("完整结果"));
+        assertTrue(log.contains("taskState = Cancelled"));
         assertFalse(log.contains("批次未取消"));
     }
 

@@ -2067,6 +2067,7 @@ export class SqliteRunBatchRepository
       runningRuns: byStatus.get("running") ?? 0,
       succeededRuns: Number(outcomeCounts?.succeeded ?? byStatus.get("succeeded") ?? 0),
       failedRuns: Number(outcomeCounts?.failed ?? 0),
+      testFailureRuns: outcomeCounts?.testFailures ?? 0,
       timedOutRuns: Number(outcomeCounts?.timedOut ?? 0),
       cancelledRuns: Number(outcomeCounts?.cancelled ?? byStatus.get("cancelled") ?? 0),
     };

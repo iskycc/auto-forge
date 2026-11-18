@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { ADAPTER_FAILURE_RESULT_CODES } from "@autoforge/domain";
 import { finalRunOutcome } from "./final-failure-selection";
 
 export type RunBatchCountRow = {
@@ -6,6 +7,7 @@ export type RunBatchCountRow = {
   status: string;
   finalOutcome: string | null;
   value: number | string;
+  testFailures: number | string;
 };
 
 export type FinalOutcomeCounts = {
@@ -14,6 +16,7 @@ export type FinalOutcomeCounts = {
   failed: number;
   timedOut: number;
   cancelled: number;
+  testFailures: number;
 };
 
 export type RunBatchCounts = {
@@ -28,8 +31,14 @@ export function runBatchCountsQuery(batchIds: readonly string[]) {
     terminalOutcome: sql`run.terminal_outcome`,
     status: sql`run.status`,
   });
+  const testFailureCodes = sql.join(
+    ADAPTER_FAILURE_RESULT_CODES.map((code) => sql`${code}`),
+    sql`, `,
+  );
   return sql`SELECT run.batch_id AS "batchId", run.status, ${outcome} AS "finalOutcome",
-    COUNT(*) AS value FROM execution_runs run
+    COUNT(*) AS value,
+    SUM(CASE WHEN run.terminal_reason_code IN (${testFailureCodes}) THEN 1 ELSE 0 END) AS "testFailures"
+    FROM execution_runs run
     WHERE run.batch_id IN (${sql.join(
       batchIds.map((id) => sql`${id}`),
       sql`, `,
@@ -51,10 +60,13 @@ export function mapRunBatchCounts(rows: readonly RunBatchCountRow[]): RunBatchCo
       failed: 0,
       timedOut: 0,
       cancelled: 0,
+      testFailures: 0,
     };
     if (row.finalOutcome === "succeeded") outcomes.succeeded += value;
-    else if (row.finalOutcome === "failed") outcomes.failed += value;
-    else if (row.finalOutcome === "timed_out") outcomes.timedOut += value;
+    else if (row.finalOutcome === "failed") {
+      outcomes.failed += value;
+      outcomes.testFailures += Number(row.testFailures);
+    } else if (row.finalOutcome === "timed_out") outcomes.timedOut += value;
     else if (row.finalOutcome === "cancelled") outcomes.cancelled += value;
     outcomesByBatch.set(row.batchId, outcomes);
   }

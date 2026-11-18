@@ -140,6 +140,7 @@ export function createReadModelBuilder(dependencies: {
             runningRuns: batch.runningRuns,
             succeededRuns: batch.succeededRuns,
             failedRuns: batch.failedRuns,
+            testFailureRuns: batch.testFailureRuns,
             timedOutRuns: batch.timedOutRuns,
             cancelledRuns: batch.cancelledRuns,
           },

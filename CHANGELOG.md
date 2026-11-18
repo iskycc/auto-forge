@@ -4,7 +4,20 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.23.1 - 2026-11-18
+
+### Added
+
+- Jenkins `autoforgeRun` 支持为本次批次传入一个或多个 IPv4／IPv6。终态输出带时间戳的英文用例汇总、报告链接和 `ActualPassPercent`，便于流水线查看和提取。
+
+### Compatibility
+
+- 省略 `environmentAddresses` 的流水线继续使用任务默认 IP。执行插件随主平台镜像交付。Lite 和 Full 共用此次改动，数据库架构、部署配置和 Runner Protocol 沿用原有版本。
+
+### Verification
+
+- Jenkins Pipeline 与 HPI 校验、132 项定向测试、20 项 SQLite／PostgreSQL 集成测试、Lite 和 Full 各两项 Playwright 回归通过。已审查 1024×768 和 1536×960 的接入指导截图。
+- Web 和 Worker 生产构建、相关类型检查、格式、ESLint 和 E2E 覆盖矩阵通过。按最快路径发布，本次仅运行 Release。完整源码检查和发布后验收矩阵未运行，Release 保留双架构构建、镜像启动、SBOM、签名和资产完整性检查。
 
 ## 1.23.0 - 2026-11-18
 

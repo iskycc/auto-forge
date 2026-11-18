@@ -2265,6 +2265,7 @@ export class PostgresRunBatchRepository
       runningRuns: byStatus.get("running") ?? 0,
       succeededRuns: Number(outcomeCount?.succeeded ?? byStatus.get("succeeded") ?? 0),
       failedRuns: Number(outcomeCount?.failed ?? 0),
+      testFailureRuns: outcomeCount?.testFailures ?? 0,
       timedOutRuns: Number(outcomeCount?.timedOut ?? 0),
       cancelledRuns: Number(outcomeCount?.cancelled ?? byStatus.get("cancelled") ?? 0),
     };

@@ -16,6 +16,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.sf.json.JSONObject;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
@@ -41,40 +43,55 @@ class AutoForgeRunPipelineE2ETest {
             jenkins.jenkins.getPluginManager().getPlugin("workflow-step-api").getVersion());
         server = HttpServer.create(new InetSocketAddress(0), 0);
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
-        server.createContext("/api/v1/jenkins/runs", exchange -> respond(exchange, 201, """
+        AtomicReference<JSONObject> submitted = new AtomicReference<>();
+        server.createContext("/api/v1/jenkins/runs", exchange -> {
+            submitted.set(JSONObject.fromObject(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+            respond(exchange, 201, """
             {"batchId":"batch-pipeline-e2e","progressUrl":"%sprogress/batch-pipeline-e2e?access_token=read-only",
              "resultUrl":"%sshare/run/permanent-pipeline-e2e",
              "progressApiUrl":"%sapi/v1/run-batches/batch-pipeline-e2e/progress?access_token=read-only",
-             "pollIntervalSeconds":30,"completionTimeoutSeconds":604800}
-            """.formatted(baseUrl, baseUrl, baseUrl)));
+             "pollIntervalSeconds":30,"completionTimeoutSeconds":604800,"timeZone":"Asia/Shanghai"}
+            """.formatted(baseUrl, baseUrl, baseUrl));
+        });
         server.createContext("/api/v1/run-batches/batch-pipeline-e2e/progress", exchange ->
             respond(exchange, 200, """
                 {"batchId":"batch-pipeline-e2e","status":"succeeded","statusLabel":"执行完成",
-                 "active":false,"currentRound":1,"maximumRounds":1,"totalCases":3,
-                 "currentRoundTotal":3,"currentRoundCompleted":3,"currentRoundPassed":3,
-                 "currentRoundFailed":0,"totalPassed":3,"finalFailed":0}
+                 "active":false,"currentRound":1,"maximumRounds":null,"totalCases":643,
+                 "currentRoundTotal":643,"currentRoundCompleted":643,"currentRoundPassed":442,
+                 "currentRoundFailed":201,"totalPassed":442,"finalFailed":201,"completedCases":643,"reportFailed":199}
                 """));
         server.start();
 
         WorkflowJob job = jenkins.createProject(WorkflowJob.class, "autoforge-run-pipeline-e2e");
         job.setDefinition(new CpsFlowDefinition("""
-            autoforgeRun baseUrl: '%s', apiKey: 'af_api_pipeline-e2e',
-              suiteId: 'suite-e2e', timeoutSeconds: 120
+            def result = autoforgeRun(baseUrl: '%s', apiKey: 'af_api_pipeline-e2e',
+              suiteId: 'suite-e2e', timeoutSeconds: 120, environmentAddresses: ['192.0.2.10', '2001:db8::10'])
+            currentBuild.description = "Passed: " + result.actualPassPercent
             """.formatted(baseUrl), true));
 
         WorkflowRun run = jenkins.buildAndAssertSuccess(job);
+        assertEquals("suite-e2e", submitted.get().getString("suiteId"));
+        assertEquals(java.util.List.of("192.0.2.10", "2001:db8::10"), submitted.get().getJSONArray("environmentAddresses"));
+        assertEquals("Passed: 68", run.getDescription());
         jenkins.assertLogContains("[AutoForge] ── 开始执行", run);
-        jenkins.assertLogContains("累计通过 3/3", run);
+        jenkins.assertLogContains("第 1/不限 轮", run);
+        jenkins.assertLogContains("累计通过 442/643", run);
         jenkins.assertLogContains("batch-pipeline-e2e", run);
         jenkins.assertLogContains("完整结果", run);
         jenkins.assertLogNotContains("access_token=", run);
-        jenkins.assertLogNotContains("share/run/permanent-pipeline-e2e", run);
+        jenkins.assertLogContains("The case is finished. Total:643, Finished: 643 ( Passed: 442, Failed: 199, Blocked: 2 ) . Please analyze failed cases.", run);
+        jenkins.assertLogContains("Start to generate report.", run);
+        jenkins.assertLogContains("Success to generate report. taskState = Finished, reportUrl = "
+            + baseUrl + "share/run/permanent-pipeline-e2e", run);
+        jenkins.assertLogContains("ActualPassPercent: 68.", run);
+        jenkins.assertLogContains("Finished execute test cases by Auto Forge!", run);
+        jenkins.assertLogNotContains("MinPassPercent", run);
 
         StringWriter console = new StringWriter();
         run.getLogText().writeHtmlTo(0, console);
         String html = console.toString();
         String detailLink = "href='" + baseUrl + "share/run/permanent-pipeline-e2e'";
-        assertEquals(2, html.split(java.util.regex.Pattern.quote(detailLink), -1).length - 1);
+        assertTrue(html.contains(detailLink));
         assertFalse(html.contains("href='" + baseUrl + "progress/"));
         assertTrue(html.contains("target=\"_blank\""));
         assertTrue(html.contains("rel=\"noopener noreferrer\""));

@@ -5,6 +5,7 @@ import hudson.Extension;
 import hudson.model.TaskListener;
 import hudson.util.Secret;
 import java.io.Serial;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.jenkinsci.plugins.workflow.steps.Step;
@@ -21,6 +22,7 @@ public final class AutoForgeRunStep extends Step {
     private final String suiteId;
     private final Secret apiKey;
     private long timeoutSeconds;
+    private List<String> environmentAddresses;
 
     @DataBoundConstructor
     public AutoForgeRunStep(String baseUrl, String suiteId, String apiKey) {
@@ -33,6 +35,12 @@ public final class AutoForgeRunStep extends Step {
     public String getSuiteId() { return suiteId; }
     public Secret getApiKey() { return apiKey; }
     public long getTimeoutSeconds() { return timeoutSeconds; }
+    public List<String> getEnvironmentAddresses() { return environmentAddresses; }
+
+    @DataBoundSetter
+    public void setEnvironmentAddresses(List<String> environmentAddresses) {
+        this.environmentAddresses = environmentAddresses == null ? null : List.copyOf(environmentAddresses);
+    }
 
     /** Zero uses the server recommendation; an explicit value may only shorten the signed-link lifetime. */
     @DataBoundSetter
@@ -56,6 +64,7 @@ public final class AutoForgeRunStep extends Step {
         private final String suiteId;
         private final Secret apiKey;
         private final long timeoutSeconds;
+        private final List<String> environmentAddresses;
         private final AutoForgeRunCancellation cancellation = new AutoForgeRunCancellation();
         private volatile Throwable cancellationCause;
 
@@ -65,6 +74,7 @@ public final class AutoForgeRunStep extends Step {
             this.suiteId = step.suiteId;
             this.apiKey = step.apiKey;
             this.timeoutSeconds = step.timeoutSeconds;
+            this.environmentAddresses = step.environmentAddresses;
         }
 
         @Override
@@ -77,7 +87,7 @@ public final class AutoForgeRunStep extends Step {
                     apiKey.getPlainText(),
                     timeoutSeconds,
                     listener.getLogger(),
-                    cancellation).runToCompletion(suiteId);
+                    cancellation).runToCompletion(suiteId, environmentAddresses);
                 throwIfStopped();
                 return result;
             } catch (Exception failure) {

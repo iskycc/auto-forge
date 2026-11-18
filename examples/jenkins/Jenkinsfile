@@ -11,6 +11,7 @@ pipeline {
     string(name: 'AUTOFORGE_PROJECT_ID', defaultValue: '', description: '目标项目 ID')
     string(name: 'AUTOFORGE_PROJECT_VERSION', defaultValue: '1.0.0', description: '目标项目版本名称')
     string(name: 'AUTOFORGE_SUITE_ID', defaultValue: '', description: '已绑定同一项目版本的用例任务 ID')
+    string(name: 'AUTOFORGE_ENVIRONMENT_IPS', defaultValue: '', description: '本次执行环境 IP，多个用逗号分隔，留空使用任务默认值')
   }
 
   environment {
@@ -43,13 +44,16 @@ pipeline {
       steps {
         script {
           withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
-            def result = autoforgeRun(
+            def execution = [
               baseUrl: params.AUTOFORGE_BASE_URL,
               apiKey: env.AUTOFORGE_API_KEY,
               suiteId: params.AUTOFORGE_SUITE_ID
-            )
-            currentBuild.description = "AutoForge：通过 ${result.totalPassed}/${result.totalCases}，最终失败 ${result.finalFailed}"
-            // 插件已输出可点击的“完整结果”，无需重复打印原始链接。
+            ]
+            if (params.AUTOFORGE_ENVIRONMENT_IPS?.trim()) {
+              execution.environmentAddresses = params.AUTOFORGE_ENVIRONMENT_IPS.split(',', -1).collect { it.trim() }
+            }
+            def result = autoforgeRun(execution)
+            currentBuild.description = "AutoForge：通过 ${result.totalPassed}/${result.totalCases}（${result.actualPassPercent}%），最终失败 ${result.finalFailed}"
           }
         }
       }

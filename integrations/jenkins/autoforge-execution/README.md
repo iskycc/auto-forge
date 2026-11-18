@@ -1,8 +1,7 @@
 # AutoForge Execution Jenkins Plugin
 
 `autoforgeRun` 启动一个已经在 AutoForge 中保存完整配置的用例任务，并持续轮询到批次进入
-终态。Runner、项目版本、重跑、并发、Adapter 和环境恢复等配置均从任务快照读取，插件不
-接受这些参数的临时覆盖。
+终态。Runner、项目版本、重跑、并发及环境恢复沿用任务配置。可以为本次执行传入一个或多个环境 IP。
 
 最低支持 Jenkins `2.479.3` 和 Pipeline: Step API `700.v6e45cb_a_5a_a_21`，安装与兼容性验证见[插件说明](../README.md)。
 
@@ -27,16 +26,18 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
 | `baseUrl`        | 是   | `String` | 无     | AutoForge 控制面的根地址，例如 `https://autoforge.internal.example`。只接受 `http://` 或 `https://`，不要追加 `/api/v1`；该地址必须能由 Jenkins Controller 访问。末尾 `/` 可省略。                      |
 | `apiKey`         | 是   | `String` | 无     | AutoForge API Key，格式以 `af_api_` 开头；服务账号和令牌 scopes 均需对任务所属项目拥有 `run.create`、`run.cancel`、`run.read` 权限，分别用于启动、停止与确认收尾。在平台“系统设置 → 服务账号”中签发后，通过 Jenkins Credentials 的 Secret text 注入，禁止直接写入 Jenkinsfile。 |
 | `suiteId`        | 是   | `String` | 无     | AutoForge 用例任务 ID，不是任务名称、项目 ID 或版本 ID。可在平台任务详情或相关 API 响应中获取；任务必须处于可执行状态并已绑定有效项目版本。                                                             |
+| `environmentAddresses` | 否 | `List<String>` | 任务默认 IP | 传入 1–128 个不重复的 IPv4 或 IPv6。只写入本次批次快照，省略该参数时使用任务默认 IP。 |
 | `timeoutSeconds` | 否   | `long`   | `0`    | Jenkins 等待批次进入终态的总时限。`0` 表示采用服务端建议值（当前最多 `604800` 秒，即 7 天）；显式值必须为 `1`–`604800`。超时只终止当前 Jenkins 等待步骤，不会取消已经在 AutoForge 中运行的批次。        |
 
-仅在确实需要缩短 Jenkins 等待时间时设置选填参数：
+覆盖本次环境 IP 并缩短 Jenkins 等待上限的示例：
 
 ```groovy
 def result = autoforgeRun(
   baseUrl: params.AUTOFORGE_BASE_URL,
   apiKey: env.AUTOFORGE_API_KEY,
   suiteId: params.AUTOFORGE_SUITE_ID,
-  timeoutSeconds: 7200 // 选填：最多等待 2 小时
+  environmentAddresses: ['192.0.2.10', '2001:db8::10'],
+  timeoutSeconds: 7200
 )
 ```
 
@@ -52,6 +53,7 @@ def result = autoforgeRun(
 | `totalCases`  | `int`    | 批次总用例数。                                                      |
 | `totalPassed` | `int`    | 汇总后通过的用例数。                                                |
 | `finalFailed` | `int`    | 最后一轮仍失败的用例数。TestNG 断言失败不会把批次调度状态改成异常。 |
+| `actualPassPercent` | `int` | 通过数占总用例数的百分比，取整数部分；总数为零时返回 0。 |
 | `progressUrl` | `String` | 与 `resultUrl` 相同的执行详情入口。                                        |
 | `resultUrl`   | `String` | 永久执行详情入口；支持匿名查看，已登录且有项目权限时进入控制台。        |
 
@@ -63,10 +65,10 @@ def result = autoforgeRun(
   任务和批次编号供排查。终态汇总总数、通过、最终失败、通过率与 Jenkins 等待耗时。
 - 启动与等待超时时显示“执行详情”，终态后显示“完整结果”，均指向同一地址。
   在 Jenkins 经典控制台中，这些关键词使用原生 `ConsoleNote` 超链接，在新标签页打开并设置 `noopener noreferrer`；无需 ANSI
-  颜色插件、HTML 格式化器或全局安全设置调整。链接不再作为长 URL 重复铺在日志正文中。
+  颜色插件、HTML 格式化器或全局安全设置调整。终态英文日志另提供纯文本报告 URL，便于提取。
 - 运行中即可查看概览、轮次、用例及公开日志，详情链接永久有效；机器轮询仍使用独立的
   七天有效进度 API。旧平台未返回 `resultUrl` 时，两处均回退到临时 `progressUrl`，
-  并明确显示“7 天内有效”。
+  并明确显示“7 天内有效”。终态英文日志只打印永久报告 URL；临时链接通过可点击关键词和返回值提供。
 - 在已更新的主平台打开详情链接时，已登录且具有该项目 `run.read` 权限的用户自动进入
   控制台执行详情页，显示侧边栏、顶栏及其权限允许的操作；匿名、会话失效或无项目读取
   权限的用户仍查看公开只读页面。有效的旧 `/progress/` 链接也支持该行为。
@@ -99,6 +101,9 @@ def result = autoforgeRun(
   Controller 访问，否则批次可以创建成功，但插件无法继续轮询。
 - 客户端固定使用 HTTP/1.1，支持未配置 TLS 反向代理的 `http://` Lite 部署。
 
+终态英文日志使用平台时区。旧平台未返回时区时使用北京时间。
+`Finished` 计入平台已结束的用例，`Failed` 为 TestNG 测试失败，`Blocked` 为已结束的非通过、非测试失败项，包括超时、取消及其他异常。状态为 `Finished`、`Failed` 或 `Cancelled`。
+
 控制台示例（“执行详情”“完整结果”为可点击关键词）：
 
 ```text
@@ -115,6 +120,11 @@ def result = autoforgeRun(
 [AutoForge] 等待耗时：1 分 10 秒
 [AutoForge] 查看结果：完整结果（永久有效，在新标签页打开）
 [AutoForge] 结果说明：执行流程已完成，仍有 1 项用例失败，请查看结果定位原因。
+2026-11-18 06:06:39 : The case is finished. Total:10, Finished: 10 ( Passed: 9, Failed: 1, Blocked: 0 ) . Please analyze failed cases.
+2026-11-18 06:06:39 : Start to generate report.
+2026-11-18 06:06:39 : Success to generate report. taskState = Finished, reportUrl = https://autoforge.internal.example/Execution?BatchId=018f-batch-id
+2026-11-18 06:06:39 : ActualPassPercent: 90.
+2026-11-18 06:06:39 : Finished execute test cases by Auto Forge!
 ```
 
 两个插件共用仓库内的 `autoforge-console` Java 库，库随各自 HPI 打包，插件仍可分别安装。

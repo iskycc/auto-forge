@@ -22,6 +22,7 @@ export type RunProgress = {
   completedCases: number;
   totalPassed: number;
   finalFailed: number;
+  reportFailed: number;
   currentRoundTotal: number;
   currentRoundPassed: number;
   currentRoundFailed: number;
@@ -57,6 +58,7 @@ export function buildRunProgress(batch: RunBatchDetails): RunProgress {
       batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns,
     totalPassed: batch.succeededRuns,
     finalFailed: batch.failedRuns + batch.timedOutRuns,
+    reportFailed: batch.testFailureRuns ?? batch.failedRuns,
     currentRoundTotal: executionRunsForRound(batch.runs, batch.attempts, currentRound).length,
     currentRoundPassed,
     currentRoundFailed,
@@ -86,6 +88,7 @@ export function buildRunProgressFromOverview(overview: RunBatchDetailOverview): 
       batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns,
     totalPassed: batch.succeededRuns,
     finalFailed: batch.failedRuns + batch.timedOutRuns,
+    reportFailed: batch.testFailureRuns ?? batch.failedRuns,
     currentRoundTotal: current?.totalRuns ?? 0,
     currentRoundPassed: current?.passed ?? 0,
     currentRoundFailed,

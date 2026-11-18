@@ -31,7 +31,11 @@ public final class AutoForgeConsoleLog {
     }
 
     public void line(String message) {
-        output.println(PREFIX + safeText(message));
+        lineWithPrefix(PREFIX, message);
+    }
+
+    public void lineWithPrefix(String prefix, String message) {
+        output.println(prefix + safeText(message));
     }
 
     public void link(String label, String url, String caption, String hint) {

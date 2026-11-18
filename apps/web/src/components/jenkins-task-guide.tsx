@@ -87,13 +87,20 @@ export function JenkinsTaskGuide({
                               </pre>
                             </CopyableText>
                           </div>
+                          <p className="mb-0 mt-3">
+                            可选填{" "}
+                            <Typography.Text code className="[&>code]:!text-xs">
+                              {"environmentAddresses: ['192.0.2.10', '2001:db8::10']"}
+                            </Typography.Text>
+                            。支持填写一个或多个 IPv4／IPv6，只覆盖本次执行。省略时使用任务默认 IP。
+                          </p>
                         </div>
                       ),
                     },
                     {
                       title: "执行与查看结果",
                       content:
-                        "插件启动后等待批次进入终态，在 Jenkins 控制台输出进度和可新标签页打开的完整结果。配置始终来自任务快照。手动停止 Jenkins 会请求平台平滑终止并等待收尾；已领取用例会完成上传。用例断言失败与执行流程异常分别统计，请读取返回值 finalFailed 判断用例失败。选填 timeoutSeconds 可缩短 Jenkins 等待时间；仅等待超时不会自动取消平台任务。",
+                        "插件等待批次进入终态，再输出用例汇总、完整结果链接和实际通过率 ActualPassPercent。手动停止 Jenkins 会请求平台平滑终止并等待已领取用例完成上传。请读取 finalFailed 判断最终失败数量。选填 timeoutSeconds 可缩短 Jenkins 等待时间，仅等待超时不会自动取消平台任务。",
                     },
                   ].map((step, index) => (
                     <section key={step.title} className="flex min-w-0 items-start gap-3">

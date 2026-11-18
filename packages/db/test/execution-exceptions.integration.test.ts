@@ -152,6 +152,29 @@ for (const dialect of ["sqlite", "postgresql"] as const) {
   describe.skipIf(dialect === "postgresql" && !postgresUrl)(
     `${dialect} execution exception causes`,
     () => {
+      it("keeps final TestNG failures separate from abnormal completions in the progress counters", async () => {
+        const fixture = await createFixture(dialect);
+        try {
+          await addRun(fixture, "assertion", "TESTNG_ASSERTIONS_FAILED");
+          await addRun(fixture, "runner-error", "PROCESS_START_FAILED");
+          await addRun(fixture, "timeout", "QUEUE_TIMEOUT");
+          await addRun(fixture, "cancelled", "BATCH_TERMINATED_BEFORE_EXECUTION", "cancelled");
+          await addRun(fixture, "recovered", "TESTNG_SUCCEEDED", "succeeded");
+          await addAttempt(fixture, "recovered", 1, "TESTNG_ASSERTIONS_FAILED", "failed");
+          await addAttempt(fixture, "recovered", 2, "TESTNG_SUCCEEDED", "succeeded");
+
+          expect(await fixture.batches.getSummary("batch")).toMatchObject({
+            succeededRuns: 1,
+            failedRuns: 2,
+            testFailureRuns: 1,
+            timedOutRuns: 1,
+            cancelledRuns: 1,
+          });
+        } finally {
+          await fixture.close();
+        }
+      });
+
       it("pages and exports all evidence through application cursors without losing timestamp precision", async () => {
         const fixture = await createFixture(dialect);
         const preciseTimestamp = "2026-10-06T00:00:00.123456Z";

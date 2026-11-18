@@ -4,7 +4,7 @@
 
 ## 输入与快照
 
-管理员先在 `CaseSuite` 中保存完整执行配置；顶栏快捷执行创建批次时提交 `suiteId`，可选 `delaySeconds` 与仅本次执行的 `environmentAddresses`；计划任务与 Jenkins API 仍只提交 `suiteId`。延时只决定批次调度时间，环境 IP 覆盖只写入本次 Adapter 快照，不改任务配置；Runner、版本、重跑和其他 Adapter 配置读取任务快照。地址编辑与恢复规则见[任务执行环境 IP](./task-execution-environment.md)。单用例快捷执行仍提交一次性的显式配置，并可携带相同延时。平台在同一事务中保存：
+管理员先在 `CaseSuite` 中保存完整执行配置。顶栏快捷执行和 Jenkins API 创建批次时可随 `suiteId` 提交本次 `environmentAddresses`，计划任务使用保存的默认配置。延时只决定批次调度时间，环境 IP 覆盖只写入本次 Adapter 快照，Runner、版本、重跑和其他 Adapter 配置读取任务快照。地址编辑与恢复规则见[任务执行环境 IP](./task-execution-environment.md)。单用例快捷执行仍提交一次性的显式配置，并可携带相同延时。平台在同一事务中保存：
 
 - `CaseSuite` ID、名称与版本；
 - 每个启用 `CaseDefinition` 的 ID、当前版本、类名和显示名；

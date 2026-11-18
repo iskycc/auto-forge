@@ -78,7 +78,7 @@ Runner Agent 也必须共享：同一个 Agent 通过控制面协议连接 Lite 
 
 ### 2.4 任务是批量执行配置的唯一来源
 
-- `CaseSuite` 必须保存 Runner 或 Runner Group、项目版本、重跑策略、Adapter 地址和恢复时限；顶栏、计划任务与 Jenkins 只提交 `suiteId` 并直接执行该快照。任务和单用例快捷执行不得提供手工参数覆盖；TestNG 导入发现的只读参数元数据仍随用例版本执行。
+- `CaseSuite` 必须保存 Runner 或 Runner Group、项目版本、重跑策略、Adapter 地址和恢复时限。顶栏、公开任务及 Jenkins 执行可随 `suiteId` 提交本次 `environmentAddresses`，只写入该批次快照；省略时使用各入口的默认地址。计划任务直接执行保存的配置。其他任务策略和用例参数不可临时覆盖，TestNG 导入发现的只读参数元数据仍随用例版本执行。
 - 单用例快捷执行可以携带一次性的显式配置，但不得借此恢复独立批跑规划页。
 - 任务不得恢复 500 等低容量硬上限，必须保持至少 100,000 个用例成员和同规模 `ExecutionRun` 的 Lite/Full 能力；请求、SQL、调度和 UI 渲染使用有界分批/窗口，不能一次生成巨型 SQL、加载全部 attempt 或渲染全部 DOM。
 - 任务不得配置第二份用例执行超时；进程执行期限只读取平台的 `caseExecutionTimeoutSeconds`。任务级排队、领取和上传时限分别服务于恢复阶段，不属于用例执行超时。

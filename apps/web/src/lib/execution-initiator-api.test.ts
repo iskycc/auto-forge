@@ -176,6 +176,36 @@ describe.each(entries)("$name execution initiator", (entry) => {
   });
 });
 
+describe("Jenkins task environments", () => {
+  it("passes one execution's validated IPv4 and IPv6 list to the task snapshot", async () => {
+    const result = await createJenkinsBatch(
+      request({ suiteId: "suite", environmentAddresses: [" 192.0.2.10 ", "2001:db8::10"] }),
+    );
+    expect(result.status).toBe(201);
+    expect(runtime.create.mock.calls[0]?.[0]).toEqual({
+      suiteId: "suite",
+      delaySeconds: 0,
+      environmentAddresses: ["192.0.2.10", "2001:db8::10"],
+    });
+    expect(await result.json()).toMatchObject({ timeZone: "Asia/Shanghai" });
+  });
+
+  it.each(
+    [[], ["192.0.2.10", " 192.0.2.10 "], ["autoforge.local"]].map((environmentAddresses) => ({
+      environmentAddresses,
+    })),
+  )(
+    "rejects an invalid environment IP list before creating a batch: %j",
+    async ({ environmentAddresses }) => {
+      const response = await createJenkinsBatch(
+        request({ suiteId: "suite", environmentAddresses }),
+      );
+      expect(response.status).toBe(400);
+      expect(runtime.create).not.toHaveBeenCalled();
+    },
+  );
+});
+
 function request(body: object): Request {
   return new Request(`http://localhost/api/v1/execution?${new URLSearchParams(scope)}`, {
     method: "POST",

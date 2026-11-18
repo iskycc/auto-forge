@@ -1,4 +1,4 @@
-import { createRunBatchInputSchema } from "@autoforge/contracts";
+import { createRunBatchInputSchema, DEFAULT_PLATFORM_TIME_ZONE } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
@@ -32,7 +32,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       identity.user.id,
       projectScope,
     );
-    const baseUrl = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
+    const web = services.configurationStore.read().web;
+    const baseUrl = publicLinkBase(web.publicBaseUrl, request);
     const resultUrl = new URL(resultPath, baseUrl).toString();
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "jenkins.run_batch.create",
@@ -40,7 +41,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       resourceId: batch.id,
       projectId: batch.projectId,
       requestId: currentRequestId,
-      details: { suiteId: suite.id, totalRuns: batch.totalRuns },
+      details: {
+        suiteId: suite.id,
+        totalRuns: batch.totalRuns,
+        ...(input.environmentAddresses
+          ? { environmentAddresses: input.environmentAddresses.join(", ") }
+          : {}),
+      },
     });
     return NextResponse.json(
       {
@@ -54,6 +61,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         ).toString(),
         pollIntervalSeconds: 30,
         completionTimeoutSeconds: RUN_PROGRESS_TOKEN_TTL_SECONDS,
+        timeZone: web.timeZone ?? DEFAULT_PLATFORM_TIME_ZONE,
       },
       { status: 201 },
     );

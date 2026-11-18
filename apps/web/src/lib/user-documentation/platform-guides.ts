@@ -269,7 +269,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
         { title: "准备凭据", detail: "服务账号与 API 密钥" },
         { title: "流水线构建", detail: "生成本地运行文件" },
         { title: "直接上传", detail: "插件计算摘要与大小" },
-        { title: "拉起执行", detail: "记录批次并跟踪进展" },
+        { title: "拉起执行", detail: "可传多 IP · 输出实际通过率" },
       ],
     },
     sections: [
@@ -292,12 +292,12 @@ export const platformGuides: readonly DocumentationArticle[] = [
           {
             title: "按指导配置",
             detail:
-              "在 Jenkins 配置平台地址及凭据，选用说明中的任务标识与步骤；安装与版本升级按 Jenkins 管理流程完成。",
+              "在 Jenkins 配置平台地址与凭据，使用 autoforgeRun 启动目标任务。可选填 environmentAddresses 列表，逐项传入 1 至 128 个不重复的 IPv4／IPv6，只用于本次执行。省略时使用任务默认 IP。",
           },
           {
             title: "核对执行结果",
             detail:
-              "保存返回的批次与进展地址，在公开执行进展页确认实际状态，不要只凭流水线已发送请求判断成功。",
+              "控制台在批次结束后输出带时间戳的总数、完成数、通过、失败、阻塞、报告链接及 ActualPassPercent。实际通过率按通过数除以总数，取整数部分。服务账号需要目标项目的 run.create、run.read 和 run.cancel 权限。",
           },
         ],
       },

@@ -10,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -88,10 +89,16 @@ final class AutoForgeRunClient {
     }
 
     Map<String, Object> runToCompletion(String suiteId) throws IOException, InterruptedException {
+        return runToCompletion(suiteId, null);
+    }
+
+    Map<String, Object> runToCompletion(String suiteId, List<String> environmentAddresses)
+            throws IOException, InterruptedException {
         if (cancellation.isRequested()) throw new InterruptedException("Pipeline stopped before batch creation");
         AutoForgeRunLog executionLog = new AutoForgeRunLog(console, nanoTime);
         JSONObject request = new JSONObject();
         request.put("suiteId", suiteId);
+        if (environmentAddresses != null) request.put("environmentAddresses", environmentAddresses);
         JSONObject started;
         try {
             started = post("api/v1/jenkins/runs", request);
@@ -120,7 +127,7 @@ final class AutoForgeRunClient {
         long effectiveTimeoutSeconds = timeoutSeconds == 0 ? serverTimeoutSeconds : timeoutSeconds;
         long deadlineNanos = deadlineAfter(effectiveTimeoutSeconds);
         executionLog.started(suiteId, requiredString(started, "batchId"), resultLink,
-            pollIntervalSeconds, effectiveTimeoutSeconds);
+            pollIntervalSeconds, effectiveTimeoutSeconds, started.optString("timeZone", ""));
 
         String batchId = requiredString(started, "batchId");
         InterruptedException interruptedFailure = null;
@@ -227,6 +234,7 @@ final class AutoForgeRunClient {
         result.put("totalCases", progress.getInt("totalCases"));
         result.put("totalPassed", progress.getInt("totalPassed"));
         result.put("finalFailed", progress.getInt("finalFailed"));
+        result.put("actualPassPercent", AutoForgeRunLog.actualPassPercent(progress));
         result.put("progressUrl", resultUrl);
         result.put("resultUrl", resultUrl);
         return result;

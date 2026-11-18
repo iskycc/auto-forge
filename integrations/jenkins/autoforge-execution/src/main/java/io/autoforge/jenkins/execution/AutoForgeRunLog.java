@@ -1,6 +1,10 @@
 package io.autoforge.jenkins.execution;
 
 import io.autoforge.jenkins.console.AutoForgeConsoleLog;
+import java.time.DateTimeException;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
@@ -8,9 +12,13 @@ import net.sf.json.JSONObject;
 
 final class AutoForgeRunLog {
     private static final long PROGRESS_REMINDER_NANOS = TimeUnit.SECONDS.toNanos(60);
+    private static final ZoneId DEFAULT_TIME_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final DateTimeFormatter REPORT_TIMESTAMP =
+        DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss", Locale.ROOT);
     private final AutoForgeConsoleLog console;
     private final LongSupplier nanoTime;
     private final long startedNanos;
+    private ZoneId timeZone = DEFAULT_TIME_ZONE;
     private String lastProgress;
     private long lastProgressNanos;
     private boolean suiteNamePrinted;
@@ -22,7 +30,9 @@ final class AutoForgeRunLog {
         this.startedNanos = nanoTime.getAsLong();
     }
 
-    void started(String suiteId, String batchId, AutoForgeResultLink resultLink, int pollSeconds, long timeoutSeconds) {
+    void started(String suiteId, String batchId, AutoForgeResultLink resultLink, int pollSeconds,
+            long timeoutSeconds, String platformTimeZone) {
+        timeZone = reportTimeZone(platformTimeZone);
         console.section("开始执行");
         console.field("任务编号", suiteId);
         console.field("执行批次", batchId);
@@ -38,9 +48,10 @@ final class AutoForgeRunLog {
             suiteNamePrinted = true;
         }
         String summary = String.format(Locale.ROOT,
-            "%s | 第 %d/%d 轮 | 本轮完成 %d/%d（通过 %d，失败 %d）| 累计通过 %d/%d",
+            "%s | 第 %d/%s 轮 | 本轮完成 %d/%d（通过 %d，失败 %d）| 累计通过 %d/%d",
             statusLabel(progress.getString("status")),
-            progress.getInt("currentRound"), progress.getInt("maximumRounds"),
+            progress.getInt("currentRound"),
+            progress.opt("maximumRounds") instanceof Number maximumRounds ? maximumRounds : "不限",
             progress.getInt("currentRoundCompleted"), progress.getInt("currentRoundTotal"),
             progress.getInt("currentRoundPassed"), progress.getInt("currentRoundFailed"),
             progress.getInt("totalPassed"), progress.getInt("totalCases"));
@@ -67,6 +78,48 @@ final class AutoForgeRunLog {
         console.link("查看结果", resultLink.url(), resultLink.resultLabel(), resultLink.validityHint());
         if ("succeeded".equals(status) && failed > 0) {
             console.field("结果说明", "执行流程已完成，仍有 " + failed + " 项用例失败，请查看结果定位原因。");
+        }
+        report(progress, resultLink);
+    }
+
+    private void report(JSONObject progress, AutoForgeResultLink resultLink) {
+        int total = progress.getInt("totalCases");
+        int passed = progress.getInt("totalPassed");
+        int finished = progress.optInt("completedCases", passed + progress.getInt("finalFailed"));
+        int failed = progress.optInt("reportFailed", progress.getInt("finalFailed"));
+        int blocked = Math.max(0, finished - passed - failed);
+        reportLine(String.format(Locale.ROOT,
+            "The case is finished. Total:%d, Finished: %d ( Passed: %d, Failed: %d, Blocked: %d ) .%s",
+            total, finished, passed, failed, blocked,
+            failed + blocked > 0 ? " Please analyze failed cases." : ""));
+        reportLine("Start to generate report.");
+        String taskState = switch (progress.getString("status")) {
+            case "succeeded" -> "Finished";
+            case "cancelled" -> "Cancelled";
+            default -> "Failed";
+        };
+        String reportUrl = resultLink.lifetime() == AutoForgeResultLink.Lifetime.PERMANENT
+            ? resultLink.url() : "(see execution link above)";
+        reportLine("Success to generate report. taskState = " + taskState + ", reportUrl = " + reportUrl);
+        reportLine("ActualPassPercent: " + actualPassPercent(progress) + ".");
+        reportLine("Finished execute test cases by Auto Forge!");
+    }
+
+    static int actualPassPercent(JSONObject progress) {
+        int total = progress.getInt("totalCases");
+        return total == 0 ? 0 : (int) (progress.getInt("totalPassed") * 100L / total);
+    }
+
+    private void reportLine(String message) {
+        console.lineWithPrefix(REPORT_TIMESTAMP.format(LocalDateTime.now(timeZone)) + " : ", message);
+    }
+
+    private static ZoneId reportTimeZone(String value) {
+        if (value.isBlank()) return DEFAULT_TIME_ZONE;
+        try {
+            return ZoneId.of(value);
+        } catch (DateTimeException unsupported) {
+            return DEFAULT_TIME_ZONE;
         }
     }
 

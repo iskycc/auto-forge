@@ -132,6 +132,8 @@ export type RunBatch = {
   runningRuns: number;
   succeededRuns: number;
   failedRuns: number;
+  /** Final failures with a known TestNG result code, excluding execution infrastructure errors. */
+  testFailureRuns?: number | undefined;
   timedOutRuns: number;
   cancelledRuns: number;
   // 终止请求一经保存，调度器不得再创建或下发新 assignment；已有在途用例自然完成。

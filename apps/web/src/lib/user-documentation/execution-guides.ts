@@ -173,7 +173,7 @@ export const executionGuides: readonly DocumentationArticle[] = [
         id: "jenkins-ai",
         title: "Jenkins 与自动 AI 初析",
         paragraphs: [
-          "本页提供 Jenkins 接入指导和内置插件下载。照当前任务生成的配置使用，不需要另找独立插件 Release；程序凭据仍需按接入方式正确配置。",
+          "本页提供 Jenkins 接入指导和内置插件下载。autoforgeRun 可传入一个或多个本次执行 IP，省略时读取任务默认 IP。Jenkins 参数仅影响它创建的批次，浏览器通过此公开链接修改的共享 IP 继续用于该链接。",
           "任务启用自动 AI 初析时，公开执行按分享人的当前授权检查自动分析能力；实际拉起人仍被记录。模型结论不代表人工已经认领或确认问题。",
         ],
       },

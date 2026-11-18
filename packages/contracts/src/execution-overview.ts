@@ -16,6 +16,7 @@ export const runBatchCountersSchema = z.object({
   runningRuns: count,
   succeededRuns: count,
   failedRuns: count,
+  testFailureRuns: count.optional(),
   timedOutRuns: count,
   cancelledRuns: count,
 });

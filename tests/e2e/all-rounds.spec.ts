@@ -157,6 +157,7 @@ type ClaimedAssignment = {
     executionSpec: {
       executionRunId: string;
       inputs: Array<{ inputId: string; kind: string }>;
+      adapter?: { environmentAddress: string };
     };
   };
   lease: { token: string; leaseId: string; version: number };
@@ -1142,9 +1143,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     replaced: true,
   });
 
+  const jenkinsEnvironments = ["192.0.2.25", "2001:db8::25"];
   const jenkinsRunResponse = await page.request.post("/api/v1/jenkins/runs", {
     headers: { authorization: `Bearer ${jenkinsToken}` },
-    data: { suiteId },
+    data: { suiteId, environmentAddresses: jenkinsEnvironments },
   });
   expect(jenkinsRunResponse.status()).toBe(201);
   const jenkinsRun = (await jenkinsRunResponse.json()) as {
@@ -1155,6 +1157,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     pollIntervalSeconds: number;
     completionTimeoutSeconds: number;
   };
+  expect(
+    (await browserJson(page, `/api/v1/run-batches/${jenkinsRun.batchId}?view=summary`)).body,
+  ).toMatchObject({ environmentAddresses: jenkinsEnvironments });
   expect(jenkinsRun.pollIntervalSeconds).toBe(30);
   expect(jenkinsRun.completionTimeoutSeconds).toBe(7 * 24 * 60 * 60);
   expect(jenkinsRun.progressUrl).toBe(jenkinsRun.resultUrl);
@@ -1255,8 +1260,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await restrictedContext.close();
 
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  const jenkinsAssignedAddresses: Array<string | undefined> = [];
   for (let claimed = 0; claimed < 2; claimed += 1) {
     const claim = await claimAssignment(page, identity);
+    jenkinsAssignedAddresses.push(claim.assignment.executionSpec.adapter?.environmentAddress);
     const stdoutWatermark = await uploadCompressibleAttemptLog(
       page,
       identity,
@@ -1272,6 +1279,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     });
     expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   }
+  expect(jenkinsAssignedAddresses.sort()).toEqual([...jenkinsEnvironments].sort());
   await expect
     .poll(
       async () => {
@@ -2079,6 +2087,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
   expect(stoppingResponse.status()).toBe(201);
   const stoppingBatch = (await stoppingResponse.json()) as { batchId: string; resultUrl: string };
+  expect(
+    (await browserJson(page, `/api/v1/run-batches/${stoppingBatch.batchId}?view=summary`)).body,
+  ).not.toMatchObject({ environmentAddresses: jenkinsEnvironments });
   const runningDuringStop = await claimAssignment(page, identity);
   const terminationPath = `/api/v1/run-batches/${stoppingBatch.batchId}/terminate`;
   const deniedTermination = await page.request.post(terminationPath, {
@@ -2105,7 +2116,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await completeAttempt(page, identity, runningDuringStop, {
     completionId: "jenkins-stop-drained",
     status: "failed",
-    resultCode: "TESTNG_FAILED",
+    resultCode: "TESTNG_ASSERTIONS_FAILED",
     summary: "Preserve the running case result after Jenkins requested termination",
     stdoutWatermark: -1,
   });
@@ -2126,6 +2137,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       totalCases: 2,
       totalPassed: 0,
       finalFailed: 1,
+      reportFailed: 1,
     });
   const stoppedReport = await page.request.get(stoppingBatch.resultUrl);
   expect(stoppedReport.status()).toBe(200);

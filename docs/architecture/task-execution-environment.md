@@ -87,7 +87,7 @@ pnpm exec playwright test --config playwright.full.config.ts tests/e2e/case-suit
 - `PUT /api/v1/public/case-suites/:suiteId/environment?PublisherId=…` 接收 `{revision,addresses}`；`addresses:null` 恢复任务默认。需个人账号登录、同源和限流，不要求项目执行权限，不受任务锁定人限制；停用、归档、无效链接与未启用 Adapter 时拒绝。修改人来自登录会话，不能由请求伪造。每次成功只更新一个最新记录，并登记操作审计。
 - 页面展示“本次执行将使用以上 IP”和最新修改人、时间。编辑保留打开时修订号；并发修改返回 `PUBLIC_SUITE_ENVIRONMENT_REVISION_CONFLICT`，保留草稿并通过统一冲突弹窗提示重新加载，禁止静默覆盖。
 - 立即／倒计时执行提交所见修订号，应用服务读取共享地址，批次创建事务再次校验修订号。Full 锁住链接行到快照提交；Lite 依靠 SQLite 写事务序列化。变更前已接受的请求幂等重放仍返回原批次，修改不会影响已创建执行。
-- 执行详情分别展示分享人、实际拉起人及环境 IP 修改人。任务默认地址、用例范围与修订号均不改变。后台任务／Jenkins 执行仍使用各自原有配置；历史 API 显式传一次性 `environmentAddresses` 的行为继续兼容。CoTest 开关已移除，旧关闭标记不影响共享环境；同一有效链接继续使用最新共享 IP。
+- 执行详情分别展示分享人、实际拉起人及环境 IP 修改人。任务默认地址、用例范围与修订号均不改变。后台计划继续使用任务默认配置。Jenkins 可传一次性 `environmentAddresses` 覆盖本次批次，并沿用项目执行权限和平台 IP 校验；省略参数时使用任务默认地址。CoTest 开关已移除，旧关闭标记不影响共享环境；同一有效链接继续使用最新共享 IP。
 
 ### 验证证据
 

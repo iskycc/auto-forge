@@ -53,6 +53,28 @@ describe("Jenkins and public run progress", () => {
     expect(interrupted.statusLabel).toBe("已终止");
   });
 
+  it("separates test failures from abnormal results in the terminal Jenkins report", () => {
+    expect(
+      buildRunProgress(
+        batch({
+          status: "failed",
+          totalRuns: 5,
+          succeededRuns: 1,
+          failedRuns: 2,
+          timedOutRuns: 1,
+          cancelledRuns: 1,
+          testFailureRuns: 1,
+        }),
+      ),
+    ).toMatchObject({
+      totalCases: 5,
+      completedCases: 5,
+      totalPassed: 1,
+      finalFailed: 3,
+      reportFailed: 1,
+    });
+  });
+
   it("reports the complete current-round denominator before attempts are assigned", () => {
     const progress = buildRunProgress(batch({ status: "queued" }));
 

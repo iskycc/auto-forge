@@ -262,8 +262,11 @@ test("public task links execute with login only, share live status, record actor
   await expect(
     page.getByRole("dialog").getByText("创建服务账号和 Jenkins 凭据", { exact: true }),
   ).toBeVisible();
+  const jenkinsAddressExample = page.getByRole("dialog").getByText(/environmentAddresses:/u);
+  await expect(jenkinsAddressExample).toBeVisible();
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await jenkinsAddressExample.scrollIntoViewIfNeeded();
     await expect
       .poll(() =>
         page.getByRole("dialog").evaluate((element) => element.scrollWidth - element.clientWidth),
@@ -915,6 +918,7 @@ test("public task links execute with login only, share live status, record actor
     ).toMatchObject({ terminatedBy: { username: E2E_ADMIN_USERNAME } });
     await visitor.getByText("Jenkins 对接指导与插件下载", { exact: true }).click();
     await expect(visitor.getByText("创建服务账号和 Jenkins 凭据", { exact: true })).toBeVisible();
+    await expect(visitor.getByText(/environmentAddresses:/u)).toBeVisible();
     await expect(visitor.locator("pre")).toContainText(suite.id);
     for (const kind of ["execution", "dependency-publisher"]) {
       const download = await context.request.get(
