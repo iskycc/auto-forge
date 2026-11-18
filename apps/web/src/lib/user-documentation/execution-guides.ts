@@ -292,7 +292,7 @@ export const executionGuides: readonly DocumentationArticle[] = [
       caption: "先核对记录与环境，再决定是否重跑；重跑创建新记录，不覆盖原结果。",
       nodes: [
         { title: "确认记录", detail: "用例 · 批次 · 轮次" },
-        { title: "阅读日志", detail: "输出与错误证据" },
+        { title: "阅读日志", detail: "最后输出 · 节点快照" },
         { title: "修改本页 IP", detail: "可选诊断环境" },
         { title: "手动重跑", detail: "保留新旧历史" },
       ],
@@ -342,7 +342,8 @@ export const executionGuides: readonly DocumentationArticle[] = [
         title: "日志中途停止与超时诊断",
         paragraphs: [
           "日志不再更新既可能是业务不再输出，也可能是上传暂时受限或失败。超时描述中的期限、续租与节点心跳是判定证据，不能单独说明 Java 阻塞原因。",
-          "有权限时打开“查看超时诊断”，检查最后 stdout／stderr 时间、上传错误与 JVM 线程快照。线程快照需要更新后的 Agent 和可用 JDK 工具；历史记录或不可采集的环境可能没有快照。",
+          "登录后，有项目日志读取权限的用户可点击“查看超时诊断”。先对照最后输出和最近成功上传时间，再查看 JVM 线程栈中的业务类及行号。多个用例同时超时时，可按实际环境 IP 对照这些记录。",
+          "更新执行节点 Agent 后，项目上传的完整 JDK 即使没有可直接运行的 jstack，也可以经 Java 读取线程栈。Attach 失败或同节点采集繁忙时，诊断仍会显示获取到的进程状态、线程数和常驻内存，并说明缺少线程栈的原因。旧记录保留当时证据。",
         ],
       },
     ],

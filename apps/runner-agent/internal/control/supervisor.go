@@ -31,37 +31,38 @@ const (
 )
 
 type attemptSupervisor struct {
-	client                *Client
-	identity              Identity
-	identityMutex         sync.RWMutex
-	configuration         config.Config
-	store                 attemptStore
-	logSpool              *logSpool
-	batches               *batchRegistry
-	diagnostics           io.Writer
-	draining              atomic.Bool
-	busy                  atomic.Int32
-	waitGroup             sync.WaitGroup
-	mutex                 sync.Mutex
-	cancellations         map[string]context.CancelFunc
-	memoryScopes          map[string]struct{}
-	claimCancel           context.CancelFunc
-	claimWake             chan struct{}
-	timeoutDiagnosticBusy atomic.Bool
-	runExecution          func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
+	client               *Client
+	identity             Identity
+	identityMutex        sync.RWMutex
+	configuration        config.Config
+	store                attemptStore
+	logSpool             *logSpool
+	batches              *batchRegistry
+	diagnostics          io.Writer
+	draining             atomic.Bool
+	busy                 atomic.Int32
+	waitGroup            sync.WaitGroup
+	mutex                sync.Mutex
+	cancellations        map[string]context.CancelFunc
+	memoryScopes         map[string]struct{}
+	claimCancel          context.CancelFunc
+	claimWake            chan struct{}
+	threadDiagnosticSlot chan struct{}
+	runExecution         func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
 }
 
 func newAttemptSupervisor(client *Client, identity Identity, configuration config.Config, diagnostics io.Writer) *attemptSupervisor {
 	return &attemptSupervisor{
-		client:        client,
-		identity:      identity,
-		configuration: configuration,
-		store:         newAttemptStore(configuration.DataDirectory),
-		batches:       newBatchRegistry(configuration.DataDirectory),
-		diagnostics:   diagnostics,
-		cancellations: make(map[string]context.CancelFunc),
-		claimWake:     make(chan struct{}, 1),
-		runExecution:  executor.Run,
+		client:               client,
+		identity:             identity,
+		configuration:        configuration,
+		store:                newAttemptStore(configuration.DataDirectory),
+		batches:              newBatchRegistry(configuration.DataDirectory),
+		diagnostics:          diagnostics,
+		cancellations:        make(map[string]context.CancelFunc),
+		claimWake:            make(chan struct{}, 1),
+		threadDiagnosticSlot: make(chan struct{}, 1),
+		runExecution:         executor.Run,
 	}
 }
 
@@ -595,7 +596,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	watermarks = mergeLogWatermarks(streamedWatermarks, watermarks)
 	mapped := mapExecutionResult(result)
 	if mapped.Status == "timed_out" {
-		mapped.Summary = boundedSummary(mapped.Summary + "\n" + timeoutDiagnostics.describe(executionSpec.TimeoutMs))
+		mapped.Summary = boundedSummary(mapped.Summary + "\n" + timeoutDiagnostics.describe(executionSpec.TimeoutMs, time.Now()))
 	}
 	if reportErr != nil {
 		mapped.Status = "failed"

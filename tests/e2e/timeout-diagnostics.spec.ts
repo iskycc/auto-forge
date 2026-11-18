@@ -67,7 +67,7 @@ test("timeout diagnostics show watchdog evidence and authenticated JVM logs with
           sequence: 0,
           recordedAt: detectedAt,
           content:
-            "[AutoForge 超时前诊断]\n日志上传：90 次，429 限流 12 次。\n线程证据：业务线程正在等待 Java 锁。\n[JVM 线程快照]\njava.lang.Thread.State: BLOCKED\n at e2e.analysis.Failed0Test.send(Failed0Test.java:42)\n",
+            "[AutoForge 超时前诊断]\n日志上传：90 次，429 限流 12 次。\n记录时距最后输出 245.0 秒。\n线程证据：业务线程正在等待 Java 锁。\n采集方式：JDK Java 入口。\n节点进程快照：PID 812；Linux 状态 S；21 个线程；常驻内存 106.0 MiB。\n本次用例的环境 IP：192.0.2.3。\n[JVM 线程快照]\njava.lang.Thread.State: BLOCKED\n at e2e.analysis.Failed0Test.send(Failed0Test.java:42)\n",
         },
       ],
     });
@@ -94,6 +94,9 @@ test("timeout diagnostics show watchdog evidence and authenticated JVM logs with
     await page.getByRole("button", { name: "查看超时诊断", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: /执行日志.*Agent 诊断/ });
     await expect(dialog.getByText(/429 限流 12 次/)).toBeVisible();
+    await expect(dialog.getByText(/记录时距最后输出 245.0 秒/)).toBeVisible();
+    await expect(dialog.getByText(/常驻内存 106.0 MiB/)).toBeVisible();
+    await expect(dialog.getByText(/本次用例的环境 IP：192.0.2.3/)).toBeVisible();
     await expect(dialog.getByText(/Failed0Test.java:42/)).toBeVisible();
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -119,6 +122,7 @@ test("timeout diagnostics show watchdog evidence and authenticated JVM logs with
     await expect(visitor.getByText("java.lang.Thread.State: BLOCKED", { exact: true })).toHaveCount(
       0,
     );
+    await expect(visitor.getByText(/本次用例的环境 IP：192.0.2.3/)).toHaveCount(0);
   } finally {
     await anonymous.close();
   }

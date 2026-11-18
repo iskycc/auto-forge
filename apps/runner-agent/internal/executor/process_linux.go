@@ -53,7 +53,7 @@ func KillPersistedProcessGroup(identity ProcessIdentity) (bool, error) {
 	}
 	deadline := time.Now().Add(recoveredProcessExitTimeout)
 	for time.Now().Before(deadline) {
-		observed, state, inspectErr := readProcessStat(identity.ProcessID)
+		observed, fields, inspectErr := readProcessStat(identity.ProcessID)
 		if errors.Is(inspectErr, os.ErrNotExist) {
 			return true, nil
 		}
@@ -65,7 +65,7 @@ func KillPersistedProcessGroup(identity ProcessIdentity) (bool, error) {
 		}
 		// A zombie cannot write or create workspace files. SIGKILL was sent to
 		// the whole group, so descendants have received the same terminal signal.
-		if state == "Z" || state == "X" {
+		if fields[0] == "Z" || fields[0] == "X" {
 			return true, nil
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -80,26 +80,58 @@ func ReadProcessIdentity(processID int) (ProcessIdentity, error) {
 	return identity, err
 }
 
-func readProcessStat(processID int) (ProcessIdentity, string, error) {
+type ProcessSnapshot struct {
+	State         string
+	ThreadCount   int
+	ResidentBytes int64
+}
+
+// ReadProcessSnapshot reads lightweight kernel metrics even if a JVM attach
+// fails. It validates the start time from the same sample before returning it.
+func ReadProcessSnapshot(expected ProcessIdentity) (ProcessSnapshot, error) {
+	observed, fields, err := readProcessStat(expected.ProcessID)
+	if err != nil {
+		return ProcessSnapshot{}, err
+	}
+	if observed != expected {
+		return ProcessSnapshot{}, errors.New("process identity changed")
+	}
+	// Fields 20 (num_threads) and 24 (rss in pages), with comm removed.
+	if len(fields) <= 21 {
+		return ProcessSnapshot{}, errors.New("process stat omits resident memory")
+	}
+	threads, threadErr := strconv.Atoi(fields[17])
+	pages, memoryErr := strconv.ParseInt(fields[21], 10, 64)
+	if threadErr != nil || memoryErr != nil || threads < 0 || pages < 0 {
+		return ProcessSnapshot{}, errors.New("process stat has invalid thread or memory metrics")
+	}
+	return ProcessSnapshot{
+		State:         fields[0],
+		ThreadCount:   threads,
+		ResidentBytes: pages * int64(os.Getpagesize()),
+	}, nil
+}
+
+func readProcessStat(processID int) (ProcessIdentity, []string, error) {
 	payload, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", processID))
 	if err != nil {
-		return ProcessIdentity{}, "", err
+		return ProcessIdentity{}, nil, err
 	}
 	commandEnd := bytes.LastIndexByte(payload, ')')
 	if commandEnd < 0 || commandEnd+1 >= len(payload) {
-		return ProcessIdentity{}, "", errors.New("process stat is malformed")
+		return ProcessIdentity{}, nil, errors.New("process stat is malformed")
 	}
 	// /proc/<pid>/stat fields after comm start with field 3 (state); starttime
 	// is field 22 and therefore index 19 in this suffix.
 	fields := strings.Fields(string(payload[commandEnd+1:]))
 	if len(fields) <= 19 {
-		return ProcessIdentity{}, "", errors.New("process stat omits start time")
+		return ProcessIdentity{}, nil, errors.New("process stat omits start time")
 	}
 	startTimeTicks, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil || startTimeTicks == 0 {
-		return ProcessIdentity{}, "", errors.New("process stat has invalid start time")
+		return ProcessIdentity{}, nil, errors.New("process stat has invalid start time")
 	}
-	return ProcessIdentity{ProcessID: processID, StartTimeTicks: startTimeTicks}, fields[0], nil
+	return ProcessIdentity{ProcessID: processID, StartTimeTicks: startTimeTicks}, fields, nil
 }
 
 func processExitSignal(command *exec.Cmd) string {
