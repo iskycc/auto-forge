@@ -33,11 +33,11 @@ declare module "exceljs" {
   type ExportedRow = {
     values: unknown[];
     getCell(column: number): ExportedCell;
-    eachCell(callback: (cell: ExportedCell) => void): void;
+    eachCell(callback: (cell: ExportedCell, column: number) => void): void;
   };
   const ExcelJS: {
     Workbook: new () => {
-      xlsx: { load(buffer: Uint8Array): Promise<void> };
+      xlsx: { load(buffer: Uint8Array): Promise<void>; writeBuffer(): Promise<Uint8Array> };
       csv: {
         read(
           stream: import("node:stream").Readable,
@@ -53,7 +53,7 @@ declare module "exceljs" {
       }>;
       getWorksheet(name: string):
         | {
-            getCell(reference: string): { value: unknown };
+            getCell(reference: string): ExportedCell;
             actualRowCount: number;
           }
         | undefined;

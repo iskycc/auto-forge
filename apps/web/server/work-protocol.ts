@@ -73,7 +73,8 @@ export type WorkTask =
         | "read-jar-source"
         | "parse-ddt"
         | "parse-sr-tags"
-        | "parse-ddt-associations";
+        | "parse-ddt-associations"
+        | "parse-case-suite-markers";
       input: unknown;
     }
   | { kind: "background-job"; job: unknown }

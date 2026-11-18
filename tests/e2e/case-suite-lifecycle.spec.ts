@@ -20,6 +20,7 @@ import {
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
+import { readExportedWorkbook } from "./support/export-workbook";
 import { expectUiIntegrity } from "./support/ui-guard";
 import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
 import { openHistoryFixtureConnection } from "./support/history-fixture-connection";
@@ -31,6 +32,123 @@ const lifecycleRunnerCapabilities = [
   "testng:7.11.0",
   COTEST_ADAPTER_CAPABILITY,
 ];
+
+test("task member changes preserve remarks and marker workbooks round-trip through the task UI", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const suffix = uniqueName("suite-markers");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const className = `example.Marker${Date.now()}Test`;
+  await importJar(page, project, `${suffix}.jar`, className, ["verify"]);
+  await findVersionCase(page, project.id, project.versionId, project.stageId, className);
+  const result = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      name: "钱包任务 · 成员标识与变更记录",
+    },
+  });
+  expect(result.status).toBe(201);
+  const suite = result.body;
+  const base = `/api/v1/case-suites/${suite.id}`;
+  await page.goto(`/cases?targetSuiteId=${suite.id}`);
+  const checkbox = page.getByLabel(`选择 ${className.split(".").at(-1)!}`, { exact: true });
+  await checkbox.check();
+  await page.getByRole("textbox", { name: "加入任务备注", exact: true }).fill("补充钱包支付回归");
+  await page.getByRole("button", { name: "加入任务", exact: true }).click();
+  await expect(page.locator(".toast-viewport")).toContainText("已将 1 个用例加入任务");
+  await page.goto(`/case-suites/${suite.id}`);
+  const history = page.locator("#suite-member-history");
+  await expect(history).toContainText("补充钱包支付回归");
+  await expect(history).toContainText(E2E_ADMIN_USERNAME);
+  await history.getByRole("button", { name: "查看用例" }).click();
+  const audited = page.getByRole("dialog", { name: /新增的普通用例/u });
+  await expect(audited).toContainText(className);
+  await audited.getByRole("button", { name: "关闭", exact: true }).last().click();
+
+  const markers = page.locator("#suite-markers");
+  await markers.getByRole("button", { name: "编辑标识", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "编辑用例标识" });
+  await editor.getByLabel("标识2", { exact: true }).fill("Wallet · 支付");
+  await editor.getByLabel("标识5", { exact: true }).fill("回归重点");
+  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(directory, { recursive: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(directory, `task-marker-dialog-${width}.png`),
+      animations: "disabled",
+    });
+  }
+  await editor.getByRole("button", { name: "保存标识", exact: true }).click();
+  await expect(markers).toContainText("用例标识已保存");
+  await expect(markers).toContainText("回归重点");
+  await page.reload();
+  await expect(markers).toContainText("Wallet · 支付");
+
+  const response = await page.request.get(`${base}/markers/export`);
+  expect(response.status()).toBe(200);
+  const workbook = await readExportedWorkbook(await response.body());
+  const sheet = workbook.getWorksheet("任务用例标识")!;
+  expect(sheet.getCell("C2").text).toBe(className);
+  expect(sheet.getCell("E2").text).toBe("Wallet · 支付");
+  sheet.getCell("D2").value = "00017";
+  sheet.getCell("E2").value = "";
+  await markers.locator('input[type="file"]').setInputFiles({
+    name: "钱包标识.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+  });
+  await expect(markers).toContainText("已导入 1 条用例标识。");
+  await expect(markers).toContainText("00017");
+  await expect(markers.getByText("Wallet · 支付", { exact: true })).toHaveCount(0);
+
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id);
+  const batch = await createTaskRun(page, suite.id);
+  const claim = await claimDeletionAttempt(page, runner);
+  await uploadDeletionLog(page, runner, claim, "member markers export browser fixture");
+  await completeDeletionAttempt(page, runner, claim, "failed");
+  const report = await page.request.get(
+    `/api/v1/run-batches/${batch.id}/export?scope=final&template=failure-analysis`,
+  );
+  expect(report.status()).toBe(200);
+  const analysisSheet = (await readExportedWorkbook(await report.body())).worksheets[0]!;
+  const markerColumns: string[] = [];
+  analysisSheet.getRow(1).eachCell((cell, index) => {
+    if (!cell.text.startsWith("标识")) return;
+    markerColumns.push(cell.text);
+    expect(analysisSheet.getCell(2, index).text).toBe(cell.text === "标识1" ? "00017" : "回归重点");
+  });
+  expect(markerColumns).toEqual(["标识1", "标识5"]);
+
+  await page.goto(`/cases?targetSuiteId=${suite.id}`);
+  await checkbox.check();
+  await page.getByRole("button", { name: "从任务中排除", exact: true }).click();
+  const removal = page.getByRole("dialog", { name: "从任务中排除用例", exact: true });
+  await removal.getByRole("textbox", { name: "操作备注（可选）" }).fill("换用新版支付用例");
+  await removal.getByRole("button", { name: "确认排除", exact: true }).click();
+  await expect(removal).toBeHidden();
+  await expect(page.locator(".toast-viewport")).toContainText("已从任务排除");
+  await page.goto(`/case-suites/${suite.id}`);
+  await expect(history).toContainText("换用新版支付用例");
+  await expect(history).toContainText("补充钱包支付回归");
+  await expect(markers).toContainText("没有匹配的任务用例");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await history.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(directory, `task-member-history-${width}.png`),
+      animations: "disabled",
+    });
+  }
+});
 
 test("public task links execute with login only, share live status, record actors and provide embedded Jenkins plugins", async ({
   page,

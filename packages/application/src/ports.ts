@@ -1,4 +1,12 @@
 import type {
+  CaseSuiteChangedMember,
+  CaseSuiteMarkerEdit,
+  CaseSuiteMarkerMember,
+  CaseSuiteMemberChange,
+  CaseSuiteMemberKind,
+  CaseSuiteMembershipPage,
+} from "@autoforge/contracts";
+import type {
   RuntimeAssetUsageQuery,
   RuntimeAssetUsagePage,
   DdtScopeClearPage,
@@ -1316,7 +1324,35 @@ export type SetCaseSuiteLockRecord = {
   updatedAt: string;
 };
 
+export type CaseSuiteMarkerWrite = {
+  suiteId: string;
+  edits: readonly CaseSuiteMarkerEdit[];
+  actorId: string;
+  expectedRevision: number;
+  updatedAt: string;
+  versionId: string;
+};
+
 export interface CaseSuiteRepository {
+  listMemberChanges(
+    suiteId: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<CaseSuiteMembershipPage<CaseSuiteMemberChange>>;
+  listMemberChangeItems(
+    suiteId: string,
+    changeId: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<CaseSuiteMembershipPage<CaseSuiteChangedMember>>;
+  listMarkerMembers(
+    suiteId: string,
+    kind: CaseSuiteMemberKind,
+    cursor: string | undefined,
+    limit: number,
+    search: string,
+  ): Promise<CaseSuiteMembershipPage<CaseSuiteMarkerMember>>;
+  updateMemberMarkers(input: CaseSuiteMarkerWrite): Promise<CaseSuite>;
   setLock(input: SetCaseSuiteLockRecord): Promise<CaseSuite>;
   archiveReruns(input: {
     projectId: string;
@@ -1381,6 +1417,7 @@ export interface CaseSuiteRepository {
     items: Array<{ id: string; caseDefinitionId: string }>;
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite>;
   removeCases(input: {
@@ -1388,6 +1425,7 @@ export interface CaseSuiteRepository {
     caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite>;
   addDdtCases(input: {
@@ -1395,6 +1433,7 @@ export interface CaseSuiteRepository {
     items: Array<{ id: string; ddtCaseId: string }>;
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite>;
   removeDdtCases(input: {
@@ -1402,6 +1441,7 @@ export interface CaseSuiteRepository {
     ddtCaseIds: string[];
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite>;
   unlinkDdtScopePage(input: import("./clear-ddt-scope").DdtScopeClearWrite): Promise<number>;

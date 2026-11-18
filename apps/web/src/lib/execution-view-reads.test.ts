@@ -43,4 +43,14 @@ describe("isolated execution view boundaries", () => {
     ).rejects.toThrow();
     expect(get).not.toHaveBeenCalled();
   });
+
+  it("forwards the optional marker scan to the isolated paged export reader", async () => {
+    const readExportPage = vi.fn().mockResolvedValue({ items: [] });
+    const batches = { readExportPage } as unknown as RunBatchRepository;
+    const page = { batchId: "batch", scope: "final", limit: 200, markers: "only" };
+    await expect(
+      readExecutionView(batches, { method: "readExportPage", args: [page] }),
+    ).resolves.toEqual({ items: [] });
+    expect(readExportPage).toHaveBeenCalledWith(page);
+  });
 });

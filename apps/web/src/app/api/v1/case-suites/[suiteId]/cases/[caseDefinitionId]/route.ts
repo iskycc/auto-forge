@@ -1,4 +1,6 @@
-import { apiErrorResponse } from "@/lib/api-response";
+import { caseSuiteMemberRemarkSchema } from "@autoforge/contracts";
+import { z } from "zod";
+import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
@@ -13,11 +15,17 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
     const { suiteId, caseDefinitionId } = await context.params;
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
+    const remark = request.body
+      ? z
+          .object({ remark: caseSuiteMemberRemarkSchema.optional() })
+          .parse(await readJsonBody(request, 8192)).remark
+      : undefined;
     const suite = await services.caseSuites.removeCase(
       suiteId,
       caseDefinitionId,
       identity.user.id,
       projectIds,
+      remark,
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.remove_case",

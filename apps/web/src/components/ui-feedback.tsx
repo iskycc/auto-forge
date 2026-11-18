@@ -37,6 +37,7 @@ export type PromptOptions = ConfirmOptions & {
   placeholder?: string;
   multiline?: boolean;
   required?: boolean;
+  maxLength?: number;
 };
 
 type DialogRequest =
@@ -183,6 +184,7 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
                 onChange={(event) => setPromptValue(event.target.value)}
                 rows={4}
                 value={promptValue}
+                maxLength={dialogRequest.options.maxLength}
                 {...(dialogRequest.options.placeholder
                   ? { placeholder: dialogRequest.options.placeholder }
                   : {})}
@@ -192,6 +194,7 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
                 autoFocus
                 onChange={(event) => setPromptValue(event.target.value)}
                 value={promptValue}
+                maxLength={dialogRequest.options.maxLength}
                 {...(dialogRequest.options.placeholder
                   ? { placeholder: dialogRequest.options.placeholder }
                   : {})}

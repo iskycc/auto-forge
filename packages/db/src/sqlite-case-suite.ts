@@ -1,3 +1,21 @@
+import type {
+  CaseSuiteChangedMember,
+  CaseSuiteMemberChange,
+  CaseSuiteMemberKind,
+} from "@autoforge/contracts";
+import type { CaseSuiteMarkerWrite } from "@autoforge/application";
+import {
+  assertSuiteMarkerTargets,
+  markerMember,
+  membershipPage,
+  recordSuiteMemberChange,
+  suiteMarkerMembersQuery,
+  suiteMarkerTargetQuery,
+  suiteMemberChangeItemsQuery,
+  suiteMemberChangesQuery,
+  writeSuiteMarkers,
+  type StoredMarkerMember,
+} from "./case-suite-membership";
 import {
   failureSuiteMemberQuery,
   failureCopyValidationQuery,
@@ -171,7 +189,17 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       );
       if (!suite) return 0;
       assertCaseSuiteLockOwner({ lockedBy: suite.locked_by }, input.actorId);
-      const removed = this.handle.db.run(ddtClearSuiteMembers(input, suite.id)).changes;
+      const affected = this.handle.db.all<{ ddt_case_id: string }>(
+        ddtClearSuiteMembers(input, suite.id),
+      );
+      const removed = affected.length;
+      for (const statement of recordSuiteMemberChange(
+        { ...input, suiteId: suite.id, remark: "清空 DDT 范围" },
+        "ddt",
+        "remove",
+        affected.map((row) => row.ddt_case_id),
+      ))
+        this.handle.db.run(statement);
       if (!removed) return 0;
       this.touchSuite(suite.id, input.actorId, input.updatedAt);
       this.insertVersionSnapshot(suite.id, input.versionId, "suite.ddt-cases.clear-scope", input);
@@ -750,16 +778,83 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     );
   }
 
+  async listMemberChanges(suiteId: string, cursor: string | undefined, limit: number) {
+    const rows = this.handle.db.all<CaseSuiteMemberChange>(
+      suiteMemberChangesQuery(suiteId, cursor, limit),
+    );
+    return membershipPage(rows, limit, (row) => row.id);
+  }
+
+  async listMemberChangeItems(
+    suiteId: string,
+    changeId: string,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    const rows = this.handle.db.all<CaseSuiteChangedMember>(
+      suiteMemberChangeItemsQuery(suiteId, changeId, cursor, limit),
+    );
+    return membershipPage(rows, limit, (row) => row.caseId);
+  }
+
+  async listMarkerMembers(
+    suiteId: string,
+    kind: CaseSuiteMemberKind,
+    cursor: string | undefined,
+    limit: number,
+    search: string,
+  ) {
+    const rows = this.handle.db.all<StoredMarkerMember>(
+      suiteMarkerMembersQuery(suiteId, kind, cursor, limit, search),
+    );
+    return membershipPage(rows.map(markerMember), limit, (row) => row.memberId);
+  }
+
+  async updateMemberMarkers(input: CaseSuiteMarkerWrite): Promise<CaseSuite> {
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const suite = this.suiteMutationState(input.suiteId);
+      assertCaseSuiteEditable(suite, input.actorId);
+      const current = this.handle.db
+        .select({ revision: caseSuites.revision })
+        .from(caseSuites)
+        .where(eq(caseSuites.id, input.suiteId))
+        .get();
+      if (current?.revision !== input.expectedRevision)
+        throwCaseSuiteConflict(this.handle, input.suiteId);
+      for (const edits of batchesOf(input.edits, 200)) {
+        for (const kind of ["standard", "ddt"] as const) {
+          const selected = edits.filter((row) => row.kind === kind);
+          if (!selected.length) continue;
+          const targets = this.handle.db.all(
+            suiteMarkerTargetQuery(
+              input.suiteId,
+              kind,
+              selected.map((row) => row.memberId),
+            ),
+          );
+          assertSuiteMarkerTargets(selected, targets.length);
+        }
+        for (const statement of writeSuiteMarkers(edits)) this.handle.db.run(statement);
+      }
+      this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
+      this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.markers.update", input);
+    });
+    const suite = await this.getSummary(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
       assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
-      let added = 0;
+      const added: string[] = [];
       for (const item of input.items) {
         const result = this.handle.db
           .insert(caseSuiteItems)
@@ -771,9 +866,11 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
           })
           .onConflictDoNothing()
           .run();
-        added += result.changes;
+        if (result.changes) added.push(item.caseDefinitionId);
       }
-      if (added > 0) {
+      if (added.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "standard", "add", added))
+          this.handle.db.run(statement);
         this.handle.db
           .update(caseSuites)
           .set({
@@ -797,13 +894,14 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
       assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
-      let removed = 0;
+      const removed: string[] = [];
       for (const ids of batchesOf(input.caseDefinitionIds, RELATIONAL_WRITE_BATCH_SIZE)) {
-        removed += this.handle.db
+        const deleted = this.handle.db
           .delete(caseSuiteItems)
           .where(
             and(
@@ -811,9 +909,13 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
               inArray(caseSuiteItems.caseDefinitionId, ids),
             ),
           )
-          .run().changes;
+          .returning({ caseId: caseSuiteItems.caseDefinitionId })
+          .all();
+        for (const row of deleted) removed.push(row.caseId);
       }
-      if (removed > 0) {
+      if (removed.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "standard", "remove", removed))
+          this.handle.db.run(statement);
         this.handle.db
           .update(caseSuites)
           .set({
@@ -842,13 +944,14 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     items: Array<{ id: string; ddtCaseId: string }>;
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
       assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
-      let added = 0;
+      const added: string[] = [];
       for (const item of input.items) {
-        added += this.handle.db
+        const result = this.handle.db
           .insert(caseSuiteDdtItems)
           .values({
             id: item.id,
@@ -857,9 +960,12 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
             addedAt: input.updatedAt,
           })
           .onConflictDoNothing()
-          .run().changes;
+          .run();
+        if (result.changes) added.push(item.ddtCaseId);
       }
-      if (added > 0) {
+      if (added.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "ddt", "add", added))
+          this.handle.db.run(statement);
         this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
         this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.ddt-cases.add", input);
       }
@@ -874,13 +980,14 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     ddtCaseIds: string[];
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
       assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
-      let removed = 0;
+      const removed: string[] = [];
       for (const ids of batchesOf(input.ddtCaseIds, RELATIONAL_WRITE_BATCH_SIZE)) {
-        removed += this.handle.db
+        const deleted = this.handle.db
           .delete(caseSuiteDdtItems)
           .where(
             and(
@@ -888,9 +995,13 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
               inArray(caseSuiteDdtItems.ddtCaseId, ids),
             ),
           )
-          .run().changes;
+          .returning({ caseId: caseSuiteDdtItems.ddtCaseId })
+          .all();
+        for (const row of deleted) removed.push(row.caseId);
       }
-      if (removed > 0) {
+      if (removed.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "ddt", "remove", removed))
+          this.handle.db.run(statement);
         this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
         this.insertVersionSnapshot(
           input.suiteId,

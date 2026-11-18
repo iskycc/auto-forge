@@ -1,4 +1,9 @@
-import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/contracts";
+import {
+  CASE_SUITE_MARKER_COUNT,
+  EXPORT_OUTCOME_FILTERS,
+  type ExportOutcomeFilter,
+  type CaseSuiteMarkers,
+} from "@autoforge/contracts";
 import {
   classifyAttemptResult,
   DomainError,
@@ -26,6 +31,7 @@ export type RunBatchExportRow = {
   displayName: string;
   /** Present only for DDT runs; missing original cells remain null. */
   ddt?: { caseName: DdtCellValue; srId: DdtCellValue };
+  markers?: CaseSuiteMarkers;
   outcome: ExportOutcomeFilter;
   resultCode: string | null;
   /** 仅失败/阻塞尝试有值（一行精简堆栈）。 */
@@ -59,13 +65,14 @@ export type RunBatchExportCursor = {
 };
 export type RunBatchExportPageQuery = Pick<RunBatchExportQuery, "batchId" | "scope" | "round"> & {
   after?: RunBatchExportCursor;
+  markers?: "include" | "only";
   limit: number;
 };
 export type RunBatchExportPage = {
   items: Array<{
     run: Pick<ExecutionRun, "id" | "className" | "displayName"> &
       Partial<Pick<ExecutionRun, "status">> &
-      Pick<RunBatchExportRow, "ddt">;
+      Pick<RunBatchExportRow, "ddt" | "markers">;
     attempt: Pick<
       RunAttempt,
       | "id"
@@ -88,10 +95,14 @@ export class RunBatchExportService {
   constructor(private readonly batches: RunBatchRepository) {}
 
   /** Export only bounded result pages; no batch-wide runs, class data or TestNG reports enter HTTP. */
-  async prepare(query: RunBatchExportQuery): Promise<{
+  async prepare(
+    query: RunBatchExportQuery,
+    options: { includeMarkerColumns?: boolean; signal?: AbortSignal } = {},
+  ): Promise<{
     projectId: string;
     batch: { suiteName: string; sequenceNumber: number };
     includesDdt: boolean;
+    markerColumns: number[];
     pages: AsyncIterable<RunBatchExportRow[]>;
   }> {
     const outcomes = validatedOutcomes(query.outcomes);
@@ -100,13 +111,17 @@ export class RunBatchExportService {
     if (!metadata) throw new DomainError("BATCH_NOT_FOUND", "指定的执行批次不存在。");
     const includesDdt = await this.batches.hasDdtRuns(query.batchId);
     const batches = this.batches;
-    async function* pages(): AsyncGenerator<RunBatchExportRow[]> {
+    async function* pages(
+      markers?: RunBatchExportPageQuery["markers"],
+    ): AsyncGenerator<RunBatchExportRow[]> {
       let after: RunBatchExportCursor | undefined;
       do {
+        options.signal?.throwIfAborted();
         const page = await batches.readExportPage({
           batchId: query.batchId,
           scope: query.scope,
           limit: 200,
+          ...(markers ? { markers } : {}),
           ...(query.round !== undefined ? { round: query.round } : {}),
           ...(after ? { after } : {}),
         });
@@ -118,11 +133,22 @@ export class RunBatchExportService {
         after = page.next;
       } while (after);
     }
+    const markerColumns = new Set<number>();
+    if (options.includeMarkerColumns) {
+      for await (const rows of pages("only")) {
+        for (const row of rows)
+          row.markers?.forEach((value, index) => {
+            if (value) markerColumns.add(index);
+          });
+        if (markerColumns.size === CASE_SUITE_MARKER_COUNT) break;
+      }
+    }
     return {
+      markerColumns: [...markerColumns].sort((a, b) => a - b),
       projectId: metadata.projectId,
       batch: { suiteName: metadata.suiteName, sequenceNumber: metadata.sequenceNumber },
       includesDdt,
-      pages: pages(),
+      pages: { [Symbol.asyncIterator]: () => pages(markerColumns.size ? "include" : undefined) },
     };
   }
 
@@ -289,7 +315,7 @@ function attemptRow(
   run:
     | (Pick<ExecutionRun, "className" | "displayName"> &
         Partial<Pick<ExecutionRun, "status">> &
-        Pick<RunBatchExportRow, "ddt">)
+        Pick<RunBatchExportRow, "ddt" | "markers">)
     | undefined,
   scope: RunBatchExportQuery["scope"] = "round",
 ): RunBatchExportRow {
@@ -301,6 +327,7 @@ function attemptRow(
     casePath: run?.className ?? "",
     displayName: run?.displayName ?? "",
     ...(run?.ddt ? { ddt: run.ddt } : {}),
+    ...(run?.markers ? { markers: run.markers } : {}),
     outcome: category,
     resultCode: attempt.resultCode ?? null,
     summary: category === "succeeded" ? null : (attempt.resultSummary ?? null),

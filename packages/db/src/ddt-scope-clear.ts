@@ -57,7 +57,7 @@ export function ddtClearSuiteCandidate(input: DdtScopeClearWrite, dialect: "sqli
 }
 export function ddtClearSuiteMembers(input: DdtScopeClearWrite, suiteId: string) {
   return sql`DELETE FROM case_suite_ddt_items WHERE suite_id=${suiteId}
-    AND ddt_case_id IN (SELECT c.id FROM ddt_cases c WHERE ${ddtClearCondition("c", input.scope, input.clearedBefore)})`;
+    AND ddt_case_id IN (SELECT c.id FROM ddt_cases c WHERE ${ddtClearCondition("c", input.scope, input.clearedBefore)}) RETURNING ddt_case_id`;
 }
 
 export function ddtClearCandidates(

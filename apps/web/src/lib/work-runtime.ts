@@ -23,7 +23,12 @@ export interface WorkDispatcher {
   triggerDueSchedules?(): Promise<number>;
   parseFile?(
     operation:
-      "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags" | "parse-ddt-associations",
+      | "inspect-jar"
+      | "read-jar-source"
+      | "parse-ddt"
+      | "parse-sr-tags"
+      | "parse-ddt-associations"
+      | "parse-case-suite-markers",
     input: unknown,
   ): Promise<unknown>;
   executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<void>;

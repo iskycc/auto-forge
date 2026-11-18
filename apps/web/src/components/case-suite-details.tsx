@@ -1,4 +1,5 @@
 "use client";
+import { CASE_SUITE_MEMBER_REMARK_LIMIT } from "@autoforge/contracts";
 import {
   SrTagBadges,
   SuiteSrTagSelection,
@@ -29,7 +30,7 @@ type CaseSuiteDdtItem = SuiteDirectoryPart["ddtItems"][number];
 type CaseSuiteDetails = CaseSuite & SuiteDirectoryPart;
 import { ChevronRight, DatabaseZap, FolderTree, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useRef, useState } from "react";
-import { useConfirm } from "@/components/ui-feedback";
+import { usePrompt } from "@/components/ui-feedback";
 import { useCaseSuiteRevision } from "@/components/case-suite-revision";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useDirectoryBranch } from "./use-directory-tree";
@@ -62,7 +63,7 @@ export function CaseSuiteDetailsView({
   };
 }) {
   const [expansion, setExpansion] = useState<ReadonlyMap<string, boolean>>(() => new Map());
-  const confirmAction = useConfirm();
+  const promptRemark = usePrompt();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const { revision, acceptMutation } = useCaseSuiteRevision();
   const [suite, setSuite] = useState(initialSuite);
@@ -191,22 +192,24 @@ export function CaseSuiteDetailsView({
 
   async function removeCases(caseDefinitionIds: string[]): Promise<void> {
     if (caseDefinitionIds.length === 0) return;
-    if (
-      !(await confirmAction({
-        title: "移除任务用例",
-        description: `将从当前任务中移除选中的 ${caseDefinitionIds.length} 个用例，用例库中的定义不会删除。`,
-        confirmLabel: "确认移除",
-        tone: "danger",
-      }))
-    )
-      return;
+    const remark = await promptRemark({
+      title: "移除任务用例",
+      description: `将从当前任务中移除选中的 ${caseDefinitionIds.length} 个用例，用例库中的定义不会删除。`,
+      confirmLabel: "确认移除",
+      tone: "danger",
+      inputLabel: "操作备注（可选）",
+      maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
+      required: false,
+      multiline: true,
+    });
+    if (remark === null) return;
     setRemoving(true);
     setError(null);
     try {
       const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/cases`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseDefinitionIds }),
+        body: JSON.stringify({ caseDefinitionIds, remark }),
       });
       if (!response.ok) await throwApiErrorResponse(response, "移除用例失败。");
       const summary = (await response.json()) as CaseSuite;
@@ -228,15 +231,17 @@ export function CaseSuiteDetailsView({
 
   async function removeDdtCases(ddtCaseIds: string[]): Promise<void> {
     if (ddtCaseIds.length === 0) return;
-    if (
-      !(await confirmAction({
-        title: "移除 DDT 用例",
-        description: `将从当前任务中移除选中的 ${ddtCaseIds.length} 个 DDT 用例，DDT 用例库中的数据不会删除。`,
-        confirmLabel: "确认移除",
-        tone: "danger",
-      }))
-    )
-      return;
+    const remark = await promptRemark({
+      title: "移除 DDT 用例",
+      description: `将从当前任务中移除选中的 ${ddtCaseIds.length} 个 DDT 用例，DDT 用例库中的数据不会删除。`,
+      confirmLabel: "确认移除",
+      tone: "danger",
+      inputLabel: "操作备注（可选）",
+      maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
+      required: false,
+      multiline: true,
+    });
+    if (remark === null) return;
     setRemoving(true);
     setError(null);
     try {
@@ -245,7 +250,7 @@ export function CaseSuiteDetailsView({
         {
           method: "DELETE",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ddtCaseIds }),
+          body: JSON.stringify({ ddtCaseIds, remark }),
         },
       );
       if (!response.ok) await throwApiErrorResponse(response, "移除用例失败。");

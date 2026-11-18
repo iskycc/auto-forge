@@ -1,3 +1,4 @@
+import { caseSuiteMemberRemarkSchema } from "./case-suite-membership";
 import { z } from "zod";
 
 export const ddtScopeClearInputSchema = z
@@ -268,11 +269,13 @@ export const ddtExecutionMappingListInputSchema = z.object({
 });
 
 export const addCaseSuiteDdtItemsInputSchema = z.object({
+  remark: caseSuiteMemberRemarkSchema.optional(),
   testStageId: z.string().min(1).max(128),
   caseIds: z.array(z.string().min(1).max(512)).min(1).max(100_000),
 });
 
 export const removeCaseSuiteDdtItemsInputSchema = z.object({
+  remark: caseSuiteMemberRemarkSchema.optional(),
   ddtCaseIds: z.array(z.string().min(1).max(128)).min(1).max(100_000),
 });
 

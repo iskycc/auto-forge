@@ -1,3 +1,4 @@
+import { type CaseSuiteMarkerEdit, type CaseSuiteMemberKind } from "@autoforge/contracts";
 import type {
   CopyCaseSuiteInput,
   CreateFailureCaseSuiteInput,
@@ -630,11 +631,84 @@ export class CaseSuiteService {
     return { rules, credentials };
   }
 
+  async listMemberChanges(
+    suiteId: string,
+    input: { changeId?: string | undefined; cursor?: string | undefined; limit: number },
+    projectIds?: readonly string[],
+  ) {
+    await this.getSummary(suiteId, projectIds);
+    return input.changeId
+      ? this.suites.listMemberChangeItems(suiteId, input.changeId, input.cursor, input.limit)
+      : this.suites.listMemberChanges(suiteId, input.cursor, input.limit);
+  }
+
+  async listMarkerMembers(
+    suiteId: string,
+    input: {
+      kind: CaseSuiteMemberKind;
+      cursor?: string | undefined;
+      limit: number;
+      search: string;
+    },
+    projectIds?: readonly string[],
+  ) {
+    const suite = await this.getSummary(suiteId, projectIds);
+    return {
+      ...(await this.suites.listMarkerMembers(
+        suiteId,
+        input.kind,
+        input.cursor,
+        input.limit,
+        input.search,
+      )),
+      revision: suite.revision,
+    };
+  }
+
+  async *exportMarkerMembers(suiteId: string, projectIds?: readonly string[]) {
+    await this.getSummary(suiteId, projectIds);
+    for (const kind of ["standard", "ddt"] as const) {
+      let cursor: string | undefined;
+      do {
+        const page = await this.suites.listMarkerMembers(suiteId, kind, cursor, 200, "");
+        yield* page.items;
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+  }
+
+  async updateMemberMarkers(
+    suiteId: string,
+    edits: readonly CaseSuiteMarkerEdit[],
+    expectedRevision: number,
+    actorId: string,
+    projectIds?: readonly string[],
+  ) {
+    assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
+    if (
+      edits.length === 0 ||
+      new Set(edits.map((edit) => `${edit.kind}:${edit.memberId}`)).size !== edits.length
+    )
+      throw new DomainError(
+        "CASE_SUITE_MARKER_ROWS_INVALID",
+        "请提供至少一条标识记录，同一用例成员不能重复。",
+      );
+    return this.suites.updateMemberMarkers({
+      suiteId,
+      edits,
+      expectedRevision,
+      actorId,
+      updatedAt: this.clock.now().toISOString(),
+      versionId: this.ids.next(),
+    });
+  }
+
   async addCases(
     suiteId: string,
     requestedIds: string[],
     actorId?: string,
     projectIds?: readonly string[],
+    remark?: string,
   ) {
     const suite = await this.getSummary(suiteId, projectIds);
     assertCaseSuiteEditable(suite, actorId);
@@ -663,6 +737,7 @@ export class CaseSuiteService {
         id: this.ids.next(),
         caseDefinitionId,
       })),
+      ...(remark ? { remark } : {}),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
@@ -703,8 +778,9 @@ export class CaseSuiteService {
     caseDefinitionId: string,
     actorId?: string,
     projectIds?: readonly string[],
+    remark?: string,
   ) {
-    return this.removeCases(suiteId, [caseDefinitionId], actorId, projectIds);
+    return this.removeCases(suiteId, [caseDefinitionId], actorId, projectIds, remark);
   }
 
   async removeCases(
@@ -712,6 +788,7 @@ export class CaseSuiteService {
     caseDefinitionIds: string[],
     actorId?: string,
     projectIds?: readonly string[],
+    remark?: string,
   ) {
     assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
     const uniqueIds = [...new Set(caseDefinitionIds)];
@@ -721,6 +798,7 @@ export class CaseSuiteService {
     return this.suites.removeCases({
       suiteId,
       caseDefinitionIds: uniqueIds,
+      ...(remark ? { remark } : {}),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
@@ -733,6 +811,7 @@ export class CaseSuiteService {
     requestedIds: string[],
     actorId?: string,
     projectIds?: readonly string[],
+    remark?: string,
   ) {
     const { caseIds } = await this.validateDdtSelection(
       suiteId,
@@ -744,6 +823,7 @@ export class CaseSuiteService {
     return this.suites.addDdtCases({
       suiteId,
       items: caseIds.map((ddtCaseId) => ({ id: this.ids.next(), ddtCaseId })),
+      ...(remark ? { remark } : {}),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
@@ -792,6 +872,7 @@ export class CaseSuiteService {
     requestedIds: string[],
     actorId?: string,
     projectIds?: readonly string[],
+    remark?: string,
   ) {
     assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
     const caseIds = [...new Set(requestedIds.map((id) => id.trim()).filter(Boolean))];
@@ -801,6 +882,7 @@ export class CaseSuiteService {
     return this.suites.removeDdtCases({
       suiteId,
       ddtCaseIds: caseIds,
+      ...(remark ? { remark } : {}),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),

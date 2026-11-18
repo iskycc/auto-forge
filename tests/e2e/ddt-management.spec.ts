@@ -3822,6 +3822,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
   await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
   const addDialog = page.getByRole("dialog", { name: "将 2 条 DDT 用例加入任务", exact: true });
   await expect(addDialog.locator("select")).toHaveValue(mixed.id);
+  await addDialog.getByRole("textbox", { name: "操作备注（可选）" }).fill("增加跨类型回归覆盖");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 960 });
     await expectUiIntegrity(page);
@@ -3829,6 +3830,16 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
   }
   await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
   await expect(addDialog).toBeHidden();
+  const memberChanges = await browserJson<{ items: unknown[] }>(
+    page,
+    `/api/v1/case-suites/${mixed.id}/member-changes`,
+  );
+  expect(memberChanges.body.items[0]).toMatchObject({
+    kind: "ddt",
+    operation: "add",
+    count: 2,
+    remark: "增加跨类型回归覆盖",
+  });
   const rejected = await browserJson<{
     error: { code: string; details: { blockers: Array<{ code: string }> } };
   }>(page, "/api/v1/run-batches", { method: "POST", body: { suiteId: mixed.id } });
@@ -5432,6 +5443,7 @@ test("DDT list selection removes only matched members from the chosen task with 
       await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
       await expect(dialog.getByRole("status")).toContainText("匹配 2 条任务成员 · 跳过 1 条");
     }
+    await dialog.getByRole("textbox", { name: "操作备注（可选）" }).fill("排除已迁移的 DDT 用例");
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(page);
@@ -5472,6 +5484,19 @@ test("DDT list selection removes only matched members from the chosen task with 
     (await browserJson<Members>(page, `/api/v1/case-suites/${other.id}`)).body.ddtItems,
   ).toHaveLength(1);
   expect((await browserJson(page, ddtPath(hierarchy, "cases/REMOVE-203"))).status).toBe(200);
+  const history = await browserJson<{ items: Array<{ id: string; operation: string }> }>(
+    page,
+    `/api/v1/case-suites/${target.id}/member-changes`,
+  );
+  const removal = history.body.items.find((event) => event.operation === "remove");
+  expect(removal).toMatchObject({ kind: "ddt", count: 2, remark: "排除已迁移的 DDT 用例" });
+  const affected = await browserJson<{ items: Array<{ caseLabel: string }> }>(
+    page,
+    `/api/v1/case-suites/${target.id}/member-changes?changeId=${removal!.id}`,
+  );
+  expect(affected.body.items.map(({ caseLabel }) => caseLabel).sort()).toEqual(
+    ["REMOVE-203", "中文-Case"].sort(),
+  );
   await page.reload();
   await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(60);
 });

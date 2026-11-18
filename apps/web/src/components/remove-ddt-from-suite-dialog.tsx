@@ -1,6 +1,7 @@
 "use client";
 
-import { Select, Space, Table, Tag } from "antd";
+import { CASE_SUITE_MEMBER_REMARK_LIMIT } from "@autoforge/contracts";
+import { Input, Select, Space, Table, Tag } from "antd";
 import { ListMinus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { caseSuiteDdtSelectionSchema, type CaseSuiteDdtSelection } from "@autoforge/contracts";
@@ -37,6 +38,7 @@ export function RemoveDdtFromSuiteDialog({
   const [working, setWorking] = useState<"preview" | "remove">();
   const [completed, setCompleted] = useState(0);
   const [error, setError] = useState("");
+  const [remark, setRemark] = useState("");
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
   const target = suites.find((suite) => suite.id === (suiteId ?? suites[0]?.id));
@@ -97,7 +99,7 @@ export function RemoveDdtFromSuiteDialog({
         {
           method: "DELETE",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ddtCaseIds: preview.items.map((item) => item.id) }),
+          body: JSON.stringify({ ddtCaseIds: preview.items.map((item) => item.id), remark }),
           signal: AbortSignal.timeout(60_000),
         },
       );
@@ -188,6 +190,17 @@ export function RemoveDdtFromSuiteDialog({
               setPreview(undefined);
               setError("");
             }}
+          />
+        </label>
+        <label className="grid min-w-0 gap-2">
+          <span>操作备注（可选）</span>
+          <Input.TextArea
+            aria-label="操作备注（可选）"
+            rows={2}
+            value={remark}
+            maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}
+            disabled={Boolean(working)}
+            onChange={(event) => setRemark(event.target.value)}
           />
         </label>
         {error ? (

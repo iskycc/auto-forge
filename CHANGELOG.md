@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+## 1.22.25 - 2026-11-18
+
+### Added
+
+- 任务新增或移除普通、DDT 用例时可填写操作备注。任务详情分页记录实际变更用例、操作人、时间和备注。
+- 每个任务用例支持五个独立标识，可在任务详情编辑及通过 XLSX 导入、导出。新执行保存标识快照，失败分析清单仅为已选结果中有值的标识生成列。
+
+### Compatibility
+
+- SQLite 和 PostgreSQL 增加任务用例变更与标识表。已有任务从升级后开始记录成员变更，标识从新执行批次起生效。Full 升级时同步更新 Web 和 Worker，Runner Protocol 沿用现有版本。
+
+### Verification
+
+- 154 项相关测试通过，覆盖 SQLite 和 PostgreSQL 的旧库升级、迁移回滚以及十万条结果分页。3 项 Lite 和 4 项 Full Playwright 场景通过，并审查了 1024 和 1536 像素宽度的桌面截图。两种 XLSX 均经 LibreOffice 打开并核对标识内容。
+- Web 和 Worker 生产构建、变更 ESLint、Web 与测试类型、E2E 覆盖矩阵通过。本次采用快速发布，完整源码检查和发布后验收矩阵未运行。Release 保留双架构构建、镜像校验、SBOM、签名和制品完整性检查。
+
 ## 1.22.24 - 2026-11-18
 
 ### Fixed

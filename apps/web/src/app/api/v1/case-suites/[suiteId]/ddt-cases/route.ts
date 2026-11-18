@@ -43,6 +43,7 @@ async function updateDdtItems(
         input.caseIds,
         identity.user.id,
         projectIds,
+        input.remark,
       );
       caseCount = input.caseIds.length;
       testStageId = input.testStageId;
@@ -53,6 +54,7 @@ async function updateDdtItems(
         input.ddtCaseIds,
         identity.user.id,
         projectIds,
+        input.remark,
       );
       caseCount = input.ddtCaseIds.length;
     }

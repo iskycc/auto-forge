@@ -1,3 +1,7 @@
+import {
+  CaseSuiteMarkersPanel,
+  CaseSuiteMemberHistory,
+} from "@/components/case-suite-membership-panels";
 import { SuiteExecutionEnvironment } from "@/components/suite-execution-environment";
 import { CaseSuiteLockButton } from "@/components/case-suite-lock-button";
 import { Notice } from "@/components/ui/notice";
@@ -138,6 +142,8 @@ export default async function CaseSuitePage({ params }: Props) {
       <SuiteExecutionEnvironment suite={suite} userId={identity.user.id} canExecute={canExecute} />
       <nav className={cn("section-links", pageStyles["section-links"])} aria-label="任务分区">
         <a href="#suite-members">用例列表</a>
+        <a href="#suite-markers">用例标识</a>
+        <a href="#suite-member-history">变更记录</a>
         <a href="#suite-settings">任务配置</a>
         <a href="#suite-schedule">执行计划</a>
         <a href="#suite-notifications">完成通知</a>
@@ -155,6 +161,9 @@ export default async function CaseSuitePage({ params }: Props) {
               directory.payload ? suiteDirectoryManifestSchema.parse(directory.payload) : null
             }
           />
+        </div>
+        <div id="suite-markers">
+          <CaseSuiteMarkersPanel suiteId={suiteId} canManage={canEdit} />
         </div>
         <div id="suite-settings">
           <CaseSuiteEditor
@@ -197,6 +206,12 @@ export default async function CaseSuitePage({ params }: Props) {
             suiteId={suite.id}
             baseUrl={services.configurationStore.read().web.publicBaseUrl}
             canPublish={canEdit && canExecute}
+          />
+        </div>
+        <div id="suite-member-history">
+          <CaseSuiteMemberHistory
+            suiteId={suiteId}
+            timeZone={services.configurationStore.read().web.timeZone}
           />
         </div>
       </CaseSuiteRevisionProvider>

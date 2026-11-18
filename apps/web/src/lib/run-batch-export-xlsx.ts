@@ -2,6 +2,7 @@ import "server-only";
 
 import type { RunBatchExportRow } from "@autoforge/application";
 import {
+  CASE_SUITE_MARKER_HEADERS,
   DEFAULT_PLATFORM_TIME_ZONE,
   EXPORT_ISSUE_PREVIEW_LIMIT,
   type ExportValidationReport,
@@ -102,6 +103,7 @@ export type RunBatchExportWorkbookInput = {
   /** Determined from the whole batch before reading filtered pages. */
   includesDdt?: boolean;
   includesAi?: boolean;
+  markerColumns?: readonly number[];
   aiConclusions?: ReadonlyMap<string, string>;
   /** scope=round 时记录具体轮次。 */
   round?: number;
@@ -121,6 +123,13 @@ export async function buildRunBatchExportWorkbook(
 ): Promise<{ buffer: Buffer }> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AutoForge";
+  if (input.template === "failure-analysis" && input.markerColumns === undefined)
+    input = {
+      ...input,
+      markerColumns: CASE_SUITE_MARKER_HEADERS.flatMap((_, index) =>
+        input.rows.some((row) => row.markers?.[index]) ? [index] : [],
+      ),
+    };
   const rows = exportWorkbookRows(workbook, input);
   for (const row of input.rows) rows.append(input, row);
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
@@ -135,6 +144,7 @@ export async function createRunBatchExportWorkbookStream(
 ): Promise<{
   stream: PassThrough;
   validation: ExportValidationReport;
+  writtenMarkerColumns: Set<number>;
   completed: Promise<Error | undefined>;
 }> {
   const iterator = pages[Symbol.asyncIterator]();
@@ -154,6 +164,7 @@ export async function createRunBatchExportWorkbookStream(
   const first = await loadFirstPage();
   const input = first.value;
   const validation = emptyExportValidationReport();
+  const writtenMarkerColumns = new Set<number>();
   const stream = new PassThrough({ highWaterMark: 256 * 1024 });
   const controller = new AbortController();
   const abort = () => {
@@ -172,6 +183,10 @@ export async function createRunBatchExportWorkbookStream(
     const rows = exportWorkbookRows(workbook, input, {
       invalidRows: options.invalidRows ?? "reject",
       validation,
+      onWrittenRow: (row) => {
+        for (const index of input.markerColumns ?? [])
+          if (row.markers?.[index]) writtenMarkerColumns.add(index);
+      },
       commitRow: (row) => row.commit(),
       commitSheet: (sheet) => sheet.commit(),
     });
@@ -216,6 +231,7 @@ export async function createRunBatchExportWorkbookStream(
   return {
     stream,
     validation,
+    writtenMarkerColumns,
     completed,
   };
 }
@@ -344,6 +360,7 @@ function buildFailureAnalysisSheet(
           ),
         )
       : []),
+    ...(input.markerColumns ?? []).map(() => 22),
     FAILURE_ANALYSIS_COLUMN_WIDTHS[2],
     ...(input.includesAi ? [48] : []),
     ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(3),
@@ -377,6 +394,7 @@ function failureAnalysisCells(
     item.casePath,
     item.displayName,
     ...ddtExportCells(item, input),
+    ...(input.markerColumns ?? []).map((index) => item.markers?.[index] ?? ""),
     item.summary ?? "",
     ...(input.includesAi
       ? [item.attemptId ? aiExportCell(input.aiConclusions?.get(item.attemptId) ?? "") : ""]
@@ -440,13 +458,19 @@ function emptyExportValidationReport(): ExportValidationReport {
 }
 
 function exportHeaders(
-  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt" | "includesAi">,
+  input: Pick<
+    RunBatchExportWorkbookInput,
+    "template" | "scope" | "includesDdt" | "includesAi" | "markerColumns"
+  >,
 ): readonly string[] {
   return exportColumns(input).map((column) => column.header);
 }
 
 function exportColumns(
-  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt" | "includesAi">,
+  input: Pick<
+    RunBatchExportWorkbookInput,
+    "template" | "scope" | "includesDdt" | "includesAi" | "markerColumns"
+  >,
 ) {
   const columns = input.template === "failure-analysis" ? FAILURE_ANALYSIS_COLUMNS : EXPORT_COLUMNS;
   return [
@@ -455,7 +479,15 @@ function exportColumns(
       : []),
     ...columns.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
-    ...(input.template === "failure-analysis" ? columns.slice(2, 3) : []),
+    ...(input.template === "failure-analysis"
+      ? [
+          ...(input.markerColumns ?? []).map((index) => ({
+            header: CASE_SUITE_MARKER_HEADERS[index]!,
+            group: "metadata" as const,
+          })),
+          ...columns.slice(2, 3),
+        ]
+      : []),
     ...(input.template === "failure-analysis" && input.includesAi
       ? [{ header: "AI 初步分析", group: "analysis" as const }]
       : []),
@@ -504,6 +536,7 @@ function exportWorkbookRows(
   options: {
     invalidRows?: "reject" | "exclude";
     validation?: ExportValidationReport;
+    onWrittenRow?: (row: RunBatchExportRow) => void;
     commitRow?: (row: ExcelJS.Row) => void;
     commitSheet?: (sheet: ExcelJS.Worksheet) => void;
   } = {},
@@ -617,6 +650,7 @@ function exportWorkbookRows(
       hyperlinks += links;
       rowCount++;
       validation.validRows++;
+      options.onWrittenRow?.(source);
     },
     finish() {
       options.commitSheet?.(sheet);

@@ -22,6 +22,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       input.caseDefinitionIds,
       identity.user.id,
       projectIds,
+      input.remark,
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.add_cases",
@@ -53,6 +54,7 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
       input.caseDefinitionIds,
       identity.user.id,
       projectIds,
+      input.remark,
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.remove_cases",

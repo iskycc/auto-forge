@@ -15,6 +15,7 @@ export type PreparedRunBatchExportFile = {
   file: FileHandle;
   sizeBytes: number;
   validation: ExportValidationReport;
+  writtenMarkerColumns: ReadonlySet<number>;
 };
 
 /** Finish and validate the ZIP before sending HTTP headers; rows remain paged and committed. */
@@ -56,7 +57,7 @@ export async function prepareRunBatchExportFile(
       );
     }
     const sizeBytes = (await file.stat()).size;
-    return { file, sizeBytes, validation };
+    return { file, sizeBytes, validation, writtenMarkerColumns: workbook.writtenMarkerColumns };
   } catch (cause) {
     const finalizationError = await completion;
     const failure =

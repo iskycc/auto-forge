@@ -1,3 +1,21 @@
+import type {
+  CaseSuiteChangedMember,
+  CaseSuiteMemberChange,
+  CaseSuiteMemberKind,
+} from "@autoforge/contracts";
+import type { CaseSuiteMarkerWrite } from "@autoforge/application";
+import {
+  assertSuiteMarkerTargets,
+  markerMember,
+  membershipPage,
+  recordSuiteMemberChange,
+  suiteMarkerMembersQuery,
+  suiteMarkerTargetQuery,
+  suiteMemberChangeItemsQuery,
+  suiteMemberChangesQuery,
+  writeSuiteMarkers,
+  type StoredMarkerMember,
+} from "./case-suite-membership";
 import {
   listRejectedContactsQuery,
   recordRejectedContactQuery,
@@ -2041,8 +2059,17 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       ).rows[0];
       if (!suite) return 0;
       assertCaseSuiteLockOwner({ lockedBy: suite.locked_by }, input.actorId);
-      const result = await transaction.execute(ddtClearSuiteMembers(input, suite.id));
-      const removed = result.rowCount ?? 0;
+      const result = await transaction.execute<{ ddt_case_id: string }>(
+        ddtClearSuiteMembers(input, suite.id),
+      );
+      const removed = result.rows.length;
+      for (const statement of recordSuiteMemberChange(
+        { ...input, suiteId: suite.id, remark: "清空 DDT 范围" },
+        "ddt",
+        "remove",
+        result.rows.map((row) => row.ddt_case_id),
+      ))
+        await transaction.execute(statement);
       if (!removed) return 0;
       await touchPostgresSuite(transaction, suite.id, input.actorId, input.updatedAt);
       await this.insertVersionSnapshot(
@@ -2679,11 +2706,86 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return memberIds;
   }
 
+  async listMemberChanges(suiteId: string, cursor: string | undefined, limit: number) {
+    await this.ready();
+    const rows = (await this.handle.db.execute(suiteMemberChangesQuery(suiteId, cursor, limit)))
+      .rows as CaseSuiteMemberChange[];
+    return membershipPage(rows, limit, (row) => row.id);
+  }
+
+  async listMemberChangeItems(
+    suiteId: string,
+    changeId: string,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    await this.ready();
+    const rows = (
+      await this.handle.db.execute(suiteMemberChangeItemsQuery(suiteId, changeId, cursor, limit))
+    ).rows as CaseSuiteChangedMember[];
+    return membershipPage(rows, limit, (row) => row.caseId);
+  }
+
+  async listMarkerMembers(
+    suiteId: string,
+    kind: CaseSuiteMemberKind,
+    cursor: string | undefined,
+    limit: number,
+    search: string,
+  ) {
+    await this.ready();
+    const rows = (
+      await this.handle.db.execute(suiteMarkerMembersQuery(suiteId, kind, cursor, limit, search))
+    ).rows as StoredMarkerMember[];
+    return membershipPage(rows.map(markerMember), limit, (row) => row.memberId);
+  }
+
+  async updateMemberMarkers(input: CaseSuiteMarkerWrite): Promise<CaseSuite> {
+    await this.ready();
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      const suite = await lockPostgresSuiteMutationState(transaction, input.suiteId);
+      assertCaseSuiteEditable(suite, input.actorId);
+      const [current] = await transaction
+        .select({ revision: pgCaseSuites.revision })
+        .from(pgCaseSuites)
+        .where(eq(pgCaseSuites.id, input.suiteId));
+      if (current?.revision !== input.expectedRevision)
+        await throwPostgresSuiteConflict(transaction, input.suiteId);
+      for (const edits of batchesOf(input.edits, 200)) {
+        for (const kind of ["standard", "ddt"] as const) {
+          const selected = edits.filter((row) => row.kind === kind);
+          if (!selected.length) continue;
+          const targets = await transaction.execute(
+            suiteMarkerTargetQuery(
+              input.suiteId,
+              kind,
+              selected.map((row) => row.memberId),
+            ),
+          );
+          assertSuiteMarkerTargets(selected, targets.rows.length);
+        }
+        for (const statement of writeSuiteMarkers(edits)) await transaction.execute(statement);
+      }
+      await touchPostgresSuite(transaction, input.suiteId, input.actorId, input.updatedAt);
+      await this.insertVersionSnapshot(
+        transaction,
+        input.suiteId,
+        input.versionId,
+        "suite.markers.update",
+        input,
+      );
+    });
+    const suite = await this.getSummary(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
@@ -2693,7 +2795,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         input.actorId,
       );
       if (!input.items.length) return;
-      let added = 0;
+      const added: string[] = [];
       for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
         const inserted = await transaction
           .insert(pgCaseSuiteItems)
@@ -2706,10 +2808,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
             })),
           )
           .onConflictDoNothing()
-          .returning({ id: pgCaseSuiteItems.id });
-        added += inserted.length;
+          .returning({ caseId: pgCaseSuiteItems.caseDefinitionId });
+        for (const row of inserted) added.push(row.caseId);
       }
-      if (added > 0) {
+      if (added.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "standard", "add", added))
+          await transaction.execute(statement);
         await transaction
           .update(pgCaseSuites)
           .set({
@@ -2738,6 +2842,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
@@ -2746,21 +2851,22 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         await lockPostgresSuiteMutationState(transaction, input.suiteId),
         input.actorId,
       );
-      let removed = 0;
+      const removed: string[] = [];
       for (const ids of batchesOf(input.caseDefinitionIds, POSTGRES_WRITE_BATCH_SIZE)) {
-        removed += (
-          await transaction
-            .delete(pgCaseSuiteItems)
-            .where(
-              and(
-                eq(pgCaseSuiteItems.suiteId, input.suiteId),
-                inArray(pgCaseSuiteItems.caseDefinitionId, ids),
-              ),
-            )
-            .returning({ id: pgCaseSuiteItems.id })
-        ).length;
+        const deleted = await transaction
+          .delete(pgCaseSuiteItems)
+          .where(
+            and(
+              eq(pgCaseSuiteItems.suiteId, input.suiteId),
+              inArray(pgCaseSuiteItems.caseDefinitionId, ids),
+            ),
+          )
+          .returning({ caseId: pgCaseSuiteItems.caseDefinitionId });
+        for (const row of deleted) removed.push(row.caseId);
       }
-      if (removed > 0) {
+      if (removed.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "standard", "remove", removed))
+          await transaction.execute(statement);
         await transaction
           .update(pgCaseSuites)
           .set({
@@ -2789,6 +2895,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     items: Array<{ id: string; ddtCaseId: string }>;
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
@@ -2797,7 +2904,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         await lockPostgresSuiteMutationState(transaction, input.suiteId),
         input.actorId,
       );
-      let added = 0;
+      const added: string[] = [];
       for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
         const inserted = await transaction
           .insert(pgCaseSuiteDdtItems)
@@ -2810,10 +2917,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
             })),
           )
           .onConflictDoNothing()
-          .returning({ id: pgCaseSuiteDdtItems.id });
-        added += inserted.length;
+          .returning({ caseId: pgCaseSuiteDdtItems.ddtCaseId });
+        for (const row of inserted) added.push(row.caseId);
       }
-      if (added > 0) {
+      if (added.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "ddt", "add", added))
+          await transaction.execute(statement);
         await touchPostgresSuite(transaction, input.suiteId, input.actorId, input.updatedAt);
         await this.insertVersionSnapshot(
           transaction,
@@ -2834,6 +2943,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     ddtCaseIds: string[];
     versionId: string;
     actorId?: string;
+    remark?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
@@ -2842,21 +2952,22 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         await lockPostgresSuiteMutationState(transaction, input.suiteId),
         input.actorId,
       );
-      let removed = 0;
+      const removed: string[] = [];
       for (const ids of batchesOf(input.ddtCaseIds, POSTGRES_WRITE_BATCH_SIZE)) {
-        removed += (
-          await transaction
-            .delete(pgCaseSuiteDdtItems)
-            .where(
-              and(
-                eq(pgCaseSuiteDdtItems.suiteId, input.suiteId),
-                inArray(pgCaseSuiteDdtItems.ddtCaseId, ids),
-              ),
-            )
-            .returning({ id: pgCaseSuiteDdtItems.id })
-        ).length;
+        const deleted = await transaction
+          .delete(pgCaseSuiteDdtItems)
+          .where(
+            and(
+              eq(pgCaseSuiteDdtItems.suiteId, input.suiteId),
+              inArray(pgCaseSuiteDdtItems.ddtCaseId, ids),
+            ),
+          )
+          .returning({ caseId: pgCaseSuiteDdtItems.ddtCaseId });
+        for (const row of deleted) removed.push(row.caseId);
       }
-      if (removed > 0) {
+      if (removed.length > 0) {
+        for (const statement of recordSuiteMemberChange(input, "ddt", "remove", removed))
+          await transaction.execute(statement);
         await touchPostgresSuite(transaction, input.suiteId, input.actorId, input.updatedAt);
         await this.insertVersionSnapshot(
           transaction,

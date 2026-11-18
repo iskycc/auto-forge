@@ -1,4 +1,5 @@
 "use client";
+import { CASE_SUITE_MEMBER_REMARK_LIMIT } from "@autoforge/contracts";
 import { LoadingStateMessage } from "@/components/ui/loading-state-message";
 
 import { EmptyState } from "@/components/ui/empty-state";
@@ -50,7 +51,7 @@ import { CaseDetailContent } from "./case-detail-content";
 import type { CaseDetailView } from "@/lib/case-detail-view";
 import { CaseImportDialog } from "./case-import-dialog";
 import { OpenRunDialogButton } from "./global-run-dialog";
-import { useConfirm, useToast } from "./ui-feedback";
+import { useConfirm, usePrompt, useToast } from "./ui-feedback";
 import {
   computeSelectionStats,
   matchesOutcomeFilter,
@@ -104,6 +105,8 @@ export function CaseSelectionTable({
 }) {
   const [expansion, setExpansion] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const confirmAction = useConfirm();
+  const promptRemark = usePrompt();
+  const [addRemark, setAddRemark] = useState("");
   const toast = useToast();
   const [selection, setSelection] = useState(
     () =>
@@ -443,7 +446,7 @@ export function CaseSelectionTable({
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ caseDefinitionIds }),
+            body: JSON.stringify({ caseDefinitionIds, remark: addRemark }),
           },
         );
         if (!response.ok) {
@@ -459,6 +462,7 @@ export function CaseSelectionTable({
         addedCount += caseDefinitionIds.length;
       }
       toast.success(`已将 ${selectedCaseIds.length} 个用例加入任务。`);
+      setAddRemark("");
       directoryTree?.refresh();
       setMissingCaseIds((current) => {
         if (!current) return current;
@@ -483,13 +487,17 @@ export function CaseSelectionTable({
       toast.error(`一次最多排除 ${CASE_SUITE_ITEM_MUTATION_LIMIT.toLocaleString()} 个用例。`);
       return;
     }
-    const confirmed = await confirmAction({
+    const remark = await promptRemark({
       title: "从任务中排除用例",
       description: `将从「${target.name}」排除选中的 ${caseDefinitionIds.length} 个普通用例。未加入此任务的用例会自动忽略，用例库、其他任务和已有执行记录均保留。本次操作仅影响该任务后续的执行范围。`,
       confirmLabel: "确认排除",
+      inputLabel: "操作备注（可选）",
+      maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
+      required: false,
+      multiline: true,
       tone: "warning",
     });
-    if (!confirmed) return;
+    if (remark === null) return;
     setPendingOperation("exclude");
     setMessage(null);
     try {
@@ -497,7 +505,7 @@ export function CaseSelectionTable({
       const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(target.id)}/cases`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseDefinitionIds }),
+        body: JSON.stringify({ caseDefinitionIds, remark }),
         signal: AbortSignal.timeout(60_000),
       });
       if (!response.ok) await throwApiErrorResponse(response, "从任务排除用例失败，请重试。");
@@ -790,6 +798,16 @@ export function CaseSelectionTable({
                   {membershipPending ? <LoadingIcon size={15} /> : <ListFilter size={15} />}
                   {missingOnly ? "仅看未加入" : "筛选未加入"}
                 </Button>
+                <div className="w-44 shrink-0">
+                  <Input
+                    aria-label="加入任务备注"
+                    placeholder="加入备注（可选）"
+                    value={addRemark}
+                    maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}
+                    onChange={(event) => setAddRemark(event.target.value)}
+                    disabled={pending}
+                  />
+                </div>
                 <Button
                   className={cn(
                     "button button-primary",

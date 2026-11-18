@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { RunBatchExportPage, RunBatchExportPageQuery } from "@autoforge/application";
 import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
-import { ddtCellValueSchema } from "@autoforge/contracts";
+import { caseSuiteMarkersSchema, ddtCellValueSchema } from "@autoforge/contracts";
 
 type ExportRecord = {
   runId: string;
@@ -11,6 +11,7 @@ type ExportRecord = {
   caseType: "testng" | "ddt";
   ddtCaseNameJson: string | null;
   ddtSrIdJson: string | null;
+  markersJson: string | null;
   attemptId: string;
   attemptNumber: number;
   round: number;
@@ -29,7 +30,9 @@ export function runBatchExportPageQuery(
   ddtFieldJson: (field: "CaseName" | "SRID") => SQL,
 ): SQL {
   const round = sql`COALESCE(attempt.execution_round,attempt.attempt_number)`;
+  const markedOnly = input.markers === "only";
   const conditions = [sql`run.batch_id=${input.batchId}`];
+  if (markedOnly) conditions.push(sql`marker.batch_id=${input.batchId}`);
   if (input.scope === "round") conditions.push(sql`${round}=${input.round}`);
   conditions.push(sql`NOT EXISTS (
     SELECT 1 FROM run_attempts newer WHERE newer.execution_run_id=run.id
@@ -52,16 +55,24 @@ export function runBatchExportPageQuery(
     attempt.id AS "attemptId",attempt.attempt_number AS "attemptNumber",${round} AS round,
     attempt.status,attempt.outcome,attempt.result_code AS "resultCode",attempt.result_summary AS summary,
     attempt.started_at AS "startedAt",attempt.finished_at AS "finishedAt",attempt.duration_ms AS "durationMs"
-    FROM execution_runs run JOIN run_attempts attempt ON attempt.execution_run_id=run.id
+    FROM ${
+      markedOnly
+        ? sql`execution_run_suite_markers marker JOIN execution_runs run ON run.id=marker.run_id`
+        : sql`execution_runs run`
+    }
+    JOIN run_attempts attempt ON attempt.execution_run_id=run.id
     WHERE ${sql.join(conditions, sql` AND `)}
     ORDER BY run.class_name,run.display_name,run.id,${round} LIMIT ${Math.min(200, Math.max(1, input.limit)) + 1}
   )
   SELECT page."runId",page."className",page."displayName",page."runStatus",page."caseType",
-    ${ddtFieldJson("CaseName")} AS "ddtCaseNameJson",${ddtFieldJson("SRID")} AS "ddtSrIdJson",
+    ${input.markers ? sql`marker.markers_json` : sql`NULL`} AS "markersJson",
+    ${markedOnly ? sql`NULL` : ddtFieldJson("CaseName")} AS "ddtCaseNameJson",
+    ${markedOnly ? sql`NULL` : ddtFieldJson("SRID")} AS "ddtSrIdJson",
     page."attemptId",page."attemptNumber",page.round,page.status,page.outcome,page."resultCode",
     page.summary,page."startedAt",page."finishedAt",page."durationMs"
   FROM export_page page
-  LEFT JOIN ddt_cases ddt ON page."caseType"='ddt' AND ddt.id=page."caseDefinitionId"
+  ${input.markers ? sql`LEFT JOIN execution_run_suite_markers marker ON marker.run_id=page."runId"` : sql``}
+  ${markedOnly ? sql`` : sql`LEFT JOIN ddt_cases ddt ON page."caseType"='ddt' AND ddt.id=page."caseDefinitionId"`}
   ORDER BY page."className",page."displayName",page."runId",page.round`;
 }
 
@@ -86,6 +97,9 @@ export function mapRunBatchExportPage(rows: ExportRecord[], limit: number): RunB
         className: row.className,
         displayName: row.displayName,
         status: row.runStatus,
+        ...(row.markersJson
+          ? { markers: caseSuiteMarkersSchema.parse(JSON.parse(row.markersJson)) }
+          : {}),
         ...(row.caseType === "ddt"
           ? {
               ddt: {

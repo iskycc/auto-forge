@@ -59,6 +59,7 @@ const readSchema = z.discriminatedUnion("method", [
             batchId: identifier,
             scope: z.enum(["round", "final", "all"]),
             round: z.number().int().positive().optional(),
+            markers: z.enum(["include", "only"]).optional(),
             limit: z.number().int().min(1).max(200),
             after: z
               .object({

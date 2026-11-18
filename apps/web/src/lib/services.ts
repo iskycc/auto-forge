@@ -1,3 +1,4 @@
+import { caseSuiteMarkerEditsSchema } from "@autoforge/contracts";
 import { DeletedRunnerContactService } from "@autoforge/application";
 import { createRunnerProtocolAdmission } from "./runner-protocol-admission";
 import {
@@ -1302,6 +1303,13 @@ async function createPlatformServices() {
     caseSources,
     suites,
     caseSuites,
+    async parseCaseSuiteMarkers(content: Uint8Array, fileName: string) {
+      if (!dispatcher?.parseFile)
+        throw new DomainError("PLATFORM_BUSY", "表格解析服务尚未就绪，请稍后重试。");
+      return caseSuiteMarkerEditsSchema.parse(
+        await dispatcher.parseFile("parse-case-suite-markers", { content, fileName }),
+      );
+    },
     caseSuiteActivity,
     roundRecoveryConfigurationInspector,
     jenkinsDependencyBuilds: new JenkinsDependencyBuildService(

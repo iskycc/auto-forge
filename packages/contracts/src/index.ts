@@ -22,6 +22,7 @@ export * from "./ddt-recycle";
 export * from "./ddt-import-progress";
 export * from "./runner-group";
 export * from "./case-suite-activity";
+export * from "./case-suite-membership";
 export * from "./case-suite-pins";
 export * from "./execution-exceptions";
 export * from "./concurrency-diagnostics";

@@ -53,6 +53,30 @@ const completedClaim: FailureAnalysisClaim = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
+  it("exports only populated task-marker slots in the failure-analysis workbook", async () => {
+    const input = {
+      batchId: "marker-export",
+      template: "failure-analysis" as const,
+      scope: "final" as const,
+      rows: [
+        failedRow,
+        { ...failedRow, executionRunId: "marked", markers: ["", "钱包", "", "", "版本A"] },
+      ],
+      shareLinks: new Map<string, string>(),
+    };
+    const { buffer } = await buildRunBatchExportWorkbook(input);
+    const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
+    const headers = (sheet.getRow(1).values as string[]).filter(Boolean);
+    expect(headers.filter((header) => header.startsWith("标识"))).toEqual(["标识2", "标识5"]);
+    expect(sheet.getRow(2).getCell(headers.indexOf("标识2") + 1).text).toBe("");
+    expect(sheet.getRow(3).getCell(headers.indexOf("标识2") + 1).text).toBe("钱包");
+    expect(sheet.getRow(3).getCell(headers.indexOf("标识5") + 1).text).toBe("版本A");
+    const unmarked = await buildRunBatchExportWorkbook({ ...input, rows: [failedRow] });
+    expect((await loadWorkbook(unmarked.buffer)).worksheets[0]!.getRow(1).values).not.toContain(
+      "标识1",
+    );
+  });
+
   it("keeps malformed model prose from invalidating otherwise compatible execution rows", async () => {
     const { buffer } = await buildRunBatchExportWorkbook({
       batchId: "ai-text",

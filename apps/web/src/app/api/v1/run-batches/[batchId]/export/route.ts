@@ -64,13 +64,18 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           { accessToken: parsed.access_token, publicAccess: parsed.public === "1" },
           services,
         );
-    const exportData = await services.runBatchExport.prepare({
-      batchId,
-      scope: parsed.scope,
-      ...(parsed.round !== undefined ? { round: parsed.round } : {}),
-      outcomes,
-      ...(projectIds ? { projectIds } : {}),
-    });
+    const exportData = await services.runBatchExport.prepare(
+      {
+        batchId,
+        scope: parsed.scope,
+        ...(parsed.round !== undefined ? { round: parsed.round } : {}),
+        outcomes,
+        ...(projectIds ? { projectIds } : {}),
+      },
+      parsed.template === "failure-analysis"
+        ? { includeMarkerColumns: true, signal: request.signal }
+        : undefined,
+    );
     const base = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const timeZone = services.configurationStore.read().web.timeZone;
     const aiSnapshotAt = services.clock.now().toISOString();
@@ -93,7 +98,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       exportedAt: services.clock.now(),
       timeZone,
     });
-    async function* workbookPages(): AsyncGenerator<RunBatchExportWorkbookInput> {
+    async function* workbookPages(
+      markerColumns: readonly number[],
+    ): AsyncGenerator<RunBatchExportWorkbookInput> {
       for await (const rows of exportData.pages) {
         request.signal.throwIfAborted();
 
@@ -129,6 +136,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           template: parsed.template,
           scope: parsed.scope,
           includesDdt: exportData.includesDdt,
+          markerColumns,
           includesAi,
           aiConclusions: new Map(
             includesAi
@@ -174,10 +182,27 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         yield input;
       }
     }
-    const prepared = await prepareRunBatchExportFile(workbookPages(), request.signal, {
+    const fileOptions = {
       directory: join(services.configurationStore.paths.dataDirectory, "tmp", "exports"),
       invalidRows: parsed.invalidRows,
-    });
+    };
+    let markerColumns = exportData.markerColumns ?? [];
+    let prepared = await prepareRunBatchExportFile(
+      workbookPages(markerColumns),
+      request.signal,
+      fileOptions,
+    );
+    // An excluded row may have been the only source of a column. The streaming writer
+    // has already committed its headers, so rebuild only when a column disappears.
+    while (prepared.writtenMarkerColumns.size < markerColumns.length) {
+      markerColumns = markerColumns.filter((index) => prepared.writtenMarkerColumns.has(index));
+      await prepared.file.close();
+      prepared = await prepareRunBatchExportFile(
+        workbookPages(markerColumns),
+        request.signal,
+        fileOptions,
+      );
+    }
     const stream = readRunBatchExportFile(prepared, request.signal);
     return new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array<ArrayBuffer>>, {
       headers: {

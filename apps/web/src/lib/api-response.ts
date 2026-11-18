@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { DomainError, isAuthorizationDeniedError } from "@autoforge/domain";
 import {
+  CASE_SUITE_MARKER_FILE_BYTES,
   DDT_IMPORT_FILE_BYTES,
   DDT_IMPORT_FILE_LIMIT,
   SR_TAG_IMPORT_MAXIMUM_BYTES,
@@ -69,6 +70,16 @@ export async function readDdtUploads(
     });
   }
   return uploads;
+}
+
+export function readCaseSuiteMarkerUpload(request: Request): Promise<JarUpload> {
+  return readBoundedUpload(request, CASE_SUITE_MARKER_FILE_BYTES, {
+    missingCode: "CASE_SUITE_MARKER_FILE_REQUIRED",
+    missingMessage: "请选择任务用例标识 XLSX 文件。",
+    emptyCode: "CASE_SUITE_MARKER_FILE_EMPTY",
+    emptyMessage: "标识表为空。",
+    tooLarge: () => new DomainError("CASE_SUITE_MARKER_FILE_TOO_LARGE", "标识表不能超过 16 MiB。"),
+  });
 }
 
 export function readSrTagUpload(request: Request): Promise<JarUpload> {

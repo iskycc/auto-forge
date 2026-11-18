@@ -361,6 +361,29 @@ describe("validated Excel downloads", () => {
     expect(issues.getCell("B2").value).toBe("run-bad");
     expect(issues.getCell("G2").value).toContain("U+FFFE");
   });
+  it("drops marker columns that occur only on excluded rows", async () => {
+    buildExport.mockResolvedValue({
+      projectId: "project",
+      batch: { suiteName: "支付回归", sequenceNumber: 123 },
+      markerColumns: [0, 4],
+      pages: {
+        async *[Symbol.asyncIterator]() {
+          yield [{ ...row, markers: ["有效标识"] }];
+          yield [{ ...bad, markers: ["", "", "", "", "已排除"] }];
+        },
+      },
+    });
+    const response = await requestExport("&invalidRows=exclude");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-autoforge-export-excluded-rows")).toBe("1");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await response.arrayBuffer());
+    const markers: string[] = [];
+    workbook.worksheets[0]!.getRow(1).eachCell((cell) => {
+      if (cell.text.startsWith("标识")) markers.push(cell.text);
+    });
+    expect(markers).toEqual(["标识1"]);
+  });
   it("returns a JSON error when a later page fails rather than an incomplete ZIP", async () => {
     buildExport.mockResolvedValue({
       projectId: "project",
@@ -415,12 +438,15 @@ describe("execution result export time zone", () => {
       expect(sheet.getCell("H2").hyperlink).toBe(
         "http://localhost/CaseLog?ExecutionId=attempt-failed",
       );
-      expect(buildExport).toHaveBeenCalledWith({
-        batchId: "batch",
-        scope: "final",
-        outcomes: ["failed"],
-        projectIds: ["project"],
-      });
+      expect(buildExport).toHaveBeenCalledWith(
+        {
+          batchId: "batch",
+          scope: "final",
+          outcomes: ["failed"],
+          projectIds: ["project"],
+        },
+        undefined,
+      );
     },
   );
 });

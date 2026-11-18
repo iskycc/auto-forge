@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,12 +7,250 @@ import { describe, it, expect, vi } from "vitest";
 import { RunBatchExportService, buildRunBatchExportRows } from "@autoforge/application";
 import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
+import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
+import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
+import { PostgresCaseSuiteRepository } from "../src/postgres-platform-repository";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
 
 const postgresUrl = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 for (const dialect of ["sqlite", "postgres"] as const)
   describe.skipIf(dialect === "postgres" && !postgresUrl)(`${dialect} paged result exports`, () => {
+    it("upgrades the previous task schema without altering membership and rolls back failed DDL", async () => {
+      const migrations = resolve(
+        "packages/db/drizzle",
+        dialect === "sqlite" ? "sqlite" : "postgresql",
+      );
+      const next =
+        dialect === "sqlite" ? "0103_case_suite_membership.sql" : "0102_case_suite_membership.sql";
+      const previous = await mkdtemp(join(tmpdir(), "suite-membership-upgrade-"));
+      try {
+        for (const file of await readdir(migrations))
+          if (file.endsWith(".sql") && file < next)
+            await copyFile(join(migrations, file), join(previous, file));
+        const f = await exportDatabase(dialect, previous);
+        try {
+          const now = "2026-11-17T00:00:00.000Z";
+          const suite = await f.suites.create({
+            id: "legacy-suite",
+            name: "历史任务",
+            policy: defaultCaseSuiteExecutionPolicy,
+            createdAt: now,
+          });
+          await f.execute(`INSERT INTO project_versions(id,project_id,name,normalized_name,created_at,updated_at)
+            VALUES ('legacy-version','${DEFAULT_PROJECT_ID}','legacy','legacy','${now}','${now}')`);
+          await f.execute(`INSERT INTO test_stages(id,project_id,project_version_id,name,normalized_name,position,created_at,updated_at)
+            VALUES ('legacy-stage','${DEFAULT_PROJECT_ID}','legacy-version','legacy','legacy',0,'${now}','${now}')`);
+          await f.execute(`INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at)
+            VALUES ('legacy-case','${DEFAULT_PROJECT_ID}','legacy-version','legacy-stage','历史用例','历史用例','SR','sr','standard','{}','${now}','${now}')`);
+          await f.execute(`INSERT INTO case_suite_ddt_items(id,suite_id,ddt_case_id,added_at)
+            VALUES ('legacy-member','${suite.id}','legacy-case','${now}')`);
+          const migration = await readFile(join(migrations, next), "utf8");
+          await f.execute("BEGIN");
+          await f.execute(migration);
+          await expect(f.execute("INSERT INTO missing_upgrade_table VALUES(1)")).rejects.toThrow();
+          await f.execute("ROLLBACK");
+          await expect(f.suites.listMemberChanges(suite.id, undefined, 10)).rejects.toThrow();
+          await f.execute("BEGIN");
+          await f.execute(migration);
+          await f.execute("COMMIT");
+          expect(await f.suites.getSummary(suite.id)).toMatchObject({
+            id: suite.id,
+            name: suite.name,
+            caseCount: 1,
+          });
+          expect(
+            (await f.suites.listMarkerMembers(suite.id, "ddt", undefined, 10, "")).items,
+          ).toEqual([
+            { kind: "ddt", memberId: "legacy-member", caseLabel: "历史用例", markers: [] },
+          ]);
+          expect((await f.suites.listMemberChanges(suite.id, undefined, 10)).items).toEqual([]);
+        } finally {
+          await f.close();
+        }
+      } finally {
+        await rm(previous, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    it("audits actual task member changes and snapshots only markers on exported failures", async () => {
+      const f = await exportDatabase(dialect);
+      const now = "2026-11-18T00:00:00.000Z";
+      const user = "member-operator";
+      try {
+        await f.execute(`INSERT INTO users(id,username,normalized_username,display_name,source,status,created_at,updated_at)
+          VALUES ('${user}','audit.operator','audit.operator','Audit Operator','local','active','${now}','${now}')`);
+        await f.execute(`INSERT INTO project_versions(id,project_id,name,normalized_name,created_at,updated_at)
+          VALUES ('version','${DEFAULT_PROJECT_ID}','version','version','${now}','${now}')`);
+        await f.execute(`INSERT INTO test_stages(id,project_id,project_version_id,name,normalized_name,position,created_at,updated_at)
+          VALUES ('stage','${DEFAULT_PROJECT_ID}','version','stage','stage',0,'${now}','${now}')`);
+        await f.execute(`INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at) VALUES
+          ('case-ddt','${DEFAULT_PROJECT_ID}','version','stage','钱包-支付','钱包-支付','SR','sr','standard','{}','${now}','${now}'),
+          ('case-passed','${DEFAULT_PROJECT_ID}','version','stage','钱包-通过','钱包-通过','SR','sr','standard','{}','${now}','${now}')`);
+        const suite = await f.suites.create({
+          id: "marker-suite",
+          name: "钱包验证",
+          policy: defaultCaseSuiteExecutionPolicy,
+          createdAt: now,
+        });
+        const other = await f.suites.create({
+          id: "other-suite",
+          name: "另一任务",
+          policy: defaultCaseSuiteExecutionPolicy,
+          createdAt: now,
+        });
+        const mutation = { suiteId: suite.id, actorId: user, updatedAt: now };
+        const items = [
+          { id: "member-ddt", ddtCaseId: "case-ddt" },
+          { id: "member-passed", ddtCaseId: "case-passed" },
+        ];
+        const populated = await f.suites.addDdtCases({
+          ...mutation,
+          versionId: "change-1",
+          items,
+          remark: "补充支付场景",
+        });
+        await f.suites.addDdtCases({ ...mutation, versionId: "change-2", items });
+        await f.suites.addDdtCases({
+          ...mutation,
+          suiteId: other.id,
+          versionId: "other-add",
+          items: [{ id: "other-member", ddtCaseId: "case-ddt" }],
+        });
+        expect((await f.suites.listMemberChanges(suite.id, undefined, 10)).items).toEqual([
+          {
+            id: "change-1",
+            kind: "ddt",
+            operation: "add",
+            count: 2,
+            actorName: "audit.operator",
+            remark: "补充支付场景",
+            changedAt: now,
+          },
+        ]);
+        const first = await f.suites.listMemberChangeItems(suite.id, "change-1", undefined, 1);
+        expect(first.items).toEqual([{ caseId: "case-ddt", caseLabel: "钱包-支付" }]);
+        expect(
+          (await f.suites.listMemberChangeItems(suite.id, "change-1", first.nextCursor, 1)).items,
+        ).toEqual([{ caseId: "case-passed", caseLabel: "钱包-通过" }]);
+        expect(
+          (await f.suites.listMemberChangeItems(other.id, "change-1", undefined, 10)).items,
+        ).toEqual([]);
+        const edit = { ...mutation, versionId: "markers-1", expectedRevision: populated.revision };
+        const foreign = { kind: "ddt" as const, memberId: "other-member", markers: ["其他任务"] };
+        await expect(
+          f.suites.updateMemberMarkers({ ...edit, edits: [foreign] }),
+        ).rejects.toMatchObject({ code: "CASE_SUITE_MARKER_MEMBER_MISMATCH" });
+        const updated = await f.suites.updateMemberMarkers({
+          ...edit,
+          edits: [
+            { kind: "ddt", memberId: "member-ddt", markers: ["", "支付域", "", "", "优先"] },
+            { kind: "ddt", memberId: "member-passed", markers: ["仅通过用例"] },
+          ],
+        });
+        await expect(
+          f.suites.updateMemberMarkers({ ...edit, versionId: "stale", edits: [foreign] }),
+        ).rejects.toMatchObject({ code: "CASE_SUITE_REVISION_CONFLICT" });
+        expect(
+          (await f.suites.listMarkerMembers(other.id, "ddt", undefined, 10, "")).items[0]?.markers,
+        ).toEqual([]);
+        expect(
+          (await f.suites.listMarkerMembers(suite.id, "ddt", undefined, 10, "支付")).items[0]
+            ?.markers,
+        ).toEqual(["", "支付域", "", "", "优先"]);
+
+        await f.batches.create({
+          ...mutation,
+          id: "marker-batch",
+          suiteName: suite.name,
+          suiteVersion: updated.version,
+          expectedSuiteRevision: updated.revision,
+          retryLimit: 0,
+          environmentVariables: [],
+          secretBindings: [],
+          runnerIds: [],
+          createdAt: now,
+          runs: [
+            {
+              id: "run-ddt",
+              caseDefinitionId: "case-ddt",
+              caseVersion: 1,
+              displayName: "钱包-支付",
+              className: "example.PaymentTest",
+              caseType: "ddt",
+            },
+            {
+              id: "run-passed",
+              caseDefinitionId: "case-passed",
+              caseVersion: 1,
+              displayName: "钱包-通过",
+              className: "example.PaymentTest",
+              caseType: "ddt",
+            },
+          ],
+        });
+        await f.execute(
+          `INSERT INTO runners(id,credential_hash,name,os,architecture,agent_version,protocol_version,labels_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at) VALUES ('runner','hash','runner','linux','amd64','1.22.24',1,'[]',1,0,'${now}','${now}','${now}')`,
+        );
+        for (const [id, outcome, code] of [
+          ["ddt", "failed", "TESTNG_ASSERTIONS_FAILED"],
+          ["passed", "succeeded", "TESTNG_SUCCEEDED"],
+        ])
+          await f.execute(
+            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,outcome,result_code,scheduling_score,created_at) VALUES ('attempt-${id}','run-${id}','runner',1,'${outcome}','${outcome}','${code}',1,'${now}')`,
+          );
+        const cleared = await f.suites.updateMemberMarkers({
+          ...mutation,
+          versionId: "markers-clear",
+          expectedRevision: updated.revision,
+          edits: [{ kind: "ddt", memberId: "member-ddt", markers: [""] }],
+        });
+        expect(cleared.revision).toBeGreaterThan(updated.revision);
+        await f.suites.removeDdtCases({
+          ...mutation,
+          versionId: "change-3",
+          ddtCaseIds: ["case-ddt", "missing"],
+          remark: "支付迁移",
+        });
+        const history = await f.suites.listMemberChanges(suite.id, undefined, 10);
+        expect(
+          history.items.map(({ operation, count, remark }) => ({ operation, count, remark })),
+        ).toEqual([
+          { operation: "remove", count: 1, remark: "支付迁移" },
+          { operation: "add", count: 2, remark: "补充支付场景" },
+        ]);
+        const report = await new RunBatchExportService(f.batches).prepare(
+          { batchId: "marker-batch", scope: "final", outcomes: ["failed"] },
+          { includeMarkerColumns: true },
+        );
+        expect(report.markerColumns).toEqual([1, 4]);
+        const rows = [];
+        for await (const page of report.pages) rows.push(...page);
+        expect(rows.map((row) => row.markers)).toEqual([["", "支付域", "", "", "优先"]]);
+        const removed = await f.suites.unlinkDdtScopePage({
+          ...mutation,
+          scope: {
+            projectId: DEFAULT_PROJECT_ID,
+            projectVersionId: "version",
+            testStageId: "stage",
+          },
+          auditActorId: user,
+          clearedBefore: now,
+          requestId: "clear-ddt-for-suite",
+          auditId: "scope-clear-audit",
+          versionId: "scope-clear-event",
+        });
+        expect(removed).toBe(1);
+        expect(
+          (await f.suites.listMemberChanges(suite.id, undefined, 10)).items.find(
+            (event) => event.id === "scope-clear-event",
+          ),
+        ).toMatchObject({ kind: "ddt", operation: "remove", count: 1, remark: "清空 DDT 范围" });
+      } finally {
+        await f.close();
+      }
+    });
+
     it("exports original DDT CaseName and SRID cells without filling standard cases or missing fields", async () => {
       const fixture = await exportDatabase(dialect);
       try {
@@ -212,16 +450,17 @@ for (const dialect of ["sqlite", "postgres"] as const)
     }, 180_000);
   });
 
-async function exportDatabase(dialect: "sqlite" | "postgres") {
+async function exportDatabase(dialect: "sqlite" | "postgres", migrationsFolder?: string) {
   const directory = await mkdtemp(join(tmpdir(), "run-export-pages-"));
   if (dialect === "sqlite") {
     const handle = createSqliteDatabase({
       databasePath: join(directory, "platform.sqlite"),
-      migrationsFolder: resolve("packages/db/drizzle/sqlite"),
+      migrationsFolder: migrationsFolder ?? resolve("packages/db/drizzle/sqlite"),
     });
     const queries = vi.spyOn(handle.client, "prepare");
     return {
       batches: new SqliteRunBatchRepository(handle),
+      suites: new SqliteCaseSuiteRepository(handle),
       statements: () => queries.mock.calls.map(([statement]) => statement),
       execute: async (statement: string) => {
         handle.client.exec(statement);
@@ -241,13 +480,14 @@ async function exportDatabase(dialect: "sqlite" | "postgres") {
   url.pathname = `/${name}`;
   const handle = createPostgresDatabase({
     connectionString: url.toString(),
-    migrationsFolder: resolve("packages/db/drizzle/postgresql"),
+    migrationsFolder: migrationsFolder ?? resolve("packages/db/drizzle/postgresql"),
     poolMax: 1,
   });
   await handle.ready;
   const queries = vi.spyOn(handle.pool, "query");
   return {
     batches: new PostgresRunBatchRepository(handle),
+    suites: new PostgresCaseSuiteRepository(handle),
     statements: () =>
       queries.mock.calls.map(([statement]) =>
         typeof statement === "string" ? statement : (statement as { text: string }).text,

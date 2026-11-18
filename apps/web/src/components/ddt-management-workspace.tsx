@@ -1,4 +1,5 @@
 "use client";
+import { CASE_SUITE_MEMBER_REMARK_LIMIT } from "@autoforge/contracts";
 import { appendDdtUploadFiles, ddtUploadFileKey } from "@/lib/ddt-upload-selection";
 import { DdtRequirementCategoryFilter } from "./ddt-requirement-category-filter";
 import {
@@ -3039,6 +3040,7 @@ function AddDdtToSuiteDialog({
   const [createdSuite, setCreatedSuite] = useState<{ id: string; name: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [remark, setRemark] = useState("");
   const [completedCount, setCompletedCount] = useState(0);
   const additionRequest = useRef<AbortController | null>(null);
   useEffect(() => () => additionRequest.current?.abort(), []);
@@ -3075,7 +3077,7 @@ function AddDdtToSuiteDialog({
           method: "POST",
           headers: jsonHeaders,
           signal: controller.signal,
-          body: JSON.stringify({ testStageId: scope.testStageId, caseIds: members }),
+          body: JSON.stringify({ testStageId: scope.testStageId, caseIds: members, remark }),
         });
         setCompletedCount(offset + members.length);
       }
@@ -3187,6 +3189,17 @@ function AddDdtToSuiteDialog({
             />
           </label>
         ) : null}
+        <label className="col-span-full min-w-0">
+          <span>操作备注（可选）</span>
+          <Textarea
+            aria-label="操作备注（可选）"
+            rows={2}
+            value={remark}
+            maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}
+            disabled={busy || completedCount > 0}
+            onChange={(event) => setRemark(event.target.value)}
+          />
+        </label>
         {createdSuite ? (
           <p className={cn("muted full-span", uiPatterns["muted"], uiPatterns["full-span"])}>
             任务“{createdSuite.name}”已创建，重新点击加入任务可重试添加所选用例。

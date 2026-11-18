@@ -1,3 +1,4 @@
+import { caseSuiteMemberRemarkSchema } from "./case-suite-membership";
 import { z } from "zod";
 
 export const WEBHOOK_BODY_VARIABLES = [
@@ -193,6 +194,7 @@ export const createCaseSuiteInputSchema = z.object({
 export const CASE_SUITE_ITEM_MUTATION_LIMIT = 100_000;
 
 export const updateCaseSuiteItemsInputSchema = z.object({
+  remark: caseSuiteMemberRemarkSchema.optional(),
   caseDefinitionIds: z.array(z.string().min(1).max(128)).min(1).max(CASE_SUITE_ITEM_MUTATION_LIMIT),
 });
 
