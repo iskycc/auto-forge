@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { Alert, Anchor, Breadcrumb, Card, Steps, Table, Tag, Typography } from "antd";
+import { Alert, Breadcrumb, Card, Flex, Steps, Table, Tag, Typography } from "antd";
 import {
   documentationHref,
   type DocumentationArticle,
@@ -53,16 +53,15 @@ export function DocumentationArticleView({
         <DocumentationDiagramView diagram={article.diagram} />
       </Card>
       <Card size="small" title="本页内容">
-        <Anchor
-          direction="horizontal"
-          affix={false}
-          offsetTop={88}
-          items={article.sections.map((section) => ({
-            key: section.id,
-            href: `#${section.id}`,
-            title: section.title,
-          }))}
-        />
+        <nav aria-label="本页内容">
+          <Flex wrap gap="middle">
+            {article.sections.map((section) => (
+              <Typography.Link key={section.id} href={`#${section.id}`}>
+                {section.title}
+              </Typography.Link>
+            ))}
+          </Flex>
+        </nav>
       </Card>
       {article.sections.map((section, index) => (
         <section key={section.id} id={section.id} className="min-w-0 scroll-mt-[88px]">

@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.22.24 - 2026-11-18
+
+### Fixed
+
+- 修复使用文档滚到页尾时被目录自动拉回的问题。本页目录改用可换行的 Ant Design 章节链接，支持键盘跳转、刷新定位与浏览器前后退。
+
+### Compatibility
+
+- Lite 和 Full 共用修复。数据库架构、部署配置与 Runner Protocol 沿用 v1.22.23。升级 Web 即可获得文档修复。
+- 离线交付包括 amd64 和 arm64 后端镜像、部署包、SBOM、发布清单及签名校验文件。
+
+### Verification
+
+- 25 项相关测试、4 项 Lite 和 2 项 Full Playwright 场景通过。8 组页尾逐帧检查均无回拉，1024×768 和 1536×1024 深浅色截图已实际审查。章节跳转、刷新、搜索与公开页面入口均通过回归。
+- Web 生产构建、测试类型、全仓格式与许可证、变更 ESLint、E2E 覆盖矩阵和差异空白检查通过。按最快路径执行 Release，保留双架构构建、镜像验证、SBOM、签名及完整资产校验。本版本的验收范围为上述定向验证和 Release 检查。
+
 ## 1.22.23 - 2026-11-18
 
 ### Added

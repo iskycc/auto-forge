@@ -14,6 +14,84 @@ import {
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { expectPageFitsViewport, expectReadableText, expectUiIntegrity } from "./support/ui-guard";
 
+test("documentation stays at the bottom while reading and preserves section navigation", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  const origin = new URL(testInfo.project.use.baseURL!).origin;
+  for (const theme of ["light", "dark"] as const) {
+    await page.context().addCookies([{ name: "autoforge-color-mode", value: theme, url: origin }]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+      await page.goto("/docs/case-logs");
+      await expect(
+        page.getByRole("heading", {
+          name: "阅读公开日志、修改重跑 IP 与查看超时证据",
+          exact: true,
+        }),
+      ).toBeVisible();
+      const bottom = await page.evaluate(async () => {
+        const expected = document.documentElement.scrollHeight - window.innerHeight;
+        window.scrollTo({ top: expected, behavior: "instant" });
+        const positions: number[] = [];
+        for (let frame = 0; frame < 40; frame++) {
+          await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+          positions.push(window.scrollY);
+        }
+        return { expected, positions };
+      });
+      await testInfo.attach(`documentation-bottom-${theme}-${width}.json`, {
+        body: JSON.stringify(bottom),
+        contentType: "application/json",
+      });
+      expect(bottom.expected).toBeGreaterThan(200);
+      expect(
+        Math.min(...bottom.positions),
+        "scroll tracking must not pull the reader back to the off-screen directory",
+      ).toBeGreaterThanOrEqual(bottom.expected - 1);
+      expect(
+        Math.max(...bottom.positions) - Math.min(...bottom.positions),
+        "the bottom must not oscillate between the article and its directory",
+      ).toBeLessThanOrEqual(1);
+      await page.mouse.move(width - 100, 300);
+      await page.mouse.wheel(0, 1500);
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            Math.abs(document.documentElement.scrollHeight - innerHeight - scrollY),
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(screenshots, `documentation-bottom-${theme}-${width}.png`),
+        animations: "disabled",
+      });
+      const directory = page
+        .getByRole("navigation", { name: "本页内容", exact: true })
+        .getByRole("link", { name: "本页重跑的环境 IP", exact: true });
+      await directory.focus();
+      await directory.press("Enter");
+      await expect(page).toHaveURL(/#rerun-ip$/u);
+      await expect(page.locator("section#rerun-ip")).toBeInViewport();
+      await page.reload();
+      await expect(page.locator("section#rerun-ip")).toBeInViewport();
+      await page.goBack();
+      await expect(page).toHaveURL(/\/docs\/case-logs$/u);
+      await page.goForward();
+      await expect(page).toHaveURL(/#rerun-ip$/u);
+      await expect(page.locator("section#rerun-ip")).toBeInViewport();
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+      await page.screenshot({
+        path: resolve(screenshots, `documentation-directory-${theme}-${width}.png`),
+        animations: "disabled",
+      });
+    }
+  }
+});
+
 test("anonymous user documentation covers every guide, search history, diagrams and desktop themes", async ({
   page,
 }, testInfo) => {
