@@ -6,7 +6,7 @@ and known limitations.
 
 ## Unreleased
 
-## 1.22.26 - 2026-11-18
+## 1.23.0 - 2026-11-18
 
 ### Changed
 
