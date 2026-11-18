@@ -155,7 +155,7 @@ describe("validated Excel downloads", () => {
     expect(ensureShares).not.toHaveBeenCalled();
   });
   it.each(["public=1", "access_token=legacy"])(
-    "exports the same failure-analysis workbook and AI column through %s",
+    "exports both AI columns in the same failure-analysis workbook through %s",
     async (access) => {
       const token = issuePermanentShareToken("a".repeat(64), "run_batch", "batch");
       const query = access === "public=1" ? access : `access_token=${encodeURIComponent(token)}`;
@@ -174,9 +174,12 @@ describe("validated Excel downloads", () => {
       await workbook.xlsx.load(await response.arrayBuffer());
       const sheet = workbook.worksheets[0]!;
       const headers = sheet.getRow(1).values as string[];
-      const aiColumn = headers.indexOf("AI 初步分析");
+      const aiColumn = headers.indexOf("AI 初步分析结果");
+      const reasonColumn = headers.indexOf("AI 初步分析原因");
       expect(aiColumn).toBe(headers.indexOf("失败堆栈") + 1);
-      expect(sheet.getCell(2, aiColumn).text).toContain("连接被重置");
+      expect(reasonColumn).toBe(aiColumn + 1);
+      expect(sheet.getCell(2, aiColumn).text).toBe("可能重跑通过");
+      expect(sheet.getCell(2, reasonColumn).text).toBe("环境偶发抖动；依据：连接被重置。");
       expect(listClaims).toHaveBeenCalledWith({
         projectId: "project",
         batchId: "batch",

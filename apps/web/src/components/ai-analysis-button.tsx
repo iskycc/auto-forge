@@ -1,10 +1,26 @@
 "use client";
-import { Alert, Button, Empty, Modal, Progress, Space, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Empty,
+  Modal,
+  Progress,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import { RobotOutlined, PlusOutlined, MinusOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useState, useRef } from "react";
 import type { AiAnalysisView } from "@autoforge/contracts";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
+import {
+  AI_ANALYSIS_REASON_LABEL,
+  AI_ANALYSIS_RESULT_LABEL,
+  splitAiAnalysisConclusion,
+} from "@/lib/ai-analysis-presentation";
 
 const ACTIVE = new Set(["queued", "preparing", "analyzing", "summarizing"]);
 const LABELS: Record<string, string> = {
@@ -132,6 +148,10 @@ export function AiAnalysisButton({
     };
   }, [open, jobStatus, read, waitForAutomatic]);
   const job = view?.job;
+  const rows = view?.items.map((item) => ({
+    ...item,
+    analysis: splitAiAnalysisConclusion(item.conclusion),
+  }));
   async function cancel() {
     if (!job) return;
     setPending(true);
@@ -264,8 +284,9 @@ export function AiAnalysisButton({
                 size="small"
                 rowKey="id"
                 loading={pending}
-                dataSource={view.items}
+                dataSource={rows ?? []}
                 pagination={false}
+                tableLayout="fixed"
                 scroll={{ x: 700 }}
                 expandable={{
                   expandIcon: ({ expanded, onExpand, record }) => (
@@ -277,33 +298,47 @@ export function AiAnalysisButton({
                       onClick={(event) => onExpand(record, event)}
                     />
                   ),
-                  expandedRowRender: (item) => (
-                    <Typography.Paragraph
-                      style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 }}
-                    >
-                      {item.conclusion ?? item.reason ?? "正在后台准备详细证据。"}
-                    </Typography.Paragraph>
-                  ),
-                  rowExpandable: () => true,
+                  expandedRowRender: (item) =>
+                    item.analysis.result ? (
+                      <Descriptions
+                        column={1}
+                        size="small"
+                        items={[
+                          {
+                            key: "result",
+                            label: AI_ANALYSIS_RESULT_LABEL,
+                            children: <AnalysisText value={item.analysis.result} />,
+                          },
+                          {
+                            key: "reason",
+                            label: AI_ANALYSIS_REASON_LABEL,
+                            children: <AnalysisText value={item.analysis.reason || "—"} />,
+                          },
+                        ]}
+                      />
+                    ) : (
+                      <AnalysisText value={item.reason ?? "正在后台准备详细证据。"} />
+                    ),
                 }}
                 columns={[
-                  { title: "用例", dataIndex: "displayName", width: 240, ellipsis: true },
+                  { title: "用例", dataIndex: "displayName", width: 200, ellipsis: true },
                   {
                     title: "进度",
                     dataIndex: "status",
-                    width: 120,
+                    width: 112,
                     render: (value: string) => <Tag>{LABELS[value] ?? value}</Tag>,
                   },
                   {
-                    title: "AI 初步建议",
-                    dataIndex: "conclusion",
-                    render: (value: string | null, item) => (
-                      <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                        <Typography.Paragraph ellipsis={{ rows: 2 }} style={{ margin: 0 }}>
-                          {value ?? item.reason ?? "等待 Worker 处理"}
-                        </Typography.Paragraph>
-                        <Typography.Text type="secondary">展开查看完整结论</Typography.Text>
-                      </div>
+                    title: AI_ANALYSIS_RESULT_LABEL,
+                    width: 202,
+                    render: (_, item) => (
+                      <AnalysisText value={item.analysis.result || "—"} preview />
+                    ),
+                  },
+                  {
+                    title: AI_ANALYSIS_REASON_LABEL,
+                    render: (_, item) => (
+                      <AnalysisText value={item.analysis.reason || "—"} preview />
                     ),
                   },
                 ]}
@@ -323,5 +358,16 @@ export function AiAnalysisButton({
         </Space>
       </Modal>
     </>
+  );
+}
+
+function AnalysisText({ value, preview = false }: { value: string; preview?: boolean }) {
+  return (
+    <Typography.Paragraph
+      ellipsis={preview ? { rows: 2, tooltip: value } : false}
+      style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 }}
+    >
+      {value}
+    </Typography.Paragraph>
   );
 }

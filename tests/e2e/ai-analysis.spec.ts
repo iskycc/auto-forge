@@ -488,13 +488,14 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       )
       .toMatch(/completed|partial/u);
     await dialog.getByRole("button", { name: "刷新进度", exact: true }).click();
+    await expect(dialog.getByRole("columnheader", { name: "AI 初步分析结果" })).toBeVisible();
+    await expect(dialog.getByRole("columnheader", { name: "AI 初步分析原因" })).toBeVisible();
     await dialog.getByRole("button", { name: "查看完整初析", exact: true }).first().click();
-    await expect(
-      dialog
-        .locator(".ant-table-expanded-row")
-        .getByText(/合成模型建议/u)
-        .first(),
-    ).toBeVisible();
+    const detail = dialog.locator(".ant-table-expanded-row").first();
+    await expect(detail.getByText("AI 初步分析结果", { exact: true })).toBeVisible();
+    await expect(detail.getByText("AI 初步分析原因", { exact: true })).toBeVisible();
+    await expect(detail.getByText(/可能重跑通过/u)).toBeVisible();
+    await expect(detail.getByText(/合成模型建议.*依赖瞬时不可用/u)).toBeVisible();
     await dialog.getByRole("button", { name: "收起完整初析", exact: true }).first().click();
     expect(attempts).toBeGreaterThan(4);
     const smallGroups = inferenceRequests.filter((request) => request.stage === "small_group_full");
@@ -567,6 +568,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         .getByRole("button", { name: /AI 初步分析$/u })
         .first()
         .click();
+      await expect(dialog.getByRole("cell", { name: /可能重跑通过/u }).first()).toBeVisible();
       for (const width of [1024, 1536]) {
         await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
         await expectUiIntegrity(page);
@@ -574,6 +576,13 @@ test("AI settings, durable batch and single analysis, retry and partial export p
           path: resolve(screenshots, `ai-conclusions-${theme}-${width}.png`),
           animations: "disabled",
         });
+        await dialog.getByRole("button", { name: "查看完整初析", exact: true }).first().click();
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: resolve(screenshots, `ai-conclusion-detail-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+        await dialog.getByRole("button", { name: "收起完整初析", exact: true }).first().click();
       }
       await page.getByRole("button", { name: "关闭", exact: true }).last().click();
     }
@@ -647,8 +656,13 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     const workbook = await readExportedWorkbook(await exported.body());
     const sheet = workbook.worksheets[0]!;
     const headers = sheet.getRow(1).values as string[];
-    expect(headers).toContain("AI 初步分析");
-    expect(sheet.getRow(2).getCell(headers.indexOf("AI 初步分析")).text).toContain("合成模型建议");
+    const resultColumn = headers.indexOf("AI 初步分析结果");
+    const reasonColumn = headers.indexOf("AI 初步分析原因");
+    expect(resultColumn).toBeGreaterThan(0);
+    expect(reasonColumn).toBe(resultColumn + 1);
+    expect(sheet.getRow(2).getCell(resultColumn).text).toBe("可能重跑通过（待人工确认）");
+    expect(sheet.getRow(2).getCell(reasonColumn).text).toContain("合成模型建议：依赖瞬时不可用。");
+    expect(sheet.getRow(2).getCell(reasonColumn).text).toContain("依据：日志出现连接重置");
     await openExecutionCaseDetails(page);
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -668,9 +682,15 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     expect(analysisExport.status()).toBe(200);
     const analysisSheet = (await readExportedWorkbook(await analysisExport.body())).worksheets[0]!;
     const analysisHeaders = analysisSheet.getRow(1).values as string[];
-    expect(analysisHeaders.indexOf("AI 初步分析")).toBe(analysisHeaders.indexOf("失败堆栈") + 1);
-    expect(analysisSheet.getRow(2).getCell(analysisHeaders.indexOf("AI 初步分析")).text).toContain(
-      "可能重跑通过",
+    const analysisResultColumn = analysisHeaders.indexOf("AI 初步分析结果");
+    const analysisReasonColumn = analysisHeaders.indexOf("AI 初步分析原因");
+    expect(analysisResultColumn).toBe(analysisHeaders.indexOf("失败堆栈") + 1);
+    expect(analysisReasonColumn).toBe(analysisResultColumn + 1);
+    expect(analysisSheet.getRow(2).getCell(analysisResultColumn).text).toBe(
+      "可能重跑通过（待人工确认）",
+    );
+    expect(analysisSheet.getRow(2).getCell(analysisReasonColumn).text).toContain(
+      "依据：日志出现连接重置",
     );
     const updated = await browserJson(page, `/api/v1/case-suites/suite-${suffix}`, {
       method: "PATCH",

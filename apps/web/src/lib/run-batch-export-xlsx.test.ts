@@ -84,11 +84,14 @@ describe("buildRunBatchExportWorkbook", () => {
       includesAi: true,
       rows: [failedRow],
       shareLinks: new Map(),
-      aiConclusions: new Map([[failedRow.attemptId!, `环境\ufffe建议\n${"下一步\n".repeat(300)}`]]),
+      aiConclusions: new Map([
+        [failedRow.attemptId!, `可能重跑通过\n原因：环境\ufffe异常\n${"下一步\n".repeat(300)}`],
+      ]),
     });
     const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
     const headers = sheet.getRow(1).values as string[];
-    const value = sheet.getRow(2).getCell(headers.indexOf("AI 初步分析")).text;
+    expect(sheet.getRow(2).getCell(headers.indexOf("AI 初步分析结果")).text).toBe("可能重跑通过");
+    const value = sheet.getRow(2).getCell(headers.indexOf("AI 初步分析原因")).text;
     expect(value).toContain("\\ufffe");
     expect(value).toContain("过多换行已折叠");
     expect(value.split("\n").length).toBeLessThan(254);
@@ -114,16 +117,25 @@ describe("buildRunBatchExportWorkbook", () => {
           [failedRow.attemptId!, "http://platform/CaseLog?AttemptId=attempt-failed"],
         ]),
         aiConclusions: new Map([
-          [failedRow.attemptId!, "AI 初步建议（分析中 1/3）\n可能是环境问题，待验证。"],
+          [
+            failedRow.attemptId!,
+            "AI 初步建议（分析中 1/3）\n验证环境依赖。\n可能原因：依赖瞬时不可用。",
+          ],
         ]),
       });
       const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
       const headers = sheet.getRow(1).values as string[];
-      const aiColumn = headers.indexOf("AI 初步分析");
+      const aiColumn = headers.indexOf("AI 初步分析结果");
+      const reasonColumn = headers.indexOf("AI 初步分析原因");
       expect(aiColumn).toBeGreaterThan(0);
+      expect(reasonColumn).toBe(aiColumn + 1);
       if (template === "failure-analysis") expect(aiColumn).toBe(headers.indexOf("失败堆栈") + 1);
-      expect(sheet.getRow(2).getCell(aiColumn).value).toContain("分析中 1/3");
+      expect(sheet.getRow(2).getCell(aiColumn).text).toBe(
+        "AI 初步建议（分析中 1/3）\n验证环境依赖。",
+      );
+      expect(sheet.getRow(2).getCell(reasonColumn).text).toBe("可能原因：依赖瞬时不可用。");
       expect(sheet.getRow(3).getCell(aiColumn).text).toBe("");
+      expect(sheet.getRow(3).getCell(reasonColumn).text).toBe("");
       expect(sheet.getRow(2).getCell(sheet.columnCount).value).toMatchObject({
         hyperlink: "http://platform/CaseLog?AttemptId=attempt-failed",
       });
@@ -181,7 +193,8 @@ describe("buildRunBatchExportWorkbook", () => {
         执行结束时间: "FFEEE9F5",
         "执行耗时(s)": "FFEEE9F5",
         分析责任人: "FFEBF0E2",
-        "AI 初步分析": "FFEBF0E2",
+        "AI 初步分析结果": "FFEBF0E2",
+        "AI 初步分析原因": "FFEBF0E2",
         分析结果: "FFEBF0E2",
         问题根因: "FFEBF0E2",
         备注: "FFEBF0E2",
@@ -192,11 +205,17 @@ describe("buildRunBatchExportWorkbook", () => {
       };
       for (const bytes of [normal.buffer, Buffer.concat(chunks)]) {
         const sheet = (await loadWorkbook(bytes)).worksheets[0]!;
-        if (includesAi && template === "failure-analysis") {
-          const headers = sheet.getRow(1).values as string[];
-          const column = headers.indexOf("AI 初步分析");
-          expect(column).toBe(headers.indexOf("失败堆栈") + 1);
-          expect(sheet.getRow(2).getCell(column).text).toContain("连接重置");
+        const headers = sheet.getRow(1).values as string[];
+        const resultColumn = headers.indexOf("AI 初步分析结果");
+        const reasonColumn = headers.indexOf("AI 初步分析原因");
+        if (includesAi) {
+          expect(reasonColumn).toBe(resultColumn + 1);
+          if (template === "failure-analysis")
+            expect(resultColumn).toBe(headers.indexOf("失败堆栈") + 1);
+          expect(sheet.getRow(2).getCell(resultColumn).text).toBe("可能重跑通过");
+          expect(sheet.getRow(2).getCell(reasonColumn).text).toBe("瞬断。\n依据：连接重置。");
+        } else {
+          expect([resultColumn, reasonColumn]).toEqual([-1, -1]);
         }
         const colors = new Set<string>();
         sheet.getRow(1).eachCell((cell) => {

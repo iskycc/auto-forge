@@ -19,6 +19,11 @@ import { PassThrough } from "node:stream";
 import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import {
+  AI_ANALYSIS_REASON_LABEL,
+  AI_ANALYSIS_RESULT_LABEL,
+  splitAiAnalysisConclusion,
+} from "./ai-analysis-presentation";
+import {
   exportColumnWidth,
   EXPORT_WIDTH_SAMPLE_ROWS,
   exportWorksheetOptions,
@@ -43,6 +48,10 @@ const LOG_LINK_COLUMN_WIDTH = { minimum: 64, maximum: 120 } as const;
 const DDT_EXPORT_COLUMNS = [
   { header: "CaseName", group: "metadata", minimum: 18, maximum: 36 },
   { header: "SRID", group: "metadata", minimum: 16, maximum: 32 },
+] as const;
+const AI_EXPORT_COLUMNS = [
+  { header: AI_ANALYSIS_RESULT_LABEL, group: "analysis", minimum: 28, maximum: 38 },
+  { header: AI_ANALYSIS_REASON_LABEL, group: "analysis", minimum: 44, maximum: 62 },
 ] as const;
 
 const EXPORT_COLUMNS = [
@@ -252,9 +261,7 @@ function buildExecutionResultsSheet(
     ...EXPORT_COLUMNS.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
     ...EXPORT_COLUMNS.slice(2, -1),
-    ...(input.includesAi
-      ? [{ header: "AI 初步分析", group: "analysis" as const, minimum: 36, maximum: 56 }]
-      : []),
+    ...(input.includesAi ? AI_EXPORT_COLUMNS : []),
     ...EXPORT_COLUMNS.slice(-1),
   ];
   const cellsFor = (row: RunBatchExportRow) => executionResultCells(row, input, timestampFormatter);
@@ -312,9 +319,7 @@ function executionResultCells(
     formatExportTimestamp(row.startedAt, timestampFormatter),
     formatExportTimestamp(row.finishedAt, timestampFormatter),
     row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
-    ...(input.includesAi
-      ? [row.attemptId ? aiExportCell(input.aiConclusions?.get(row.attemptId) ?? "") : ""]
-      : []),
+    ...aiAnalysisExportCells(row, input),
     shareLink ? { text: shareLink, hyperlink: shareLink } : "",
   ];
 }
@@ -362,7 +367,7 @@ function buildFailureAnalysisSheet(
       : []),
     ...(input.markerColumns ?? []).map(() => 22),
     FAILURE_ANALYSIS_COLUMN_WIDTHS[2],
-    ...(input.includesAi ? [48] : []),
+    ...(input.includesAi ? AI_EXPORT_COLUMNS.map((column) => column.minimum) : []),
     ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(3),
   ];
   sheet.columns = headers.map((header, index) => ({
@@ -396,9 +401,7 @@ function failureAnalysisCells(
     ...ddtExportCells(item, input),
     ...(input.markerColumns ?? []).map((index) => item.markers?.[index] ?? ""),
     item.summary ?? "",
-    ...(input.includesAi
-      ? [item.attemptId ? aiExportCell(input.aiConclusions?.get(item.attemptId) ?? "") : ""]
-      : []),
+    ...aiAnalysisExportCells(item, input),
     claim ? analystLabel(claim) : "",
     completedClaim?.category ? FAILURE_ANALYSIS_RESULT_LABELS[completedClaim.category] : "",
     completedClaim?.category === "case_fixed" || completedClaim?.category === "code_issue_filed"
@@ -416,6 +419,14 @@ function failureAnalysisCells(
     completedClaim?.remark ?? "",
     shareLink ? { text: shareLink, hyperlink: shareLink } : "",
   ];
+}
+
+function aiAnalysisExportCells(row: RunBatchExportRow, input: RunBatchExportWorkbookInput) {
+  if (!input.includesAi) return [];
+  const { result, reason } = splitAiAnalysisConclusion(
+    row.attemptId ? input.aiConclusions?.get(row.attemptId) : undefined,
+  );
+  return [aiExportCell(result), aiExportCell(reason)];
 }
 
 /** Model prose must never make an otherwise valid execution row incompatible with Excel. */
@@ -488,13 +499,9 @@ function exportColumns(
           ...columns.slice(2, 3),
         ]
       : []),
-    ...(input.template === "failure-analysis" && input.includesAi
-      ? [{ header: "AI 初步分析", group: "analysis" as const }]
-      : []),
+    ...(input.template === "failure-analysis" && input.includesAi ? AI_EXPORT_COLUMNS : []),
     ...columns.slice(input.template === "failure-analysis" ? 3 : 2, -1),
-    ...(input.template !== "failure-analysis" && input.includesAi
-      ? [{ header: "AI 初步分析", group: "analysis" as const }]
-      : []),
+    ...(input.template !== "failure-analysis" && input.includesAi ? AI_EXPORT_COLUMNS : []),
     ...columns.slice(-1),
   ];
 }
