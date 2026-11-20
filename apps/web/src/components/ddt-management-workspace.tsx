@@ -3045,7 +3045,7 @@ function AddDdtToSuiteDialog({
   const additionRequest = useRef<AbortController | null>(null);
   useEffect(() => () => additionRequest.current?.abort(), []);
   const save = async () => {
-    if (busy) return;
+    if (busy || !remark.trim()) return;
     const controller = new AbortController();
     additionRequest.current = controller;
     let suite = suiteId === "new" ? createdSuite : suites.find((item) => item.id === suiteId);
@@ -3121,7 +3121,9 @@ function AddDdtToSuiteDialog({
             )}
             type="button"
             disabled={
-              busy || (suiteId === "new" ? !newSuiteName.trim() && !createdSuite : !suiteId)
+              busy ||
+              !remark.trim() ||
+              (suiteId === "new" ? !newSuiteName.trim() && !createdSuite : !suiteId)
             }
             onClick={() => void save()}
           >
@@ -3190,9 +3192,10 @@ function AddDdtToSuiteDialog({
           </label>
         ) : null}
         <label className="col-span-full min-w-0">
-          <span>操作备注（可选）</span>
+          <span>加入原因（必填）</span>
           <Textarea
-            aria-label="操作备注（可选）"
+            aria-label="加入原因（必填）"
+            aria-required="true"
             rows={2}
             value={remark}
             maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}

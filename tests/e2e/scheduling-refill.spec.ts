@@ -482,6 +482,7 @@ test("completion immediately refills free runner slots without waiting for the w
   await page
     .locator('select[aria-label="目标用例任务"]')
     .selectOption({ label: "即时补槽验收任务" });
+  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".toast-card", { hasText: "已将 5 个用例加入任务" })).toBeVisible();
 

@@ -16,9 +16,11 @@ export async function acceptSystemDialog(
   page: Page,
   title: string | RegExp,
   action: string | RegExp,
+  input?: { label: string; value: string },
 ): Promise<void> {
   const dialog = page.getByRole("dialog", { name: title });
   await expect(dialog).toBeVisible();
+  if (input) await dialog.getByLabel(input.label, { exact: true }).fill(input.value);
   await dialog.getByRole("button", { name: action, exact: typeof action === "string" }).click();
   await expect(dialog).toHaveCount(0);
 }

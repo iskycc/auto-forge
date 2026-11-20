@@ -38,9 +38,13 @@ describe("case suite marker workbook import", () => {
     );
     const rows = [{ rowNumber: 2, caseLabel, markers: ["待回归"] }];
     if (scenario.duplicateInWorkbook) rows.push({ rowNumber: 4, caseLabel, markers: ["跳过"] });
-    await expect(service.importMemberMarkers("suite-1", rows, 2, "operator")).rejects.toThrow(
-      scenario.message,
-    );
+    await expect(
+      service.importMemberMarkers("suite-1", rows, {
+        expectedRevision: 2,
+        actorId: "operator",
+        remark: "验证标识批量导入",
+      }),
+    ).rejects.toThrow(scenario.message);
     expect(updateMemberMarkers).not.toHaveBeenCalled();
   });
 });
@@ -358,12 +362,19 @@ describe("case suite update and copy", () => {
       { next: () => "version-3" },
     );
 
-    await service.removeCases("suite-1", ["case-1", "case-1", "case-2"], "user-1");
+    await service.removeCases(
+      "suite-1",
+      ["case-1", "case-1", "case-2"],
+      "user-1",
+      undefined,
+      "  调整回归范围  ",
+    );
 
     expect(suites.removeCases).toHaveBeenCalledOnce();
     expect(suites.removeCases).toHaveBeenCalledWith({
       suiteId: "suite-1",
       caseDefinitionIds: ["case-1", "case-2"],
+      remark: "调整回归范围",
       versionId: "version-3",
       actorId: "user-1",
       updatedAt: timestamp,
@@ -394,7 +405,14 @@ describe("case suite update and copy", () => {
       ddt,
     );
 
-    await service.addDdtCases("suite-1", "stage-1", ["ORDER-1", "ORDER-1"], "user-1");
+    await service.addDdtCases(
+      "suite-1",
+      "stage-1",
+      ["ORDER-1", "ORDER-1"],
+      "user-1",
+      undefined,
+      "补充订单用例",
+    );
 
     expect(ddt.getCases).toHaveBeenCalledWith(
       {
@@ -407,6 +425,7 @@ describe("case suite update and copy", () => {
     expect(suites.addDdtCases).toHaveBeenCalledWith({
       suiteId: "suite-1",
       items: [{ id: "ddt-id-1", ddtCaseId: "ddt-row-1" }],
+      remark: "补充订单用例",
       versionId: "ddt-id-2",
       actorId: "user-1",
       updatedAt: timestamp,
@@ -455,7 +474,7 @@ describe("case suite update and copy", () => {
       { next: () => "generated-id" },
     );
 
-    await service.addCases("suite-1", ["case-500"], "user-1");
+    await service.addCases("suite-1", ["case-500"], "user-1", undefined, "补充验证用例");
 
     expect(suites.addCases).toHaveBeenCalledWith(
       expect.objectContaining({

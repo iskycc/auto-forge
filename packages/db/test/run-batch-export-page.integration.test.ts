@@ -65,6 +65,36 @@ for (const dialect of ["sqlite", "postgres"] as const)
             { kind: "ddt", memberId: "legacy-member", caseLabel: "历史用例", markers: [] },
           ]);
           expect((await f.suites.listMemberChanges(suite.id, undefined, 10)).items).toEqual([]);
+          await f.execute(`INSERT INTO case_suite_member_changes
+            (id,suite_id,kind,operation,member_count,actor_name,remark,changed_at)
+            VALUES ('legacy-change','${suite.id}','ddt','add',1,'old.operator','','${now}')`);
+          await f.execute(`INSERT INTO case_suite_member_change_items
+            (change_id,case_id,case_label) VALUES ('legacy-change','legacy-case','历史用例')`);
+          const markerHistory = await readFile(
+            join(
+              migrations,
+              dialect === "sqlite"
+                ? "0104_case_suite_marker_history.sql"
+                : "0103_case_suite_marker_history.sql",
+            ),
+            "utf8",
+          );
+          for (const finish of ["ROLLBACK", "COMMIT"]) {
+            await f.execute("BEGIN");
+            await f.execute(markerHistory);
+            if (finish === "ROLLBACK")
+              await expect(
+                f.execute("INSERT INTO missing_upgrade_table VALUES(1)"),
+              ).rejects.toThrow();
+            await f.execute(finish);
+            expect((await f.suites.listMemberChanges(suite.id, undefined, 10)).items).toMatchObject(
+              [{ operation: "add", actorName: "old.operator", remark: "" }],
+            );
+            expect(
+              (await f.suites.listMemberChangeItems(suite.id, "legacy-change", undefined, 10))
+                .items,
+            ).toEqual([{ caseId: "legacy-case", caseLabel: "历史用例" }]);
+          }
         } finally {
           await f.close();
         }
@@ -136,18 +166,42 @@ for (const dialect of ["sqlite", "postgres"] as const)
         expect(
           (await f.suites.listMemberChangeItems(other.id, "change-1", undefined, 10)).items,
         ).toEqual([]);
-        const edit = { ...mutation, versionId: "markers-1", expectedRevision: populated.revision };
+        const edit = {
+          ...mutation,
+          versionId: "markers-1",
+          expectedRevision: populated.revision,
+          remark: "补充钱包用例标识",
+        };
         const foreign = { kind: "ddt" as const, memberId: "other-member", markers: ["其他任务"] };
         await expect(
           f.suites.updateMemberMarkers({ ...edit, edits: [foreign] }),
         ).rejects.toMatchObject({ code: "CASE_SUITE_MARKER_MEMBER_MISMATCH" });
-        const updated = await f.suites.updateMemberMarkers({
+        const edits = [
+          { kind: "ddt", memberId: "member-ddt", markers: ["", "支付域", "", "", "优先"] },
+          { kind: "ddt", memberId: "member-passed", markers: ["仅通过用例"] },
+        ] as const;
+        const markerEdits = edits.map((item) => ({ ...item, markers: [...item.markers] }));
+        const updated = await f.suites.updateMemberMarkers({ ...edit, edits: markerEdits });
+        const repeated = await f.suites.updateMemberMarkers({
           ...edit,
-          edits: [
-            { kind: "ddt", memberId: "member-ddt", markers: ["", "支付域", "", "", "优先"] },
-            { kind: "ddt", memberId: "member-passed", markers: ["仅通过用例"] },
-          ],
+          versionId: "marker-repeat",
+          expectedRevision: updated.revision,
+          edits: markerEdits,
         });
+        expect(repeated.revision).toBe(updated.revision);
+        const markerChanges = (
+          await f.suites.listMemberChanges(suite.id, undefined, 10)
+        ).items.filter((row) => row.operation === "markers");
+        expect(markerChanges).toMatchObject([
+          { kind: "ddt", actorName: "audit.operator", count: 2, remark: "补充钱包用例标识" },
+        ]);
+        expect(
+          (await f.suites.listMemberChangeItems(suite.id, markerChanges[0]!.id, undefined, 10))
+            .items,
+        ).toEqual([
+          { caseId: "case-ddt", caseLabel: "钱包-支付" },
+          { caseId: "case-passed", caseLabel: "钱包-通过" },
+        ]);
         await expect(
           f.suites.updateMemberMarkers({ ...edit, versionId: "stale", edits: [foreign] }),
         ).rejects.toMatchObject({ code: "CASE_SUITE_REVISION_CONFLICT" });
@@ -202,6 +256,7 @@ for (const dialect of ["sqlite", "postgres"] as const)
         const refreshed = await f.suites.updateMemberMarkers({
           ...mutation,
           versionId: "markers-after-execution",
+          remark: "更新支付复测标识",
           expectedRevision: updated.revision,
           edits: [{ kind: "ddt", memberId: "member-ddt", markers: ["导出实时值", "", "复测"] }],
         });
@@ -215,6 +270,7 @@ for (const dialect of ["sqlite", "postgres"] as const)
         const cleared = await f.suites.updateMemberMarkers({
           ...mutation,
           versionId: "markers-clear",
+          remark: "清除已完成的支付标识",
           expectedRevision: refreshed.revision,
           edits: [{ kind: "ddt", memberId: "member-ddt", markers: [""] }],
         });
@@ -227,7 +283,9 @@ for (const dialect of ["sqlite", "postgres"] as const)
         });
         const history = await f.suites.listMemberChanges(suite.id, undefined, 10);
         expect(
-          history.items.map(({ operation, count, remark }) => ({ operation, count, remark })),
+          history.items
+            .filter(({ operation }) => operation !== "markers")
+            .map(({ operation, count, remark }) => ({ operation, count, remark })),
         ).toEqual([
           { operation: "remove", count: 1, remark: "支付迁移" },
           { operation: "add", count: 2, remark: "补充支付场景" },

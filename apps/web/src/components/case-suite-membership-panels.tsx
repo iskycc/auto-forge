@@ -19,6 +19,7 @@ import {
   CASE_SUITE_MARKER_FILE_BYTES,
   CASE_SUITE_MARKER_HEADERS,
   CASE_SUITE_MARKER_TEXT_LIMIT,
+  CASE_SUITE_MEMBER_REMARK_LIMIT,
   type CaseSuiteChangedMember,
   type CaseSuiteMarkerMember,
   type CaseSuiteMemberChange,
@@ -89,6 +90,12 @@ function caseKindLabel(kind: CaseSuiteMemberKind) {
   return kind === "ddt" ? "DDT 用例" : "普通用例";
 }
 
+const changePresentation = {
+  add: { label: "新增", color: "green" },
+  remove: { label: "移除", color: "orange" },
+  markers: { label: "修改标识", color: "blue" },
+} satisfies Record<CaseSuiteMemberChange["operation"], { label: string; color: string }>;
+
 export function CaseSuiteMemberHistory({
   suiteId,
   timeZone,
@@ -114,7 +121,7 @@ export function CaseSuiteMemberHistory({
         tableLayout="fixed"
         loading={loading}
         dataSource={page?.items ?? []}
-        locale={{ emptyText: "暂无新增或移除记录" }}
+        locale={{ emptyText: "暂无用例变更记录" }}
         columns={[
           {
             title: "操作时间",
@@ -126,8 +133,8 @@ export function CaseSuiteMemberHistory({
             width: 128,
             render: (_, row) => (
               <Flex gap="small" align="center">
-                <Tag color={row.operation === "add" ? "green" : "orange"} className="!me-0">
-                  {row.operation === "add" ? "新增" : "移除"}
+                <Tag color={changePresentation[row.operation].color} className="!me-0">
+                  {changePresentation[row.operation].label}
                 </Tag>
                 {row.count.toLocaleString()} 条
               </Flex>
@@ -142,7 +149,7 @@ export function CaseSuiteMemberHistory({
             render: (name: string | null) => name ?? "系统",
           },
           {
-            title: "备注",
+            title: "操作原因",
             dataIndex: "remark",
             ellipsis: true,
             render: (remark: string) => remark || "—",
@@ -183,7 +190,7 @@ function ChangeMemberDialog({
   return (
     <Modal
       open
-      title={`${change.operation === "add" ? "新增" : "移除"}的${caseKindLabel(change.kind)}（${change.count.toLocaleString()} 条）`}
+      title={`${changePresentation[change.operation].label}${change.operation === "markers" ? " · " : "的"}${caseKindLabel(change.kind)}（${change.count.toLocaleString()} 条）`}
       onCancel={onClose}
       footer={<Button onClick={onClose}>关闭</Button>}
       width={680}
@@ -208,6 +215,10 @@ function ChangeMemberDialog({
   );
 }
 
+type MarkerSelection =
+  | { kind: "edit"; member: CaseSuiteMarkerMember; revision: number }
+  | { kind: "import"; file: File; revision: number };
+
 export function CaseSuiteMarkersDialogButton({
   suiteId,
   canManage,
@@ -221,7 +232,7 @@ export function CaseSuiteMarkersDialogButton({
   const [kind, setKind] = useState<CaseSuiteMemberKind>("standard");
   const [search, setSearch] = useState("");
   const [cursor, setCursor] = useState<string>();
-  const [selected, setSelected] = useState<{ member: CaseSuiteMarkerMember; revision: number }>();
+  const [selected, setSelected] = useState<MarkerSelection>();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string }>();
   const [reload, setReload] = useState(0);
@@ -340,9 +351,8 @@ export function CaseSuiteMarkersDialogButton({
                       setNotice({ type: "error", text: "标识表不能超过 16 MiB。" });
                       return Upload.LIST_IGNORE;
                     }
-                    const body = new FormData();
-                    body.append("file", file);
-                    void mutate({ method: "POST", body }, page.revision, true);
+                    setNotice(undefined);
+                    setSelected({ kind: "import", file, revision: page.revision });
                     return Upload.LIST_IGNORE;
                   }}
                 >
@@ -385,7 +395,7 @@ export function CaseSuiteMarkersDialogButton({
                           onClick={() => {
                             if (page) {
                               setNotice(undefined);
-                              setSelected({ member: row, revision: page.revision });
+                              setSelected({ kind: "edit", member: row, revision: page.revision });
                             }
                           }}
                         >
@@ -399,19 +409,20 @@ export function CaseSuiteMarkersDialogButton({
           />
         </Flex>
         <PageActions cursor={cursor} next={page?.nextCursor} onPage={setCursor} />
-        {selected ? (
+        {selected?.kind === "edit" ? (
           <MarkerEditor
             member={selected.member}
             busy={busy}
             error={notice?.type === "error" ? notice.text : undefined}
             onClose={() => setSelected(undefined)}
-            onSave={(markers) =>
+            onSave={(markers, remark) =>
               void mutate(
                 {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     expectedRevision: selected.revision,
+                    remark,
                     edit: {
                       kind: selected.member.kind,
                       memberId: selected.member.memberId,
@@ -423,6 +434,20 @@ export function CaseSuiteMarkersDialogButton({
                 false,
               )
             }
+          />
+        ) : null}
+        {selected?.kind === "import" ? (
+          <MarkerImportDialog
+            fileName={selected.file.name}
+            busy={busy}
+            error={notice?.type === "error" ? notice.text : undefined}
+            onClose={() => setSelected(undefined)}
+            onImport={(remark) => {
+              const body = new FormData();
+              body.append("file", selected.file);
+              body.append("remark", remark);
+              void mutate({ method: "POST", body }, selected.revision, true);
+            }}
           />
         ) : null}
       </Modal>
@@ -441,9 +466,9 @@ function MarkerEditor({
   busy: boolean;
   error?: string | undefined;
   onClose(): void;
-  onSave(values: string[]): void;
+  onSave(markers: string[], remark: string): void;
 }) {
-  const [form] = Form.useForm<{ markers: string[] }>();
+  const [form] = Form.useForm<{ markers: string[]; remark: string }>();
   return (
     <Modal
       open
@@ -465,18 +490,77 @@ function MarkerEditor({
         initialValues={{
           markers: CASE_SUITE_MARKER_HEADERS.map((_, index) => member.markers[index] ?? ""),
         }}
-        onFinish={({ markers }) => onSave(markers)}
+        onFinish={({ markers, remark }) => onSave(markers, remark)}
       >
-        {CASE_SUITE_MARKER_HEADERS.map((label, index) => (
-          <Form.Item
-            key={label}
-            name={["markers", index]}
-            label={label}
-            rules={[{ max: CASE_SUITE_MARKER_TEXT_LIMIT }]}
-          >
-            <Input maxLength={CASE_SUITE_MARKER_TEXT_LIMIT} allowClear />
-          </Form.Item>
-        ))}
+        <div className="grid grid-cols-2 gap-x-4">
+          {CASE_SUITE_MARKER_HEADERS.map((label, index) => (
+            <Form.Item
+              key={label}
+              name={["markers", index]}
+              label={label}
+              rules={[{ max: CASE_SUITE_MARKER_TEXT_LIMIT }]}
+            >
+              <Input maxLength={CASE_SUITE_MARKER_TEXT_LIMIT} allowClear />
+            </Form.Item>
+          ))}
+        </div>
+        <MarkerChangeReason />
+      </Form>
+    </Modal>
+  );
+}
+
+function MarkerChangeReason() {
+  return (
+    <Form.Item
+      name="remark"
+      label="标识变更原因"
+      rules={[{ required: true, whitespace: true, message: "请填写标识变更原因。" }]}
+    >
+      <Input.TextArea
+        rows={2}
+        maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}
+        placeholder="填写原因，将记录在用例变更记录中"
+      />
+    </Form.Item>
+  );
+}
+
+function MarkerImportDialog({
+  fileName,
+  busy,
+  error,
+  onClose,
+  onImport,
+}: {
+  fileName: string;
+  busy: boolean;
+  error?: string | undefined;
+  onClose(): void;
+  onImport(remark: string): void;
+}) {
+  const [form] = Form.useForm<{ remark: string }>();
+  return (
+    <Modal
+      open
+      title="导入用例标识"
+      okText="确认导入"
+      cancelText="取消"
+      confirmLoading={busy}
+      onCancel={() => {
+        if (!busy) onClose();
+      }}
+      onOk={() => form.submit()}
+    >
+      <Typography.Paragraph className="break-all">{fileName}</Typography.Paragraph>
+      {error ? <Alert type="error" showIcon title={error} className="mb-3" /> : null}
+      <Form
+        form={form}
+        layout="vertical"
+        disabled={busy}
+        onFinish={({ remark }) => onImport(remark)}
+      >
+        <MarkerChangeReason />
       </Form>
     </Modal>
   );

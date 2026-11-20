@@ -1,4 +1,4 @@
-import { updateCaseSuiteItemsInputSchema } from "@autoforge/contracts";
+import { caseSuiteItemSelectionSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
@@ -16,7 +16,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
   try {
     requireSameOrigin(request);
     const identity = await authenticateRequest(request);
-    const input = updateCaseSuiteItemsInputSchema.parse(
+    const input = caseSuiteItemSelectionSchema.parse(
       await readJsonBody(request, 16 * 1_024 * 1_024),
     );
     const { suiteId } = await context.params;

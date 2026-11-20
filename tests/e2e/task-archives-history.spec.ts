@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import {
@@ -13,6 +13,7 @@ import {
 import { openHistoryFixtureConnection } from "./support/history-fixture-connection";
 import { insertExecutionRecordsFixture } from "./support/execution-records-fixture";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { readExportedWorkbook } from "./support/export-workbook";
 
 async function hierarchy(page: Parameters<typeof ensureAdministrator>[0]) {
   await ensureAdministrator(page);
@@ -78,7 +79,7 @@ test("one-click Rerun archiving preserves ordinary tasks and supports browsing a
   const suiteUrl = `/api/v1/case-suites/${suites[1]!.id}`;
   const added = await browserJson(page, `${suiteUrl}/ddt-cases`, {
     method: "POST",
-    body: { testStageId: scope.testStageId, caseIds: ["归档-CASE"] },
+    body: { testStageId: scope.testStageId, caseIds: ["归档-CASE"], remark: "准备任务验证数据" },
   });
   expect(added.status).toBe(200);
   await page.goto("/case-suites");
@@ -115,11 +116,23 @@ test("one-click Rerun archiving preserves ordinary tasks and supports browsing a
     {
       path: "/ddt-cases",
       method: "POST",
-      body: { testStageId: scope.testStageId, caseIds: ["归档-CASE"] },
+      body: { testStageId: scope.testStageId, caseIds: ["归档-CASE"], remark: "准备任务验证数据" },
     },
-    { path: "/ddt-cases", method: "DELETE", body: { ddtCaseIds: [ddtId] } },
-    { path: "/cases", method: "POST", body: { caseDefinitionIds: [randomUUID()] } },
-    { path: "/cases", method: "DELETE", body: { caseDefinitionIds: [randomUUID()] } },
+    {
+      path: "/ddt-cases",
+      method: "DELETE",
+      body: { ddtCaseIds: [ddtId], remark: "准备任务验证数据" },
+    },
+    {
+      path: "/cases",
+      method: "POST",
+      body: { caseDefinitionIds: [randomUUID()], remark: "准备任务验证数据" },
+    },
+    {
+      path: "/cases",
+      method: "DELETE",
+      body: { caseDefinitionIds: [randomUUID()], remark: "准备任务验证数据" },
+    },
     {
       path: "",
       method: "PATCH",
@@ -183,12 +196,12 @@ test("one-click Rerun archiving preserves ordinary tasks and supports browsing a
   await expect(page.locator('input[name="archived"]')).not.toBeChecked();
   const removed = await browserJson(page, `${suiteUrl}/ddt-cases`, {
     method: "DELETE",
-    body: { ddtCaseIds: [ddtId] },
+    body: { ddtCaseIds: [ddtId], remark: "准备任务验证数据" },
   });
   expect(removed.status).toBe(200);
   const readded = await browserJson(page, `${suiteUrl}/ddt-cases`, {
     method: "POST",
-    body: { testStageId: scope.testStageId, caseIds: ["归档-CASE"] },
+    body: { testStageId: scope.testStageId, caseIds: ["归档-CASE"], remark: "准备任务验证数据" },
   });
   expect(readded.status).toBe(200);
   await page.goto("/case-suites");
@@ -229,7 +242,11 @@ test("manual task archiving and restoring preserves DDT members from list and de
     (
       await browserJson(page, `/api/v1/case-suites/${suiteId}/ddt-cases`, {
         method: "POST",
-        body: { testStageId: scope.testStageId, caseIds: ["手动归档-CASE"] },
+        body: {
+          testStageId: scope.testStageId,
+          caseIds: ["手动归档-CASE"],
+          remark: "准备任务验证数据",
+        },
       })
     ).status,
   ).toBe(200);
@@ -384,6 +401,40 @@ test("task locks persist and allow only the locking user to mutate configuration
   expect(created.status).toBe(201);
   const suiteId = created.body.id;
   const username = uniqueName("task-edit-peer");
+  const markerCaseId = uniqueName("lock-marker");
+  const fixture = await openHistoryFixtureConnection({
+    directory: process.env.AUTOFORGE_E2E_DATA_DIR,
+    postgresUrl: process.env.AUTOFORGE_E2E_POSTGRES_URL,
+  });
+  try {
+    const now = new Date().toISOString();
+    await fixture.execute(
+      `INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,'Wallet','wallet','standard',?,?,?)`,
+      [
+        randomUUID(),
+        scope.projectId,
+        scope.projectVersionId,
+        scope.testStageId,
+        markerCaseId,
+        markerCaseId,
+        "{}",
+        now,
+        now,
+      ],
+    );
+  } finally {
+    await fixture.close();
+  }
+  const membership = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suiteId}/ddt-cases`,
+    {
+      method: "POST",
+      body: { testStageId: scope.testStageId, caseIds: [markerCaseId], remark: "准备标识授权验证" },
+    },
+  );
+  expect(membership.status).toBe(200);
   const password = "TaskPeer!Password123";
   const peer = await browserJson<{ id: string }>(page, "/api/v1/users", {
     method: "POST",
@@ -416,7 +467,7 @@ test("task locks persist and allow only the locking user to mutate configuration
     page,
     `/api/v1/case-suites/${suiteId}?view=summary`,
   );
-  expect(locked.body.revision).toBe(created.body.revision + 1);
+  expect(locked.body.revision).toBe(membership.body.revision + 1);
   for (const theme of ["light", "dark"]) {
     await page
       .context()
@@ -459,7 +510,11 @@ test("task locks persist and allow only the locking user to mutate configuration
       [
         "POST",
         "/ddt-cases",
-        { testStageId: scope.testStageId, caseIds: Array.of("不存在也不能绕过锁") },
+        {
+          testStageId: scope.testStageId,
+          caseIds: Array.of("不存在也不能绕过锁"),
+          remark: "准备任务验证数据",
+        },
       ],
     ] as const) {
       const denied = await browserJson<{ error: { code: string } }>(
@@ -470,6 +525,43 @@ test("task locks persist and allow only the locking user to mutate configuration
       expect(denied.status).toBe(403);
       expect(denied.body.error.code).toBe("CASE_SUITE_LOCKED");
     }
+    await other.getByRole("button", { name: "用例标识", exact: true }).click();
+    const markers = other.getByRole("dialog", { name: "任务用例标识", exact: true });
+    await markers.getByRole("combobox", { name: "标识用例类型" }).click();
+    await other
+      .locator(".ant-select-dropdown:visible")
+      .getByText("DDT 用例", { exact: true })
+      .click();
+    await expect(markers).toContainText(markerCaseId);
+    await markers.getByRole("button", { name: "编辑标识", exact: true }).click();
+    const editor = other.getByRole("dialog", { name: "编辑用例标识" });
+    await editor.getByLabel("标识1", { exact: true }).fill("已核对");
+    await editor.getByLabel("标识变更原因", { exact: true }).fill("锁定期间更新核对标识");
+    await editor.getByRole("button", { name: "保存标识", exact: true }).click();
+    await expect(editor).toBeHidden();
+    await expect(markers).toContainText("已核对");
+    const downloadPromise = other.waitForEvent("download");
+    await markers.getByRole("link", { name: "导出标识", exact: true }).click();
+    const workbook = await readExportedWorkbook(
+      await readFile(await (await downloadPromise).path()),
+    );
+    workbook.getWorksheet("任务用例标识")!.getCell("C2").value = "已导入";
+    await markers.locator('input[type="file"]').setInputFiles({
+      name: "锁定任务标识.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+    });
+    const importDialog = other.getByRole("dialog", { name: "导入用例标识", exact: true });
+    await importDialog.getByLabel("标识变更原因", { exact: true }).fill("锁定期间导入复核标识");
+    await importDialog.getByRole("button", { name: "确认导入", exact: true }).click();
+    await expect(importDialog).toBeHidden();
+    await expect(markers).toContainText("已导入 1 条用例标识");
+    await markers.getByRole("button", { name: "关闭", exact: true }).last().click();
+    const change = other.getByRole("row").filter({ hasText: "锁定期间更新核对标识" });
+    await expect(change).toContainText(username);
+    await expect(change).toContainText("修改标识");
+    const imported = other.getByRole("row").filter({ hasText: "锁定期间导入复核标识" });
+    await expect(imported).toContainText(username);
     await page.goto(`/case-suites/${suiteId}`);
     await page.getByRole("button", { name: `解除锁定 ${name}`, exact: true }).click();
     const unlock = page.getByRole("dialog", { name: "解除锁定", exact: true });

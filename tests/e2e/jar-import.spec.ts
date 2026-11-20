@@ -1069,6 +1069,7 @@ public class MixedVisibleTest {
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByRole("combobox", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
+  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 
@@ -1085,7 +1086,10 @@ public class MixedVisibleTest {
     taskCaseTree.getByRole("button", { name: `移除 ${taskCase.displayName}` }),
   ).toBeVisible();
   await page.getByRole("button", { name: `移除 ${taskCase.displayName}`, exact: true }).click();
-  await acceptSystemDialog(page, "移除任务用例", "确认移除");
+  await acceptSystemDialog(page, "移除任务用例", "确认移除", {
+    label: "移除原因（必填）",
+    value: "调整任务验证范围",
+  });
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
   await page.goto("/cases");
@@ -1236,6 +1240,7 @@ public class MixedVisibleTest {
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByRole("combobox", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
+  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 

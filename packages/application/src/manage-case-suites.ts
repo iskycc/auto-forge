@@ -14,6 +14,7 @@ import type {
 } from "@autoforge/contracts";
 import {
   CASE_SUITE_DDT_MATCH_BATCH_SIZE,
+  caseSuiteMemberRemarkSchema,
   roundRecoveryCredentialSourceCursorSchema,
 } from "@autoforge/contracts";
 import {
@@ -22,6 +23,7 @@ import {
   assertCaseSuiteRevision,
   assertCaseSuiteLockOwner,
   assertCaseSuiteEditable,
+  assertCaseSuiteActive,
   assertCaseSuiteUpdateAllowed,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
@@ -39,6 +41,7 @@ import type {
   CaseCatalogRepository,
   CaseSuiteExportMemberType,
   CaseSuiteExportRow,
+  CaseSuiteMarkerWrite,
   CaseSuiteRepository,
   Clock,
   DdtRepository,
@@ -54,6 +57,7 @@ import {
 } from "./round-recovery-credentials";
 
 const CASE_SUITE_EXPORT_PAGE_SIZE = 1_000;
+type MarkerChange = Pick<CaseSuiteMarkerWrite, "expectedRevision" | "actorId" | "remark">;
 
 export class CaseSuiteService {
   constructor(
@@ -687,14 +691,13 @@ export class CaseSuiteService {
   async importMemberMarkers(
     suiteId: string,
     rows: readonly CaseSuiteMarkerImportRow[],
-    expectedRevision: number,
-    actorId: string,
+    change: MarkerChange,
     projectIds?: readonly string[],
     signal?: AbortSignal,
   ) {
     const suite = await this.getSummary(suiteId, projectIds);
-    assertCaseSuiteEditable(suite, actorId);
-    assertCaseSuiteRevision(suite.revision, expectedRevision);
+    assertCaseSuiteActive(suite);
+    assertCaseSuiteRevision(suite.revision, change.expectedRevision);
     const rowsByLabel = new Map<string, CaseSuiteMarkerImportRow>();
     for (const row of rows) {
       const previous = rowsByLabel.get(row.caseLabel);
@@ -728,25 +731,23 @@ export class CaseSuiteService {
       return edit;
     });
     signal?.throwIfAborted();
-    return this.writeMemberMarkers(suiteId, edits, expectedRevision, actorId);
+    return this.writeMemberMarkers(suiteId, edits, change);
   }
 
   async updateMemberMarkers(
     suiteId: string,
     edits: readonly CaseSuiteMarkerEdit[],
-    expectedRevision: number,
-    actorId: string,
+    change: MarkerChange,
     projectIds?: readonly string[],
   ) {
-    assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
-    return this.writeMemberMarkers(suiteId, edits, expectedRevision, actorId);
+    assertCaseSuiteActive(await this.getSummary(suiteId, projectIds));
+    return this.writeMemberMarkers(suiteId, edits, change);
   }
 
   private writeMemberMarkers(
     suiteId: string,
     edits: readonly CaseSuiteMarkerEdit[],
-    expectedRevision: number,
-    actorId: string,
+    change: MarkerChange,
   ) {
     if (
       edits.length === 0 ||
@@ -759,8 +760,8 @@ export class CaseSuiteService {
     return this.suites.updateMemberMarkers({
       suiteId,
       edits,
-      expectedRevision,
-      actorId,
+      ...change,
+      remark: caseSuiteMemberRemarkSchema.parse(change.remark),
       updatedAt: this.clock.now().toISOString(),
       versionId: this.ids.next(),
     });
@@ -800,7 +801,7 @@ export class CaseSuiteService {
         id: this.ids.next(),
         caseDefinitionId,
       })),
-      ...(remark ? { remark } : {}),
+      remark: caseSuiteMemberRemarkSchema.parse(remark),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
@@ -861,7 +862,7 @@ export class CaseSuiteService {
     return this.suites.removeCases({
       suiteId,
       caseDefinitionIds: uniqueIds,
-      ...(remark ? { remark } : {}),
+      remark: caseSuiteMemberRemarkSchema.parse(remark),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
@@ -886,7 +887,7 @@ export class CaseSuiteService {
     return this.suites.addDdtCases({
       suiteId,
       items: caseIds.map((ddtCaseId) => ({ id: this.ids.next(), ddtCaseId })),
-      ...(remark ? { remark } : {}),
+      remark: caseSuiteMemberRemarkSchema.parse(remark),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
@@ -945,7 +946,7 @@ export class CaseSuiteService {
     return this.suites.removeDdtCases({
       suiteId,
       ddtCaseIds: caseIds,
-      ...(remark ? { remark } : {}),
+      remark: caseSuiteMemberRemarkSchema.parse(remark),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),

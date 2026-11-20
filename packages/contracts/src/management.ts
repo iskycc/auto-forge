@@ -193,9 +193,11 @@ export const createCaseSuiteInputSchema = z.object({
 // 一次允许 10 万项，确保整棵大型目录能够原子加入或移除。
 export const CASE_SUITE_ITEM_MUTATION_LIMIT = 100_000;
 
-export const updateCaseSuiteItemsInputSchema = z.object({
-  remark: caseSuiteMemberRemarkSchema.optional(),
+export const caseSuiteItemSelectionSchema = z.object({
   caseDefinitionIds: z.array(z.string().min(1).max(128)).min(1).max(CASE_SUITE_ITEM_MUTATION_LIMIT),
+});
+export const updateCaseSuiteItemsInputSchema = caseSuiteItemSelectionSchema.extend({
+  remark: caseSuiteMemberRemarkSchema,
 });
 
 // 产物 glob 在控制面侧先做有界校验：拒绝绝对路径与 .. 段，Agent 侧仍会再次收紧。

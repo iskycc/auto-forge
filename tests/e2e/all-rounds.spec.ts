@@ -583,6 +583,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await page.getByLabel("页内搜索用例").fill(caseName);
     await page.getByLabel(`选择 ${caseName}`).check();
     await page.locator('select[aria-label="目标用例任务"]').selectOption(suiteId);
+    await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
     await page.getByRole("button", { name: "加入任务" }).click();
     await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
   }

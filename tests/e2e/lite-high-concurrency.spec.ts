@@ -98,7 +98,7 @@ test("two active tasks refill concurrently without schedule-batch database warni
       (
         await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
           method: "POST",
-          body: { caseDefinitionIds: caseIds },
+          body: { caseDefinitionIds: caseIds, remark: "准备任务验证数据" },
         })
       ).status,
     ).toBe(200);
@@ -220,7 +220,7 @@ test("control plane completes 500 concurrent protocol slots without blocking rea
   expect(suite.status).toBe(201);
   const added = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds },
+    body: { caseDefinitionIds, remark: "准备任务验证数据" },
   });
   expect(added.status).toBe(200);
 

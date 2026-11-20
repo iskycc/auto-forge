@@ -15,11 +15,9 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
     const { suiteId, caseDefinitionId } = await context.params;
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
-    const remark = request.body
-      ? z
-          .object({ remark: caseSuiteMemberRemarkSchema.optional() })
-          .parse(await readJsonBody(request, 8192)).remark
-      : undefined;
+    const { remark } = z
+      .object({ remark: caseSuiteMemberRemarkSchema })
+      .parse(await readJsonBody(request, 8192));
     const suite = await services.caseSuites.removeCase(
       suiteId,
       caseDefinitionId,

@@ -432,7 +432,8 @@ export function CaseSelectionTable({
       crossProjectSelection ||
       pending ||
       collecting ||
-      !selectedCasesCanManageSuite
+      !selectedCasesCanManageSuite ||
+      !addRemark.trim()
     )
       return;
     const selectedCaseIds = [...checkedCaseIds];
@@ -491,9 +492,9 @@ export function CaseSelectionTable({
       title: "从任务中排除用例",
       description: `将从「${target.name}」排除选中的 ${caseDefinitionIds.length} 个普通用例。未加入此任务的用例会自动忽略，用例库、其他任务和已有执行记录均保留。本次操作仅影响该任务后续的执行范围。`,
       confirmLabel: "确认排除",
-      inputLabel: "操作备注（可选）",
+      inputLabel: "移除原因（必填）",
       maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
-      required: false,
+      required: true,
       multiline: true,
       tone: "warning",
     });
@@ -800,8 +801,9 @@ export function CaseSelectionTable({
                 </Button>
                 <div className="w-44 shrink-0">
                   <Input
-                    aria-label="加入任务备注"
-                    placeholder="加入备注（可选）"
+                    aria-label="加入任务原因"
+                    aria-required="true"
+                    placeholder="加入原因（必填）"
                     value={addRemark}
                     maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}
                     onChange={(event) => setAddRemark(event.target.value)}
@@ -821,6 +823,7 @@ export function CaseSelectionTable({
                     collecting ||
                     crossProjectSelection ||
                     !selectedCasesCanManageSuite ||
+                    !addRemark.trim() ||
                     !effectiveSuiteId
                   }
                   onClick={addToSuite}

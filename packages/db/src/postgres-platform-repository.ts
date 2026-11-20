@@ -5,16 +5,18 @@ import type {
 } from "@autoforge/contracts";
 import type { CaseSuiteMarkerWrite } from "@autoforge/application";
 import {
-  assertSuiteMarkerTargets,
+  changedSuiteMarkerTargets,
   markerMember,
   membershipPage,
   recordSuiteMemberChange,
+  recordSuiteMarkerChanges,
   suiteMarkerMembersQuery,
   suiteMarkerTargetQuery,
   suiteMemberChangeItemsQuery,
   suiteMemberChangesQuery,
   writeSuiteMarkers,
   type StoredMarkerMember,
+  type SuiteMarkerTarget,
 } from "./case-suite-membership";
 import {
   listRejectedContactsQuery,
@@ -102,6 +104,7 @@ import {
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteActive,
   assertCaseSuiteEditable,
   assertCaseSuiteLockOwner,
   assertCaseSuiteCanArchive,
@@ -2744,28 +2747,33 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const suite = await lockPostgresSuiteMutationState(transaction, input.suiteId);
-      assertCaseSuiteEditable(suite, input.actorId);
+      assertCaseSuiteActive(suite);
       const [current] = await transaction
         .select({ revision: pgCaseSuites.revision })
         .from(pgCaseSuites)
         .where(eq(pgCaseSuites.id, input.suiteId));
       if (current?.revision !== input.expectedRevision)
         await throwPostgresSuiteConflict(transaction, input.suiteId);
+      const affected: Record<CaseSuiteMemberKind, string[]> = { standard: [], ddt: [] };
       for (const edits of batchesOf(input.edits, 200)) {
         for (const kind of ["standard", "ddt"] as const) {
           const selected = edits.filter((row) => row.kind === kind);
           if (!selected.length) continue;
-          const targets = await transaction.execute(
-            suiteMarkerTargetQuery(
-              input.suiteId,
-              kind,
-              selected.map((row) => row.memberId),
-            ),
+          const query = suiteMarkerTargetQuery(
+            input.suiteId,
+            kind,
+            selected.map((row) => row.memberId),
           );
-          assertSuiteMarkerTargets(selected, targets.rows.length);
+          const targets = (await transaction.execute(query)).rows as SuiteMarkerTarget[];
+          const changed = changedSuiteMarkerTargets(selected, targets);
+          for (const statement of writeSuiteMarkers(kind, changed))
+            await transaction.execute(statement);
+          affected[kind].push(...changed.map((row) => row.caseId));
         }
-        for (const statement of writeSuiteMarkers(edits)) await transaction.execute(statement);
       }
+      if (!affected.standard.length && !affected.ddt.length) return;
+      for (const statement of recordSuiteMarkerChanges(input, affected))
+        await transaction.execute(statement);
       await touchPostgresSuite(transaction, input.suiteId, input.actorId, input.updatedAt);
       await this.insertVersionSnapshot(
         transaction,

@@ -7,7 +7,11 @@ export const CASE_SUITE_MARKER_HEADERS = ["标识1", "标识2", "标识3", "标�
 export const CASE_SUITE_MARKER_IMPORT_LIMIT = 100_000;
 export const CASE_SUITE_MARKER_FILE_BYTES = 16 * 1024 * 1024;
 
-export const caseSuiteMemberRemarkSchema = z.string().trim().max(CASE_SUITE_MEMBER_REMARK_LIMIT);
+export const caseSuiteMemberRemarkSchema = z
+  .string({ error: "请填写操作原因。" })
+  .trim()
+  .min(1, "请填写操作原因。")
+  .max(CASE_SUITE_MEMBER_REMARK_LIMIT);
 export const caseSuiteMemberKindSchema = z.enum(["standard", "ddt"]);
 export type CaseSuiteMemberKind = z.infer<typeof caseSuiteMemberKindSchema>;
 export const caseSuiteMarkersSchema = z
@@ -36,7 +40,7 @@ export type CaseSuiteMarkerMember = CaseSuiteMarkerEdit & { caseLabel: string };
 export type CaseSuiteMemberChange = {
   id: string;
   kind: CaseSuiteMemberKind;
-  operation: "add" | "remove";
+  operation: "add" | "remove" | "markers";
   count: number;
   actorName: string | null;
   remark: string;

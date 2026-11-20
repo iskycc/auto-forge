@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DomainError, isAuthorizationDeniedError } from "@autoforge/domain";
 import {
   CASE_SUITE_MARKER_FILE_BYTES,
+  caseSuiteMemberRemarkSchema,
   DDT_IMPORT_FILE_BYTES,
   DDT_IMPORT_FILE_LIMIT,
   SR_TAG_IMPORT_MAXIMUM_BYTES,
@@ -72,14 +73,20 @@ export async function readDdtUploads(
   return uploads;
 }
 
-export function readCaseSuiteMarkerUpload(request: Request): Promise<JarUpload> {
-  return readBoundedUpload(request, CASE_SUITE_MARKER_FILE_BYTES, {
+export async function readCaseSuiteMarkerUpload(
+  request: Request,
+): Promise<JarUpload & { remark: string }> {
+  const policy: UploadPolicy = {
     missingCode: "CASE_SUITE_MARKER_FILE_REQUIRED",
     missingMessage: "请选择任务用例标识 XLSX 文件。",
     emptyCode: "CASE_SUITE_MARKER_FILE_EMPTY",
     emptyMessage: "标识表为空。",
     tooLarge: () => new DomainError("CASE_SUITE_MARKER_FILE_TOO_LARGE", "标识表不能超过 16 MiB。"),
-  });
+  };
+  const maximumBytes = CASE_SUITE_MARKER_FILE_BYTES;
+  const formData = await readBoundedUploadForm(request, maximumBytes, policy);
+  const remark = caseSuiteMemberRemarkSchema.parse(formData.get("remark"));
+  return { ...(await readUploadFile(formData, maximumBytes, policy)), remark };
 }
 
 export function readSrTagUpload(request: Request): Promise<JarUpload> {
@@ -108,8 +115,23 @@ async function readBoundedUpload(
   maximumBytes: number,
   policy: UploadPolicy,
 ): Promise<JarUpload> {
+  return readUploadFile(
+    await readBoundedUploadForm(request, maximumBytes, policy),
+    maximumBytes,
+    policy,
+  );
+}
+
+function readBoundedUploadForm(request: Request, maximumBytes: number, policy: UploadPolicy) {
   rejectOversizedUpload(request, maximumBytes, policy.tooLarge);
-  const formData = await parseMultipartFormData(request, maximumBytes, policy.tooLarge);
+  return parseMultipartFormData(request, maximumBytes, policy.tooLarge);
+}
+
+async function readUploadFile(
+  formData: FormData,
+  maximumBytes: number,
+  policy: UploadPolicy,
+): Promise<JarUpload> {
   const file = formData.get("file");
   if (!(file instanceof File)) {
     throw new DomainError(policy.missingCode, policy.missingMessage);

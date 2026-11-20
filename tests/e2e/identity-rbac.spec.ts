@@ -1073,7 +1073,7 @@ test("non-default project operator can execute while another project's viewer ca
     (
       await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [scope.classId] },
+        body: { caseDefinitionIds: [scope.classId], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);

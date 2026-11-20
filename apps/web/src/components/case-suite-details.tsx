@@ -197,9 +197,9 @@ export function CaseSuiteDetailsView({
       description: `将从当前任务中移除选中的 ${caseDefinitionIds.length} 个用例，用例库中的定义不会删除。`,
       confirmLabel: "确认移除",
       tone: "danger",
-      inputLabel: "操作备注（可选）",
+      inputLabel: "移除原因（必填）",
       maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
-      required: false,
+      required: true,
       multiline: true,
     });
     if (remark === null) return;
@@ -236,9 +236,9 @@ export function CaseSuiteDetailsView({
       description: `将从当前任务中移除选中的 ${ddtCaseIds.length} 个 DDT 用例，DDT 用例库中的数据不会删除。`,
       confirmLabel: "确认移除",
       tone: "danger",
-      inputLabel: "操作备注（可选）",
+      inputLabel: "移除原因（必填）",
       maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
-      required: false,
+      required: true,
       multiline: true,
     });
     if (remark === null) return;

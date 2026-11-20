@@ -1328,6 +1328,7 @@ export type CaseSuiteMarkerWrite = {
   suiteId: string;
   edits: readonly CaseSuiteMarkerEdit[];
   actorId: string;
+  remark: string;
   expectedRevision: number;
   updatedAt: string;
   versionId: string;

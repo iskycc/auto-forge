@@ -263,18 +263,27 @@ describe("case suite execution policy", () => {
 });
 
 describe("case suite item mutation contracts", () => {
+  it.each([undefined, "", "  \n  "])("rejects a missing or blank change reason (%j)", (remark) => {
+    expect(
+      updateCaseSuiteItemsInputSchema.safeParse({ caseDefinitionIds: ["case-1"], remark }).success,
+    ).toBe(false);
+  });
+
   it("accepts one atomic 100,000-case task mutation", () => {
     const caseDefinitionIds = Array.from({ length: 100_000 }, (_, index) => `case-${index}`);
 
     expect(
-      updateCaseSuiteItemsInputSchema.parse({ caseDefinitionIds }).caseDefinitionIds,
+      updateCaseSuiteItemsInputSchema.parse({ caseDefinitionIds, remark: "补充测试覆盖" })
+        .caseDefinitionIds,
     ).toHaveLength(100_000);
   });
 
   it("keeps the HTTP mutation payload bounded above the required scale", () => {
     const caseDefinitionIds = Array.from({ length: 100_001 }, (_, index) => `case-${index}`);
 
-    expect(() => updateCaseSuiteItemsInputSchema.parse({ caseDefinitionIds })).toThrow();
+    expect(() =>
+      updateCaseSuiteItemsInputSchema.parse({ caseDefinitionIds, remark: "补充测试覆盖" }),
+    ).toThrow();
   });
 });
 

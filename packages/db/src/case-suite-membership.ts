@@ -45,7 +45,8 @@ export function* recordSuiteMemberChange(
   yield sql`INSERT INTO case_suite_member_changes
     (id,suite_id,kind,operation,member_count,actor_id,actor_name,remark,changed_at)
     VALUES (${input.versionId},${input.suiteId},${kind},${operation},${affected.length},
-      ${actorId},COALESCE((SELECT username FROM users WHERE id=${actorId}),${actorId}),${input.remark ?? ""},${input.updatedAt})`;
+      ${actorId},COALESCE((SELECT username FROM users WHERE id=${actorId}),
+        (SELECT name FROM service_accounts WHERE id=${actorId}),${actorId}),${input.remark ?? ""},${input.updatedAt})`;
   const source = memberSources[kind];
   for (let start = 0; start < affected.length; start += 200) {
     const values = sql.join(
@@ -57,6 +58,19 @@ export function* recordSuiteMemberChange(
       SELECT ${input.versionId}, affected.id, COALESCE(${source.label},affected.id)
       FROM affected LEFT JOIN ${source.catalog} c ON c.id=affected.id`;
   }
+}
+
+export function* recordSuiteMarkerChanges(
+  input: MemberChangeWrite,
+  affected: Record<CaseSuiteMemberKind, readonly string[]>,
+): Generator<SQL> {
+  for (const kind of ["standard", "ddt"] as const)
+    yield* recordSuiteMemberChange(
+      { ...input, versionId: `${input.versionId}:${kind}` },
+      kind,
+      "markers",
+      affected[kind],
+    );
 }
 
 export function suiteMemberChangesQuery(
@@ -128,38 +142,54 @@ export function suiteMarkerTargetQuery(
   kind: CaseSuiteMemberKind,
   ids: readonly string[],
 ) {
-  return sql`SELECT id FROM ${memberSources[kind].members} WHERE suite_id=${suiteId}
-    AND id IN (${sql.join(
+  const source = memberSources[kind];
+  return sql`SELECT m.id AS "memberId",${source.caseId} AS "caseId",markers.markers_json AS "markersJson"
+    FROM ${source.members} m LEFT JOIN ${source.markers} markers ON markers.member_id=m.id
+    WHERE m.suite_id=${suiteId} AND m.id IN (${sql.join(
       ids.map((id) => sql`${id}`),
       sql`,`,
     )})`;
 }
 
-export function assertSuiteMarkerTargets(expected: readonly CaseSuiteMarkerEdit[], count: number) {
-  if (count !== expected.length)
+export type SuiteMarkerTarget = { memberId: string; caseId: string; markersJson: string | null };
+
+export function changedSuiteMarkerTargets(
+  edits: readonly CaseSuiteMarkerEdit[],
+  targets: readonly SuiteMarkerTarget[],
+): (CaseSuiteMarkerEdit & { caseId: string })[] {
+  if (targets.length !== edits.length)
     throw new DomainError(
       "CASE_SUITE_MARKER_MEMBER_MISMATCH",
       "文件包含已移除或不属于此任务的用例成员，请重新导出任务标识。",
     );
+  const editsById = new Map(edits.map((edit) => [edit.memberId, edit]));
+  return targets.flatMap(({ memberId, caseId, markersJson }) => {
+    const edit = editsById.get(memberId)!;
+    const previous = markersJson ? caseSuiteMarkersSchema.parse(JSON.parse(markersJson)) : [];
+    const changed =
+      edit.markers.some((marker, index) => marker !== (previous[index] ?? "")) ||
+      previous.slice(edit.markers.length).some(Boolean);
+    return changed ? [{ ...edit, caseId }] : [];
+  });
 }
 
-export function* writeSuiteMarkers(edits: readonly CaseSuiteMarkerEdit[]): Generator<SQL> {
-  for (const kind of ["standard", "ddt"] as const) {
-    const table = memberSources[kind].markers;
-    const kindEdits = edits.filter((edit) => edit.kind === kind);
-    const removals = kindEdits.filter((edit) => !edit.markers.some(Boolean));
-    if (removals.length)
-      yield sql`DELETE FROM ${table} WHERE member_id IN (${sql.join(
-        removals.map(({ memberId }) => sql`${memberId}`),
-        sql`,`,
-      )})`;
-    const updates = kindEdits.filter((edit) => edit.markers.some(Boolean));
-    if (updates.length)
-      yield sql`INSERT INTO ${table}(member_id,markers_json)
+export function* writeSuiteMarkers(
+  kind: CaseSuiteMemberKind,
+  edits: readonly CaseSuiteMarkerEdit[],
+): Generator<SQL> {
+  const table = memberSources[kind].markers;
+  const removals = edits.filter((edit) => !edit.markers.some(Boolean));
+  if (removals.length)
+    yield sql`DELETE FROM ${table} WHERE member_id IN (${sql.join(
+      removals.map(({ memberId }) => sql`${memberId}`),
+      sql`,`,
+    )})`;
+  const updates = edits.filter((edit) => edit.markers.some(Boolean));
+  if (updates.length)
+    yield sql`INSERT INTO ${table}(member_id,markers_json)
         VALUES ${sql.join(
           updates.map(({ memberId, markers }) => sql`(${memberId},${JSON.stringify(markers)})`),
           sql`,`,
         )}
         ON CONFLICT(member_id) DO UPDATE SET markers_json=excluded.markers_json`;
-  }
 }

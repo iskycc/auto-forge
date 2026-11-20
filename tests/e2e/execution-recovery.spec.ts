@@ -834,7 +834,7 @@ async function createExecutableFixture(page: Page, caseCount = 1): Promise<Execu
   expect(suite.status).toBe(201);
   const addition = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds },
+    body: { caseDefinitionIds, remark: "准备任务验证数据" },
   });
   expect(addition.status).toBe(200);
   return { projectId: project.body.id, suiteId: suite.body.id };

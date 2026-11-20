@@ -1770,6 +1770,7 @@ test("DDT import CaseID download identifies UTF-8 for Excel and preserves Chines
             });
           } else await route.continue();
         });
+        await addDialog.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
         await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
         await expect(addDialog).toContainText("临时写入失败，请继续重试。");
         await expect(addDialog.getByRole("status")).toContainText("5,000 / 5,001");
@@ -1799,6 +1800,7 @@ test("DDT import CaseID download identifies UTF-8 for Excel and preserves Chines
           .and(addDialog.locator("select"))
           .selectOption("new");
         await addDialog.getByLabel("新任务名称").fill("从本次导入新建任务");
+        await addDialog.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
         await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
         await expect(addDialog).not.toBeVisible();
       } else await addDialog.getByRole("button", { name: "取消", exact: true }).click();
@@ -2051,6 +2053,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     .getByLabel("目标用例任务")
     .and(suiteDialog.locator("select"))
     .selectOption(suite.id);
+  await suiteDialog.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
   await suiteDialog.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByText(`已将 1 条 DDT 用例加入任务“${suite.name}”。`)).toBeVisible();
 
@@ -2516,6 +2519,7 @@ test("DDT SR category filters union labels and add all matching pages to a task"
   const added = page.waitForResponse(
     (response) => response.url().includes("/ddt-cases") && response.request().method() === "POST",
   );
+  await dialog.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
   await dialog.getByRole("button", { name: "加入任务", exact: true }).click();
   const response = await added;
   expect(response.status()).toBe(200);
@@ -2542,6 +2546,7 @@ test("DDT SR category filters union labels and add all matching pages to a task"
       response.url().includes(`/case-suites/${createdTask.id}/ddt-cases`) &&
       response.request().method() === "POST",
   );
+  await existingDialog.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
   await existingDialog.getByRole("button", { name: "加入任务", exact: true }).click();
   const repeatedResponse = await repeated;
   expect(repeatedResponse.status()).toBe(200);
@@ -3580,7 +3585,7 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       (
         await browserJson(page, `/api/v1/case-suites/${suite.body.id}/ddt-cases`, {
           method: "POST",
-          body: { testStageId: hierarchy.stageId, caseIds: [caseId] },
+          body: { testStageId: hierarchy.stageId, caseIds: [caseId], remark: "准备任务验证数据" },
         })
       ).status,
     ).toBe(200);
@@ -3822,7 +3827,8 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
   await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
   const addDialog = page.getByRole("dialog", { name: "将 2 条 DDT 用例加入任务", exact: true });
   await expect(addDialog.locator("select")).toHaveValue(mixed.id);
-  await addDialog.getByRole("textbox", { name: "操作备注（可选）" }).fill("增加跨类型回归覆盖");
+  await expect(addDialog.getByRole("button", { name: "加入任务", exact: true })).toBeDisabled();
+  await addDialog.getByRole("textbox", { name: "加入原因（必填）" }).fill("增加跨类型回归覆盖");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 960 });
     await expectUiIntegrity(page);
@@ -3878,6 +3884,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
       });
     } else await route.continue();
   });
+  await addDialog.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
   await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
   await expect(addDialog).toContainText("添加用例暂时失败，请重试。");
   await expect(addDialog).toContainText(`任务“${pureName}”已创建`);
@@ -5325,7 +5332,11 @@ test("DDT list selection removes only matched members from the chosen task with 
       (
         await browserJson(page, `/api/v1/case-suites/${suiteId}/ddt-cases`, {
           method: "POST",
-          body: { testStageId: hierarchy.stageId, caseIds: [...caseIds] },
+          body: {
+            testStageId: hierarchy.stageId,
+            caseIds: [...caseIds],
+            remark: "准备任务验证数据",
+          },
         })
       ).status,
     ).toBe(200);
@@ -5334,7 +5345,7 @@ test("DDT list selection removes only matched members from the chosen task with 
     (
       await browserJson(page, `/api/v1/case-suites/${target.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [ordinary.id] },
+        body: { caseDefinitionIds: [ordinary.id], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);
@@ -5351,7 +5362,7 @@ test("DDT list selection removes only matched members from the chosen task with 
     (
       await browserJson(page, `/api/v1/case-suites/${target.id}/ddt-cases`, {
         method: "POST",
-        body: { testStageId: stage.body.id, caseIds: ["REMOVE-203"] },
+        body: { testStageId: stage.body.id, caseIds: ["REMOVE-203"], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);
@@ -5410,6 +5421,7 @@ test("DDT list selection removes only matched members from the chosen task with 
   await expect(confirm).toBeDisabled();
   await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
   await expect(dialog.getByRole("status")).toContainText("匹配 2 条任务成员 · 跳过 1 条");
+  await expect(confirm).toBeDisabled();
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   type Members = {
     items: Array<{ caseDefinition: { id: string } }>;
@@ -5443,7 +5455,7 @@ test("DDT list selection removes only matched members from the chosen task with 
       await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
       await expect(dialog.getByRole("status")).toContainText("匹配 2 条任务成员 · 跳过 1 条");
     }
-    await dialog.getByRole("textbox", { name: "操作备注（可选）" }).fill("排除已迁移的 DDT 用例");
+    await dialog.getByRole("textbox", { name: "移除原因（必填）" }).fill("排除已迁移的 DDT 用例");
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(page);
@@ -5625,6 +5637,7 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
   const membershipResponse = page.waitForResponse(
     (response) => response.url().includes("/ddt-cases") && response.request().method() === "POST",
   );
+  await add.getByLabel("加入原因（必填）").fill("补充 DDT 验证范围");
   await add.getByRole("button", { name: "加入任务", exact: true }).click();
   const membership = await membershipResponse;
   expect(membership.status()).toBe(200);
@@ -5937,7 +5950,7 @@ async function createDdtSuite(
   const addition = await browserJson(
     page,
     `/api/v1/case-suites/${encodeURIComponent(suite.body.id)}/cases`,
-    { method: "POST", body: { caseDefinitionIds: [caseDefinitionId] } },
+    { method: "POST", body: { caseDefinitionIds: [caseDefinitionId], remark: "准备任务验证数据" } },
   );
   expect(addition.status).toBe(200);
   return { id: suite.body.id, name };
@@ -6315,7 +6328,7 @@ test("independent SR tags persist across stages and select only matching or unta
     (
       await browserJson(page, `/api/v1/case-suites/${task.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [ordinary.id] },
+        body: { caseDefinitionIds: [ordinary.id], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);
@@ -6324,7 +6337,11 @@ test("independent SR tags persist across stages and select only matching or unta
     `/api/v1/case-suites/${task.body.id}/ddt-cases`,
     {
       method: "POST",
-      body: { testStageId: hierarchy.stageId, caseIds: rows.map((row) => row.CaseID) },
+      body: {
+        testStageId: hierarchy.stageId,
+        caseIds: rows.map((row) => row.CaseID),
+        remark: "准备任务验证数据",
+      },
     },
   );
   expect(added.status).toBe(200);
@@ -6341,7 +6358,11 @@ test("independent SR tags persist across stages and select only matching or unta
     (
       await browserJson(page, `/api/v1/case-suites/${task.body.id}/ddt-cases`, {
         method: "POST",
-        body: { testStageId: stage.body.id, caseIds: ["TAG-SECOND-STAGE"] },
+        body: {
+          testStageId: stage.body.id,
+          caseIds: ["TAG-SECOND-STAGE"],
+          remark: "准备任务验证数据",
+        },
       })
     ).status,
   ).toBe(200);
@@ -6432,7 +6453,10 @@ test("independent SR tags persist across stages and select only matching or unta
       response.request().method() === "DELETE",
   );
   await page.getByRole("button", { name: "批量移除（2）", exact: true }).click();
-  await acceptSystemDialog(page, "移除 DDT 用例", "确认移除");
+  await acceptSystemDialog(page, "移除 DDT 用例", "确认移除", {
+    label: "移除原因（必填）",
+    value: "调整任务验证范围",
+  });
   expect((await removed).status()).toBe(200);
   await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
   await page.reload();

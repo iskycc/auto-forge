@@ -3,8 +3,9 @@ import {
   caseSuiteMarkerRevisionSchema,
   caseSuiteMarkerEditSchema,
   caseSuiteMemberKindSchema,
+  caseSuiteMemberRemarkSchema,
 } from "@autoforge/contracts";
-import { DomainError, assertCaseSuiteEditable, isDomainError } from "@autoforge/domain";
+import { DomainError, assertCaseSuiteActive, isDomainError } from "@autoforge/domain";
 import { apiErrorResponse, readCaseSuiteMarkerUpload, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
@@ -21,6 +22,7 @@ const updateSchema = z
   .object({
     expectedRevision: caseSuiteMarkerRevisionSchema,
     edit: caseSuiteMarkerEditSchema,
+    remark: caseSuiteMemberRemarkSchema,
   })
   .strict();
 
@@ -57,18 +59,22 @@ async function updateMarkers(request: Request, { params }: Context, operation: "
     const { suiteId } = await params;
     const scope = services.identityAccess.projectScope(identity, "case_suite.manage");
     const suite = await services.caseSuites.getSummary(suiteId, scope);
-    assertCaseSuiteEditable(suite, identity.user.id);
+    assertCaseSuiteActive(suite);
     const input =
       operation === "edit"
         ? await readMarkerEdit(request)
         : await readMarkerImport(request, services);
     request.signal.throwIfAborted();
+    const change = {
+      expectedRevision: input.expectedRevision,
+      actorId: identity.user.id,
+      remark: input.remark,
+    };
     if ("rows" in input) {
       const updated = await services.caseSuites.importMemberMarkers(
         suiteId,
         input.rows,
-        input.expectedRevision,
-        identity.user.id,
+        change,
         scope,
         request.signal,
       );
@@ -77,8 +83,7 @@ async function updateMarkers(request: Request, { params }: Context, operation: "
     const updated = await services.caseSuites.updateMemberMarkers(
       suiteId,
       input.edits,
-      input.expectedRevision,
-      identity.user.id,
+      change,
       scope,
     );
     return Response.json({ revision: updated.revision, updatedCount: input.edits.length });
@@ -89,7 +94,7 @@ async function updateMarkers(request: Request, { params }: Context, operation: "
 
 async function readMarkerEdit(request: Request) {
   const input = updateSchema.parse(await readJsonBody(request, 16 * 1024));
-  return { expectedRevision: input.expectedRevision, edits: [input.edit] };
+  return { expectedRevision: input.expectedRevision, edits: [input.edit], remark: input.remark };
 }
 
 async function readMarkerImport(
@@ -105,6 +110,7 @@ async function readMarkerImport(
   try {
     return {
       expectedRevision,
+      remark: file.remark,
       rows: await services.parseCaseSuiteMarkers(file.content, file.fileName),
     };
   } catch (cause) {

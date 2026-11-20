@@ -353,7 +353,7 @@ test("large pages reuse browser and database snapshots and refresh after imports
     (
       await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: ids },
+        body: { caseDefinitionIds: ids, remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);

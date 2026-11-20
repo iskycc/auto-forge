@@ -65,7 +65,18 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   await page.goto(`/cases?targetSuiteId=${suite.id}`);
   const checkbox = page.getByLabel(`选择 ${className.split(".").at(-1)!}`, { exact: true });
   await checkbox.check();
-  await page.getByRole("textbox", { name: "加入任务备注", exact: true }).fill("补充钱包支付回归");
+  await expect(page.getByRole("button", { name: "加入任务", exact: true })).toBeDisabled();
+  await page.getByRole("textbox", { name: "加入任务原因", exact: true }).fill("补充钱包支付回归");
+  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(directory, { recursive: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(directory, `testng-add-reason-${width}.png`),
+      animations: "disabled",
+    });
+  }
   await page.getByRole("button", { name: "加入任务", exact: true }).click();
   await expect(page.locator(".toast-viewport")).toContainText("已将 1 个用例加入任务");
   await page.goto(`/case-suites/${suite.id}`);
@@ -84,8 +95,6 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   await expect(markers).toHaveCount(0);
   await expect(page.getByRole("button", { name: "编辑标识", exact: true })).toHaveCount(0);
   expect(markerReads).toHaveLength(0);
-  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
-  await mkdir(directory, { recursive: true });
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await opener.scrollIntoViewIfNeeded();
@@ -103,6 +112,9 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   const editor = page.getByRole("dialog", { name: "编辑用例标识" });
   await editor.getByLabel("标识2", { exact: true }).fill("Wallet · 支付");
   await editor.getByLabel("标识5", { exact: true }).fill("回归重点");
+  await editor.getByRole("button", { name: "保存标识", exact: true }).click();
+  await expect(editor).toContainText("请填写标识变更原因");
+  await editor.getByLabel("标识变更原因", { exact: true }).fill("标注钱包支付回归范围");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     await expectUiIntegrity(page);
@@ -128,6 +140,9 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   }
   await page.keyboard.press("Escape");
   await expect(markers).toBeHidden();
+  const markerChange = history.getByRole("row").filter({ hasText: "标注钱包支付回归范围" });
+  await expect(markerChange).toContainText("修改标识");
+  await expect(markerChange).toContainText(E2E_ADMIN_USERNAME);
   await expect(opener).toBeFocused();
   const readsBeforeReload = markerReads.length;
   await page.reload();
@@ -142,6 +157,11 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/任务用例标识\.xlsx$/u);
   const workbook = await readExportedWorkbook(await readFile(await download.path()));
+  const importDialog = page.getByRole("dialog", { name: "导入用例标识", exact: true });
+  async function confirmMarkerImport(reason: string) {
+    await importDialog.getByLabel("标识变更原因", { exact: true }).fill(reason);
+    await importDialog.getByRole("button", { name: "确认导入", exact: true }).click();
+  }
   const sheet = workbook.getWorksheet("任务用例标识")!;
   expect(sheet.columnCount).toBe(6);
   expect(sheet.getCell("A1").text).toBe("用例");
@@ -154,7 +174,11 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
   });
-  await expect(markers).toContainText("第 2 行的用例不在当前任务中");
+  await importDialog.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(importDialog).toContainText("请填写标识变更原因");
+  await confirmMarkerImport("验证错误用例不会修改标识");
+  await expect(importDialog).toContainText("第 2 行的用例不在当前任务中");
+  await importDialog.getByRole("button", { name: "取消", exact: true }).click();
   await expect(markers).toContainText("Wallet · 支付");
   sheet.getCell("A2").value = className;
   sheet.getCell("B2").value = "00017";
@@ -164,6 +188,7 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
   });
+  await confirmMarkerImport("更新钱包标识编号");
   await expect(markers).toContainText("已导入 1 条用例标识。");
   await expect(markers).toContainText("00017");
   await expect(markers.getByText("Wallet · 支付", { exact: true })).toHaveCount(0);
@@ -213,7 +238,7 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   }
   const joined = await browserJson(page, `${base}/ddt-cases`, {
     method: "POST",
-    body: { testStageId: project.stageId, caseIds: [ddtCaseId] },
+    body: { testStageId: project.stageId, caseIds: [ddtCaseId], remark: "准备任务验证数据" },
   });
   expect(joined.status).toBe(200);
   await page.reload();
@@ -235,6 +260,15 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(await mixed.xlsx.writeBuffer()),
   });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(directory, `task-marker-import-${width}.png`),
+      animations: "disabled",
+    });
+  }
+  await confirmMarkerImport("批量更新普通和 DDT 支付标识");
   await expect(markers).toContainText("已导入 2 条用例标识。");
   await expect(markers).toContainText("普通-回归");
   const ddtMarkers = await browserJson(page, `${base}/markers?kind=ddt`);
@@ -242,6 +276,9 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     items: [{ caseLabel: ddtCaseId, markers: ["", "", "DDT-支付", "", ""] }],
   });
   await markers.getByRole("button", { name: "关闭", exact: true }).last().click();
+  await expect(
+    history.getByRole("row").filter({ hasText: "批量更新普通和 DDT 支付标识" }),
+  ).toHaveCount(2);
 
   for (const template of ["failure-analysis", "results"]) {
     const query = new URLSearchParams({ scope: "final", template, outcomes: "failed" });
@@ -259,7 +296,8 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   await checkbox.check();
   await page.getByRole("button", { name: "从任务中排除", exact: true }).click();
   const removal = page.getByRole("dialog", { name: "从任务中排除用例", exact: true });
-  await removal.getByRole("textbox", { name: "操作备注（可选）" }).fill("换用新版支付用例");
+  await expect(removal.getByRole("button", { name: "确认排除", exact: true })).toBeDisabled();
+  await removal.getByRole("textbox", { name: "移除原因（必填）" }).fill("换用新版支付用例");
   await removal.getByRole("button", { name: "确认排除", exact: true }).click();
   await expect(removal).toBeHidden();
   await expect(page.locator(".toast-viewport")).toContainText("已从任务排除");
@@ -459,7 +497,7 @@ test("public task links execute with login only, share live status, record actor
       (
         await browserJson(visitor, `/api/v1/case-suites/${suite.id}/cases`, {
           method: "POST",
-          body: { caseDefinitionIds: [definition.id] },
+          body: { caseDefinitionIds: [definition.id], remark: "准备任务验证数据" },
         })
       ).status,
     ).toBe(403);
@@ -2583,7 +2621,10 @@ test("tasks and execution history follow the selected project version", async ({
   const crossVersionAdd = await browserJson<{ error?: { code?: string } }>(
     page,
     `/api/v1/case-suites/${encodeURIComponent(firstSuite.id)}/cases`,
-    { method: "POST", body: { caseDefinitionIds: [secondDefinition.id] } },
+    {
+      method: "POST",
+      body: { caseDefinitionIds: [secondDefinition.id], remark: "准备任务验证数据" },
+    },
   );
   expect(crossVersionAdd.status).toBe(400);
   expect(crossVersionAdd.body.error?.code).toBe("CASE_DEFINITION_VERSION_MISMATCH");
@@ -2595,6 +2636,7 @@ test("tasks and execution history follow the selected project version", async ({
   await expect(page.getByLabel(`选择 ${unassignedClassName.split(".").at(-1)!}`)).toBeVisible();
   await expect(page.getByLabel(`选择 ${firstClassName.split(".").at(-1)!}`)).toHaveCount(0);
   await page.getByLabel(`选择 ${unassignedClassName.split(".").at(-1)!}`).check();
+  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByText("已将 1 个用例加入任务。")).toBeVisible();
 
@@ -2980,7 +3022,7 @@ test("a terminal task with no failures copies its unexecuted members into a new 
     (
       await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [definitions[1]!.id] },
+        body: { caseDefinitionIds: [definitions[1]!.id], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);
@@ -3101,7 +3143,10 @@ test("terminal execution failures create a reusable task with the execution conf
     (
       await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: definitions.slice(1).map((entry) => entry.id) },
+        body: {
+          caseDefinitionIds: definitions.slice(1).map((entry) => entry.id),
+          remark: "准备任务验证数据",
+        },
       })
     ).status,
   ).toBe(200);
@@ -3542,7 +3587,7 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
     (
       await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [kept!.id] },
+        body: { caseDefinitionIds: [kept!.id], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);
@@ -3639,7 +3684,10 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
   );
   expect(archived.status).toBe(200);
   await exclude.click();
-  await acceptSystemDialog(page, "从任务中排除用例", "确认排除");
+  await acceptSystemDialog(page, "从任务中排除用例", "确认排除", {
+    label: "移除原因（必填）",
+    value: "调整任务验证范围",
+  });
   await expect(page.locator(".toast-viewport")).toContainText("归档");
   expect(await readMembers(suite.id)).toEqual([removed!.id, kept!.id].sort());
   expect(
@@ -3652,7 +3700,10 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
   ).toBe(200);
 
   await exclude.click();
-  await acceptSystemDialog(page, "从任务中排除用例", "确认排除");
+  await acceptSystemDialog(page, "从任务中排除用例", "确认排除", {
+    label: "移除原因（必填）",
+    value: "调整任务验证范围",
+  });
   await expect(page.locator(".toast-viewport")).toContainText("已从任务排除所选用例");
   await expect(exclude).toBeDisabled();
   expect(await readMembers(suite.id)).toEqual([kept!.id]);
@@ -3665,7 +3716,7 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
   }
   const repeated = await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
     method: "DELETE",
-    body: { caseDefinitionIds: [removed!.id, outside!.id] },
+    body: { caseDefinitionIds: [removed!.id, outside!.id], remark: "准备任务验证数据" },
   });
   expect(repeated.status).toBe(200);
   expect(await readMembers(suite.id)).toEqual([kept!.id]);
@@ -3680,6 +3731,7 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
     page.getByLabel(`选择 ${keepClass.split(".").at(-1)!}`, { exact: true }),
   ).toHaveCount(0);
   await removedCheckbox.check();
+  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
   await page.getByRole("button", { name: "加入任务", exact: true }).click();
   await expect(page.locator(".toast-viewport")).toContainText("已将 1 个用例加入任务");
   expect(await readMembers(suite.id)).toEqual([removed!.id, kept!.id].sort());
@@ -3720,7 +3772,10 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
   await expect(importDialog).toContainText("匹配 2 个 · 未匹配 0 个");
   await importDialog.getByRole("button", { name: "勾选匹配用例", exact: true }).click();
   await exclude.click();
-  await acceptSystemDialog(page, "从任务中排除用例", "确认排除");
+  await acceptSystemDialog(page, "从任务中排除用例", "确认排除", {
+    label: "移除原因（必填）",
+    value: "调整任务验证范围",
+  });
   await expect(exclude).toBeDisabled();
   expect(await readMembers(suite.id)).toEqual([kept!.id]);
   expect(await readMembers(otherSuite.id)).toEqual([removed!.id]);
@@ -3912,7 +3967,10 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   expect(companionDefinition).toBeTruthy();
   const addCase = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds: [definition!.id, companionDefinition!.id] },
+    body: {
+      caseDefinitionIds: [definition!.id, companionDefinition!.id],
+      remark: "准备任务验证数据",
+    },
   });
   expect(addCase.status).toBe(200);
   const runner = await registerRunner(page, suffix);
@@ -4249,7 +4307,10 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   });
   try {
     await page.getByRole("button", { name: "批量移除（2）" }).click();
-    await acceptSystemDialog(page, "移除任务用例", "确认移除");
+    await acceptSystemDialog(page, "移除任务用例", "确认移除", {
+      label: "移除原因（必填）",
+      value: "调整任务验证范围",
+    });
     await expect(page.getByText("任务中还没有用例")).toBeVisible();
   } finally {
     releaseDirectory();
@@ -4454,7 +4515,7 @@ async function createVersionSuite(
   const cases = await browserJson(
     page,
     `/api/v1/case-suites/${encodeURIComponent(suite.body.id)}/cases`,
-    { method: "POST", body: { caseDefinitionIds: [caseDefinitionId] } },
+    { method: "POST", body: { caseDefinitionIds: [caseDefinitionId], remark: "准备任务验证数据" } },
   );
   expect(cases.status).toBe(200);
   return suite.body;
@@ -4597,7 +4658,7 @@ test("unlimited retry configuration preserves large counts, stop conditions and 
   const suiteId = response.body.id;
   const added = await browserJson(page, `/api/v1/case-suites/${suiteId}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds: [definition.id] },
+    body: { caseDefinitionIds: [definition.id], remark: "准备任务验证数据" },
   });
   expect(added.status).toBe(200);
   const runner = await registerRunner(page, suffix);

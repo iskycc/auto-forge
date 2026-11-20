@@ -5,16 +5,18 @@ import type {
 } from "@autoforge/contracts";
 import type { CaseSuiteMarkerWrite } from "@autoforge/application";
 import {
-  assertSuiteMarkerTargets,
+  changedSuiteMarkerTargets,
   markerMember,
   membershipPage,
   recordSuiteMemberChange,
+  recordSuiteMarkerChanges,
   suiteMarkerMembersQuery,
   suiteMarkerTargetQuery,
   suiteMemberChangeItemsQuery,
   suiteMemberChangesQuery,
   writeSuiteMarkers,
   type StoredMarkerMember,
+  type SuiteMarkerTarget,
 } from "./case-suite-membership";
 import {
   failureSuiteMemberQuery,
@@ -56,6 +58,7 @@ import type {
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteActive,
   assertCaseSuiteEditable,
   assertCaseSuiteLockOwner,
   assertCaseSuiteCanArchive,
@@ -813,7 +816,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
   async updateMemberMarkers(input: CaseSuiteMarkerWrite): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
       const suite = this.suiteMutationState(input.suiteId);
-      assertCaseSuiteEditable(suite, input.actorId);
+      assertCaseSuiteActive(suite);
       const current = this.handle.db
         .select({ revision: caseSuites.revision })
         .from(caseSuites)
@@ -821,21 +824,25 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         .get();
       if (current?.revision !== input.expectedRevision)
         throwCaseSuiteConflict(this.handle, input.suiteId);
+      const affected: Record<CaseSuiteMemberKind, string[]> = { standard: [], ddt: [] };
       for (const edits of batchesOf(input.edits, 200)) {
         for (const kind of ["standard", "ddt"] as const) {
           const selected = edits.filter((row) => row.kind === kind);
           if (!selected.length) continue;
-          const targets = this.handle.db.all(
-            suiteMarkerTargetQuery(
-              input.suiteId,
-              kind,
-              selected.map((row) => row.memberId),
-            ),
+          const query = suiteMarkerTargetQuery(
+            input.suiteId,
+            kind,
+            selected.map((row) => row.memberId),
           );
-          assertSuiteMarkerTargets(selected, targets.length);
+          const targets = this.handle.db.all<SuiteMarkerTarget>(query);
+          const changed = changedSuiteMarkerTargets(selected, targets);
+          for (const statement of writeSuiteMarkers(kind, changed)) this.handle.db.run(statement);
+          affected[kind].push(...changed.map((row) => row.caseId));
         }
-        for (const statement of writeSuiteMarkers(edits)) this.handle.db.run(statement);
       }
+      if (!affected.standard.length && !affected.ddt.length) return;
+      for (const statement of recordSuiteMarkerChanges(input, affected))
+        this.handle.db.run(statement);
       this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
       this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.markers.update", input);
     });

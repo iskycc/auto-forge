@@ -550,6 +550,7 @@ async function addOrdinaryCaseToSuite(
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).first().check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
+  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
     "已将 1 个用例加入任务",
@@ -808,6 +809,7 @@ async function addDdtCaseToSuite(
     .getByLabel("目标用例任务")
     .and(suiteDialog.locator("select"))
     .selectOption(suiteId);
+  await suiteDialog.getByLabel("加入原因（必填）").fill("验证 DDT 流水线");
   await suiteDialog.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByText(`已将 1 条 DDT 用例加入任务“${ddtSuiteName}”。`)).toBeVisible();
 }

@@ -269,13 +269,13 @@ export const ddtExecutionMappingListInputSchema = z.object({
 });
 
 export const addCaseSuiteDdtItemsInputSchema = z.object({
-  remark: caseSuiteMemberRemarkSchema.optional(),
+  remark: caseSuiteMemberRemarkSchema,
   testStageId: z.string().min(1).max(128),
   caseIds: z.array(z.string().min(1).max(512)).min(1).max(100_000),
 });
 
 export const removeCaseSuiteDdtItemsInputSchema = z.object({
-  remark: caseSuiteMemberRemarkSchema.optional(),
+  remark: caseSuiteMemberRemarkSchema,
   ddtCaseIds: z.array(z.string().min(1).max(128)).min(1).max(100_000),
 });
 

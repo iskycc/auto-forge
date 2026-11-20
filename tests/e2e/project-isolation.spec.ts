@@ -258,7 +258,7 @@ async function addCaseToSuite(
 ): Promise<void> {
   const response = await browserJson(page, `/api/v1/case-suites/${suiteId}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds: [caseDefinitionId] },
+    body: { caseDefinitionIds: [caseDefinitionId], remark: "准备任务验证数据" },
   });
   expect(response.status).toBe(200);
 }

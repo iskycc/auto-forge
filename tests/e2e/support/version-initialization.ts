@@ -155,7 +155,7 @@ export async function seedInitializationSource(page: Page, projectId: string) {
     (
       await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [classId] },
+        body: { caseDefinitionIds: [classId], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);
@@ -163,7 +163,7 @@ export async function seedInitializationSource(page: Page, projectId: string) {
     (
       await browserJson(page, `/api/v1/case-suites/${suite.body.id}/ddt-cases`, {
         method: "POST",
-        body: { testStageId: stage.body.id, caseIds: ["PAY-1"] },
+        body: { testStageId: stage.body.id, caseIds: ["PAY-1"], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);

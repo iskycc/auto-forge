@@ -168,7 +168,7 @@ test("TestNG directories remain browsable during a running task and a deferred r
     (
       await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: caseIds },
+        body: { caseDefinitionIds: caseIds, remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);

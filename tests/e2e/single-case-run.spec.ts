@@ -344,7 +344,7 @@ test("log detail reruns a completed case from an active 501-case batch and its m
   });
   const members = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds },
+    body: { caseDefinitionIds, remark: "准备任务验证数据" },
   });
   expect(members.status).toBe(200);
   const sourceBatch = await createTaskRun(page, suite.body.id);
@@ -710,7 +710,7 @@ test("version execution API authenticates calls and separates single results fro
     (
       await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: [caseDefinitionId] },
+        body: { caseDefinitionIds: [caseDefinitionId], remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);

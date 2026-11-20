@@ -35,6 +35,10 @@ export function assertCaseSuiteEditable(
   actorId?: string,
 ): void {
   assertCaseSuiteLockOwner(suite, actorId);
+  assertCaseSuiteActive(suite);
+}
+
+export function assertCaseSuiteActive(suite: Pick<CaseSuite, "status"> | undefined): void {
   if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
   if (suite.status === "archived")
     throw new DomainError("CASE_SUITE_ARCHIVED", "任务已归档，不能变更用例或配置，请先恢复任务。");

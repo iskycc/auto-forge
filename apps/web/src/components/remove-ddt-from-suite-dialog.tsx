@@ -89,7 +89,7 @@ export function RemoveDdtFromSuiteDialog({
   }
 
   async function removeMembers() {
-    if (!target || !preview?.items.length || working) return;
+    if (!target || !preview?.items.length || working || !remark.trim()) return;
     setWorking("remove");
     setError("");
     try {
@@ -165,7 +165,7 @@ export function RemoveDdtFromSuiteDialog({
           <Button
             type="button"
             variant="destructive"
-            disabled={!target || !preview?.items.length || Boolean(working)}
+            disabled={!target || !preview?.items.length || Boolean(working) || !remark.trim()}
             loading={working === "remove"}
             onClick={() => void removeMembers()}
           >
@@ -193,9 +193,10 @@ export function RemoveDdtFromSuiteDialog({
           />
         </label>
         <label className="grid min-w-0 gap-2">
-          <span>操作备注（可选）</span>
+          <span>移除原因（必填）</span>
           <Input.TextArea
-            aria-label="操作备注（可选）"
+            aria-label="移除原因（必填）"
+            aria-required="true"
             rows={2}
             value={remark}
             maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}

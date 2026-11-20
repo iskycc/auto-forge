@@ -339,7 +339,7 @@ async function prepareCases(page: Page) {
     (
       await browserJson(page, `/api/v1/case-suites/${created.body.id}/cases`, {
         method: "POST",
-        body: { caseDefinitionIds: caseIds },
+        body: { caseDefinitionIds: caseIds, remark: "准备任务验证数据" },
       })
     ).status,
   ).toBe(200);

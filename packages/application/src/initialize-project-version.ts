@@ -238,7 +238,9 @@ export class VersionInitializationService {
       await suites.findMemberCaseDefinitionIds(targetSuiteId, uniqueCaseIds),
     );
     const additions = uniqueCaseIds.filter((id) => !existingCases.has(id));
-    if (additions.length) await caseSuites.addCases(targetSuiteId, additions, actorId, [projectId]);
+    const remark = "版本初始化继承任务用例";
+    if (additions.length)
+      await caseSuites.addCases(targetSuiteId, additions, actorId, [projectId], remark);
     result.inheritedCount += additions.length;
     result.skippedCount += existingCases.size + caseIds.length - uniqueCaseIds.length;
     const ddtCandidates = new Map<string, { stageId: string; caseId: string }>();
@@ -268,7 +270,7 @@ export class VersionInitializationService {
       ddtAdditions.set(candidate.stageId, group);
     }
     for (const [stageId, caseIds] of ddtAdditions)
-      await caseSuites.addDdtCases(targetSuiteId, stageId, caseIds, actorId, [projectId]);
+      await caseSuites.addDdtCases(targetSuiteId, stageId, caseIds, actorId, [projectId], remark);
     result.inheritedCount += ddtCandidates.size - existingDdt.size;
     result.skippedCount += existingDdt.size;
     if (page.items.length === MEMBER_PAGE_SIZE || page.ddtItems?.length === MEMBER_PAGE_SIZE)
