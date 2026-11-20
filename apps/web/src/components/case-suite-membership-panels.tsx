@@ -33,10 +33,12 @@ import { useConcurrentModificationFeedback } from "./concurrent-modification-fee
 function useMembershipPage<T extends CaseSuiteMembershipPage<unknown>>(
   url: string,
   revision: number,
+  enabled = true,
 ) {
   const [reply, setReply] = useState<{ key: string; page?: T; error?: string }>();
   const key = `${revision}:${url}`;
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     async function load() {
       try {
@@ -54,7 +56,7 @@ function useMembershipPage<T extends CaseSuiteMembershipPage<unknown>>(
     }
     void load();
     return () => controller.abort();
-  }, [url, key]);
+  }, [url, key, enabled]);
   return {
     page: reply?.key === key ? reply.page : undefined,
     error: reply?.key === key ? reply.error : undefined,
@@ -206,7 +208,7 @@ function ChangeMemberDialog({
   );
 }
 
-export function CaseSuiteMarkersPanel({
+export function CaseSuiteMarkersDialogButton({
   suiteId,
   canManage,
 }: {
@@ -215,6 +217,7 @@ export function CaseSuiteMarkersPanel({
 }) {
   const { revision, acceptMutation } = useCaseSuiteRevision();
   const showConcurrentModification = useConcurrentModificationFeedback();
+  const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<CaseSuiteMemberKind>("standard");
   const [search, setSearch] = useState("");
   const [cursor, setCursor] = useState<string>();
@@ -226,7 +229,12 @@ export function CaseSuiteMarkersPanel({
   const query = new URLSearchParams({ kind, search, ...(cursor ? { cursor } : {}) });
   const { page, error, loading } = useMembershipPage<
     CaseSuiteMembershipPage<CaseSuiteMarkerMember> & { revision: number }
-  >(`${route}?${query}`, revision + reload);
+  >(`${route}?${query}`, revision + reload, open);
+  const closeDisabled = busy || selected !== undefined;
+
+  function closeDialog() {
+    if (!closeDisabled) setOpen(false);
+  }
 
   async function mutate(request: RequestInit, expectedRevision: number, importing: boolean) {
     setBusy(true);
@@ -258,135 +266,167 @@ export function CaseSuiteMarkersPanel({
     }
   }
   return (
-    <Card title="任务用例标识">
-      <Flex vertical gap="middle">
-        <Typography.Text type="secondary">
-          每个用例可填写五个标识。执行时保存标识，失败分析表按实际有值的列导出。
-        </Typography.Text>
-        <Flex justify="space-between" align="center" gap="small" wrap>
-          <Flex gap="small" wrap align="center">
-            <Select
-              aria-label="标识用例类型"
-              value={kind}
-              options={[
-                { value: "standard", label: "普通用例" },
-                { value: "ddt", label: "DDT 用例" },
-              ]}
-              onChange={(value) => {
-                setKind(value);
-                setCursor(undefined);
-              }}
-            />
-            <Input.Search
-              aria-label="搜索标识用例"
-              placeholder="搜索类路径 / CaseID"
-              allowClear
-              onSearch={(value) => {
-                setSearch(value.trim());
-                setCursor(undefined);
-              }}
-              className="!w-56"
-            />
-          </Flex>
-          <Flex gap="small" wrap>
-            <Button href={`${route}/export`}>导出标识</Button>
-            {canManage ? (
-              <Upload
-                accept=".xlsx"
-                maxCount={1}
-                showUploadList={false}
-                disabled={busy || !page}
-                beforeUpload={(file) => {
-                  if (!page) return Upload.LIST_IGNORE;
-                  if (file.size > CASE_SUITE_MARKER_FILE_BYTES) {
-                    setNotice({ type: "error", text: "标识表不能超过 16 MiB。" });
-                    return Upload.LIST_IGNORE;
-                  }
-                  const body = new FormData();
-                  body.append("file", file);
-                  void mutate({ method: "POST", body }, page.revision, true);
-                  return Upload.LIST_IGNORE;
+    <>
+      <Button
+        aria-haspopup="dialog"
+        className="!h-9"
+        color="default"
+        variant="filled"
+        onClick={() => {
+          setNotice(undefined);
+          setReload((value) => value + 1);
+          setOpen(true);
+        }}
+      >
+        用例标识
+      </Button>
+      <Modal
+        open={open}
+        title="任务用例标识"
+        width={980}
+        centered
+        destroyOnHidden
+        closable={!closeDisabled}
+        keyboard={!closeDisabled}
+        mask={{ closable: false }}
+        onCancel={closeDialog}
+        footer={
+          <Button onClick={closeDialog} disabled={closeDisabled}>
+            关闭
+          </Button>
+        }
+      >
+        <Flex vertical gap="middle">
+          <Typography.Text type="secondary">
+            每个用例可填写五个标识。执行时保存标识，失败分析表按实际有值的列导出。
+          </Typography.Text>
+          <Flex justify="space-between" align="center" gap="small" wrap>
+            <Flex gap="small" wrap align="center">
+              <Select
+                aria-label="标识用例类型"
+                value={kind}
+                options={[
+                  { value: "standard", label: "普通用例" },
+                  { value: "ddt", label: "DDT 用例" },
+                ]}
+                onChange={(value) => {
+                  setKind(value);
+                  setCursor(undefined);
                 }}
-              >
-                <Button loading={busy && !selected} disabled={busy || !page}>
-                  导入标识
-                </Button>
-              </Upload>
-            ) : null}
+              />
+              <Input.Search
+                aria-label="搜索标识用例"
+                placeholder="搜索类路径 / CaseID"
+                defaultValue={search}
+                allowClear
+                onSearch={(value) => {
+                  setSearch(value.trim());
+                  setCursor(undefined);
+                }}
+                className="!w-56"
+              />
+            </Flex>
+            <Flex gap="small" wrap>
+              <Button href={`${route}/export`}>导出标识</Button>
+              {canManage ? (
+                <Upload
+                  accept=".xlsx"
+                  maxCount={1}
+                  showUploadList={false}
+                  disabled={busy || !page}
+                  beforeUpload={(file) => {
+                    if (!page) return Upload.LIST_IGNORE;
+                    if (file.size > CASE_SUITE_MARKER_FILE_BYTES) {
+                      setNotice({ type: "error", text: "标识表不能超过 16 MiB。" });
+                      return Upload.LIST_IGNORE;
+                    }
+                    const body = new FormData();
+                    body.append("file", file);
+                    void mutate({ method: "POST", body }, page.revision, true);
+                    return Upload.LIST_IGNORE;
+                  }}
+                >
+                  <Button loading={busy && !selected} disabled={busy || !page}>
+                    导入标识
+                  </Button>
+                </Upload>
+              ) : null}
+            </Flex>
           </Flex>
+          {notice && !selected ? <Alert type={notice.type} showIcon title={notice.text} /> : null}
+          {error ? <Alert type="error" title={error} /> : null}
+          <Table<CaseSuiteMarkerMember>
+            rowKey="memberId"
+            size="small"
+            pagination={false}
+            tableLayout="fixed"
+            scroll={{ y: "min(42vh, 460px)" }}
+            loading={loading}
+            dataSource={page?.items ?? []}
+            locale={{ emptyText: "没有匹配的任务用例" }}
+            columns={[
+              { title: "类路径 / CaseID", dataIndex: "caseLabel", ellipsis: true },
+              ...CASE_SUITE_MARKER_HEADERS.map((title, index) => ({
+                title,
+                width: "11%",
+                ellipsis: true,
+                render: (_: unknown, row: CaseSuiteMarkerMember) => row.markers[index] || "—",
+              })),
+              ...(canManage
+                ? [
+                    {
+                      title: "操作",
+                      width: 88,
+                      render: (_: unknown, row: CaseSuiteMarkerMember) => (
+                        <Button
+                          type="link"
+                          size="small"
+                          disabled={!page || busy}
+                          onClick={() => {
+                            if (page) {
+                              setNotice(undefined);
+                              setSelected({ member: row, revision: page.revision });
+                            }
+                          }}
+                        >
+                          编辑标识
+                        </Button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         </Flex>
-        {notice && !selected ? <Alert type={notice.type} showIcon title={notice.text} /> : null}
-        {error ? <Alert type="error" title={error} /> : null}
-        <Table<CaseSuiteMarkerMember>
-          rowKey="memberId"
-          size="small"
-          pagination={false}
-          tableLayout="fixed"
-          loading={loading}
-          dataSource={page?.items ?? []}
-          locale={{ emptyText: "没有匹配的任务用例" }}
-          columns={[
-            { title: "类路径 / CaseID", dataIndex: "caseLabel", ellipsis: true },
-            ...CASE_SUITE_MARKER_HEADERS.map((title, index) => ({
-              title,
-              width: "11%",
-              ellipsis: true,
-              render: (_: unknown, row: CaseSuiteMarkerMember) => row.markers[index] || "—",
-            })),
-            ...(canManage
-              ? [
-                  {
-                    title: "操作",
-                    width: 88,
-                    render: (_: unknown, row: CaseSuiteMarkerMember) => (
-                      <Button
-                        type="link"
-                        size="small"
-                        disabled={!page || busy}
-                        onClick={() => {
-                          if (page) {
-                            setNotice(undefined);
-                            setSelected({ member: row, revision: page.revision });
-                          }
-                        }}
-                      >
-                        编辑标识
-                      </Button>
-                    ),
-                  },
-                ]
-              : []),
-          ]}
-        />
-      </Flex>
-      <PageActions cursor={cursor} next={page?.nextCursor} onPage={setCursor} />
-      {selected ? (
-        <MarkerEditor
-          member={selected.member}
-          busy={busy}
-          error={notice?.type === "error" ? notice.text : undefined}
-          onClose={() => setSelected(undefined)}
-          onSave={(markers) =>
-            void mutate(
-              {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  expectedRevision: selected.revision,
-                  edit: {
-                    kind: selected.member.kind,
-                    memberId: selected.member.memberId,
-                    markers,
-                  },
-                }),
-              },
-              selected.revision,
-              false,
-            )
-          }
-        />
-      ) : null}
-    </Card>
+        <PageActions cursor={cursor} next={page?.nextCursor} onPage={setCursor} />
+        {selected ? (
+          <MarkerEditor
+            member={selected.member}
+            busy={busy}
+            error={notice?.type === "error" ? notice.text : undefined}
+            onClose={() => setSelected(undefined)}
+            onSave={(markers) =>
+              void mutate(
+                {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    expectedRevision: selected.revision,
+                    edit: {
+                      kind: selected.member.kind,
+                      memberId: selected.member.memberId,
+                      markers,
+                    },
+                  }),
+                },
+                selected.revision,
+                false,
+              )
+            }
+          />
+        ) : null}
+      </Modal>
+    </>
   );
 }
 

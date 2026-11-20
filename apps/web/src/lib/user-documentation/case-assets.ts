@@ -278,7 +278,7 @@ export const caseAssetGuides: readonly DocumentationArticle[] = [
       caption: "任务保存未来执行的配置；每次执行留下独立记录，之后修改任务不会改写旧批次。",
       nodes: [
         { title: "创建任务", detail: "命名并选择范围" },
-        { title: "维护成员", detail: "增删备注 · 用例标识" },
+        { title: "维护成员", detail: "增删备注 · 标识浮窗" },
         { title: "保存策略", detail: "节点 · 并发 · 重跑" },
         { title: "创建执行", detail: "独立保留历史" },
       ],
@@ -316,12 +316,12 @@ export const caseAssetGuides: readonly DocumentationArticle[] = [
           {
             title: "编辑任务用例标识",
             detail:
-              "在“用例标识”选择普通用例或 DDT，按类路径或 CaseID 查找。每个成员可填写标识1到标识5，每个标识最多 120 个字符。",
+              "点击任务详情分区栏的“用例标识”打开浮窗。选择普通用例或 DDT 后按类路径或 CaseID 查找。每个成员可填写标识1到标识5，每个标识最多 120 个字符。",
           },
           {
             title: "批量导入与导出",
             detail:
-              "先导出任务标识 XLSX，保留表头、用例类型和成员 ID，修改五个标识列后导入同一任务。文件中保留的行会应用其标识内容，空单元格清空该位置；省略的行保留原值。",
+              "在浮窗中点击“导出标识”，保留 XLSX 表头、用例类型和成员 ID。修改标识列后用“导入标识”导入同一任务。文件中保留的行会应用其标识内容，空单元格清空该位置；省略的行保留原值。",
           },
         ],
         paragraphs: [

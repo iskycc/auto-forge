@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+## 1.23.4 - 2026-11-20
+
+### Changed
+
+- 任务详情通过分区栏的“用例标识”按钮打开浮窗，按需加载标识列表。查看、编辑及 XLSX 导入导出均可在浮窗完成。
+
+### Compatibility
+
+- Lite 和 Full 共用此改动，沿用现有数据库、配置、Runner 协议和 Jenkins 插件返回字段。
+
+### Verification
+
+- Lite、Full 各通过一项定向 Playwright 回归，覆盖标识编辑、XLSX 导入导出、失败分析表及键盘操作。已审查 1024×768 和 1536×960 的任务详情、浮窗及说明文档截图。
+- 20 项定向单元测试、Web 生产构建、测试类型检查、变更 ESLint 和格式检查通过。此版本按快速路径仅运行 Release，完整源码检查及发布后验收未运行。
+
 ## 1.23.3 - 2026-11-20
 
 ### Added

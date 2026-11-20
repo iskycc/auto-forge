@@ -55,6 +55,13 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   expect(result.status).toBe(201);
   const suite = result.body;
   const base = `/api/v1/case-suites/${suite.id}`;
+  const markerReads: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "GET" && url.pathname === `${base}/markers`) {
+      markerReads.push(url.search);
+    }
+  });
   await page.goto(`/cases?targetSuiteId=${suite.id}`);
   const checkbox = page.getByLabel(`选择 ${className.split(".").at(-1)!}`, { exact: true });
   await checkbox.check();
@@ -70,13 +77,32 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   await expect(audited).toContainText(className);
   await audited.getByRole("button", { name: "关闭", exact: true }).last().click();
 
-  const markers = page.locator("#suite-markers");
+  const opener = page
+    .getByRole("navigation", { name: "任务分区" })
+    .getByRole("button", { name: "用例标识", exact: true });
+  const markers = page.getByRole("dialog", { name: "任务用例标识", exact: true });
+  await expect(markers).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "编辑标识", exact: true })).toHaveCount(0);
+  expect(markerReads).toHaveLength(0);
+  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(directory, { recursive: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await opener.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(directory, `task-marker-entry-${width}.png`),
+      animations: "disabled",
+    });
+  }
+  await opener.focus();
+  await opener.press("Enter");
+  await expect(markers).toContainText(className);
+  expect(markerReads).toHaveLength(1);
   await markers.getByRole("button", { name: "编辑标识", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "编辑用例标识" });
   await editor.getByLabel("标识2", { exact: true }).fill("Wallet · 支付");
   await editor.getByLabel("标识5", { exact: true }).fill("回归重点");
-  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
-  await mkdir(directory, { recursive: true });
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     await expectUiIntegrity(page);
@@ -86,14 +112,36 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     });
   }
   await editor.getByRole("button", { name: "保存标识", exact: true }).click();
+  await expect(editor).toBeHidden();
   await expect(markers).toContainText("用例标识已保存");
   await expect(markers).toContainText("回归重点");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await expect(
+      markers.getByRole("button", { name: "关闭", exact: true }).last(),
+    ).toBeInViewport();
+    await page.screenshot({
+      path: resolve(directory, `task-marker-list-${width}.png`),
+      animations: "disabled",
+    });
+  }
+  await page.keyboard.press("Escape");
+  await expect(markers).toBeHidden();
+  await expect(opener).toBeFocused();
+  const readsBeforeReload = markerReads.length;
   await page.reload();
+  await expect(opener).toBeVisible();
+  await expect(markers).toHaveCount(0);
+  expect(markerReads).toHaveLength(readsBeforeReload);
+  await opener.click();
   await expect(markers).toContainText("Wallet · 支付");
 
-  const response = await page.request.get(`${base}/markers/export`);
-  expect(response.status()).toBe(200);
-  const workbook = await readExportedWorkbook(await response.body());
+  const downloadPromise = page.waitForEvent("download");
+  await markers.getByRole("link", { name: "导出标识", exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/任务用例标识\.xlsx$/u);
+  const workbook = await readExportedWorkbook(await readFile(await download.path()));
   const sheet = workbook.getWorksheet("任务用例标识")!;
   expect(sheet.getCell("C2").text).toBe(className);
   expect(sheet.getCell("E2").text).toBe("Wallet · 支付");
@@ -107,6 +155,8 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   await expect(markers).toContainText("已导入 1 条用例标识。");
   await expect(markers).toContainText("00017");
   await expect(markers.getByText("Wallet · 支付", { exact: true })).toHaveCount(0);
+  await markers.getByRole("button", { name: "关闭", exact: true }).last().click();
+  await expect(markers).toBeHidden();
 
   const runner = await registerRunner(page, suffix);
   await configureTaskExecution(page, suite.id, runner.id);
@@ -138,7 +188,9 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   await page.goto(`/case-suites/${suite.id}`);
   await expect(history).toContainText("换用新版支付用例");
   await expect(history).toContainText("补充钱包支付回归");
+  await opener.click();
   await expect(markers).toContainText("没有匹配的任务用例");
+  await markers.getByRole("button", { name: "关闭", exact: true }).last().click();
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     await history.scrollIntoViewIfNeeded();
