@@ -11,6 +11,7 @@ import { basename, resolve } from "node:path";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { buildExportWorkbook } from "../../packages/ddt-import/src";
 import {
+  addSelectedTestngCasesToTask,
   browserJson,
   ensureAdministrator,
   selectProjectContext,
@@ -550,8 +551,7 @@ async function addOrdinaryCaseToSuite(
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).first().check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
     "已将 1 个用例加入任务",
   );

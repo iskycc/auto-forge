@@ -6,7 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { ensureAdministrator } from "./support/session";
+import { addSelectedTestngCasesToTask, ensureAdministrator } from "./support/session";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -252,8 +252,7 @@ async function createContainerSuite(
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
     "已将 1 个用例加入任务",
   );

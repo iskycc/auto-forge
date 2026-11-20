@@ -26,7 +26,7 @@ export const caseAssetGuides: readonly DocumentationArticle[] = [
         { title: "上传 JAR", detail: "核对项目范围" },
         { title: "扫描与确认", detail: "查看用例及警告" },
         { title: "筛选与勾选", detail: "目录 · 搜索 · 清单" },
-        { title: "加入任务", detail: "保存成员范围" },
+        { title: "加入任务", detail: "核对数量并填写原因" },
       ],
     },
     sections: [
@@ -58,7 +58,8 @@ export const caseAssetGuides: readonly DocumentationArticle[] = [
         id: "task-members",
         title: "加入任务与从任务排除",
         paragraphs: [
-          "勾选用例后选择目标任务，执行加入或排除。排除仅改变该任务未来的用例范围，不删除用例或已有执行历史。",
+          "勾选用例或点击“勾选匹配用例”后，选择目标任务并点击“加入任务”。弹窗会显示任务名称和选中数量，填写必填的加入原因后点击“确认加入”。取消会保留当前勾选。原因和操作人会记录在任务详情中。",
+          "点击“从任务中排除”，填写原因后确认。排除仅改变该任务未来的用例范围，不删除用例或已有执行历史。",
           "已归档任务不可变更；他人锁定的任务不能由你修改范围。需要调整时，请先由有权用户恢复任务或解除锁定，再操作。",
         ],
       },

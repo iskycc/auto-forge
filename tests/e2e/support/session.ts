@@ -25,6 +25,14 @@ export async function acceptSystemDialog(
   await expect(dialog).toHaveCount(0);
 }
 
+export async function addSelectedTestngCasesToTask(page: Page, reason: string): Promise<void> {
+  await page.getByRole("button", { name: "加入任务", exact: true }).click();
+  await acceptSystemDialog(page, "将普通用例加入任务", "确认加入", {
+    label: "加入任务原因（必填）",
+    value: reason,
+  });
+}
+
 export async function ensureAdministrator(page: Page): Promise<void> {
   // Decide through the public setup-status API instead of the /login page:
   // while setup is required, /login answers 200 and only redirects to /setup

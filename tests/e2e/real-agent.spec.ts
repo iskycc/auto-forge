@@ -8,7 +8,7 @@ import { basename, join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { appAlert, ensureAdministrator } from "./support/session";
+import { addSelectedTestngCasesToTask, appAlert, ensureAdministrator } from "./support/session";
 import { selectJarForInspection } from "./support/jar-import";
 import { expectTerminalTabCompletion, sendTerminalInput } from "./support/terminal-input";
 import { waitForUiTransitions } from "./support/ui-guard";
@@ -494,8 +494,7 @@ async function createExecutableSuite(
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).first().check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
     "已将 1 个用例加入任务",
   );

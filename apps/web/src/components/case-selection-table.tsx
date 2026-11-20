@@ -106,7 +106,6 @@ export function CaseSelectionTable({
   const [expansion, setExpansion] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const confirmAction = useConfirm();
   const promptRemark = usePrompt();
-  const [addRemark, setAddRemark] = useState("");
   const toast = useToast();
   const [selection, setSelection] = useState(
     () =>
@@ -210,6 +209,7 @@ export function CaseSelectionTable({
   const effectiveSuiteId = targetSuites.some((suite) => suite.id === suiteId)
     ? suiteId
     : (targetSuites[0]?.id ?? "");
+  const targetSuite = targetSuites.find((suite) => suite.id === effectiveSuiteId);
   const searchedCases = useMemo(
     () =>
       availableCases.filter(
@@ -276,6 +276,12 @@ export function CaseSelectionTable({
   const selectedCases = [...selection.values()].map((item) => item.definition);
   const selectedCasesCanManageSuite =
     selectedCases.length > 0 && selectedCases.every((item) => canManageSuites(item.projectId));
+  const canChangeMembership =
+    !!targetSuite &&
+    !pending &&
+    !collecting &&
+    !crossProjectSelection &&
+    selectedCasesCanManageSuite;
   const selectedCasesCanDelete =
     selectedCases.length > 0 && selectedCases.every((item) => canManageCases(item.projectId));
   const activeDetail = detail?.definition.id === activeCaseId ? detail : null;
@@ -382,7 +388,8 @@ export function CaseSelectionTable({
       new Map([...latestOutcomes, ...importedOutcomes]),
       "imported-paths",
     );
-    setMessage(
+    setMessage(null);
+    toast.success(
       unmatchedCount > 0
         ? `已从表格勾选 ${matched.length} 个用例，${unmatchedCount} 个路径未匹配`
         : `已从表格勾选 ${matched.length} 个用例`,
@@ -426,28 +433,29 @@ export function CaseSelectionTable({
   }
 
   async function addToSuite(): Promise<void> {
-    if (
-      !effectiveSuiteId ||
-      checkedCaseIds.size === 0 ||
-      crossProjectSelection ||
-      pending ||
-      collecting ||
-      !selectedCasesCanManageSuite ||
-      !addRemark.trim()
-    )
-      return;
+    if (!targetSuite || !canChangeMembership) return;
     const selectedCaseIds = [...checkedCaseIds];
+    const remark = await promptRemark({
+      title: "将普通用例加入任务",
+      description: `将选中的 ${selectedCaseIds.length.toLocaleString()} 个普通用例加入「${targetSuite.name}」。`,
+      confirmLabel: "确认加入",
+      inputLabel: "加入任务原因（必填）",
+      maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
+      required: true,
+      multiline: true,
+    });
+    if (remark === null) return;
     setPendingOperation("add");
     setMessage(null);
     try {
       let addedCount = 0;
       for (const caseDefinitionIds of batchesOf(selectedCaseIds, CASE_SUITE_ITEM_MUTATION_LIMIT)) {
         const response = await fetch(
-          `/api/v1/case-suites/${encodeURIComponent(effectiveSuiteId)}/cases`,
+          `/api/v1/case-suites/${encodeURIComponent(targetSuite.id)}/cases`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ caseDefinitionIds, remark: addRemark }),
+            body: JSON.stringify({ caseDefinitionIds, remark }),
           },
         );
         if (!response.ok) {
@@ -463,7 +471,6 @@ export function CaseSelectionTable({
         addedCount += caseDefinitionIds.length;
       }
       toast.success(`已将 ${selectedCaseIds.length} 个用例加入任务。`);
-      setAddRemark("");
       directoryTree?.refresh();
       setMissingCaseIds((current) => {
         if (!current) return current;
@@ -480,9 +487,7 @@ export function CaseSelectionTable({
   }
 
   async function excludeFromSuite(): Promise<void> {
-    const target = targetSuites.find((suite) => suite.id === effectiveSuiteId);
-    if (!target || pending || collecting || crossProjectSelection || !selectedCasesCanManageSuite)
-      return;
+    if (!targetSuite || !canChangeMembership) return;
     const caseDefinitionIds = [...checkedCaseIds];
     if (caseDefinitionIds.length > CASE_SUITE_ITEM_MUTATION_LIMIT) {
       toast.error(`一次最多排除 ${CASE_SUITE_ITEM_MUTATION_LIMIT.toLocaleString()} 个用例。`);
@@ -490,7 +495,7 @@ export function CaseSelectionTable({
     }
     const remark = await promptRemark({
       title: "从任务中排除用例",
-      description: `将从「${target.name}」排除选中的 ${caseDefinitionIds.length} 个普通用例。未加入此任务的用例会自动忽略，用例库、其他任务和已有执行记录均保留。本次操作仅影响该任务后续的执行范围。`,
+      description: `将从「${targetSuite.name}」排除选中的 ${caseDefinitionIds.length} 个普通用例。未加入此任务的用例会自动忽略，用例库、其他任务和已有执行记录均保留。本次操作仅影响该任务后续的执行范围。`,
       confirmLabel: "确认排除",
       inputLabel: "移除原因（必填）",
       maxLength: CASE_SUITE_MEMBER_REMARK_LIMIT,
@@ -503,12 +508,15 @@ export function CaseSelectionTable({
     setMessage(null);
     try {
       // Reuse the atomic membership mutation and its archive/owner-lock checks.
-      const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(target.id)}/cases`, {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseDefinitionIds, remark }),
-        signal: AbortSignal.timeout(60_000),
-      });
+      const response = await fetch(
+        `/api/v1/case-suites/${encodeURIComponent(targetSuite.id)}/cases`,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ caseDefinitionIds, remark }),
+          signal: AbortSignal.timeout(60_000),
+        },
+      );
       if (!response.ok) await throwApiErrorResponse(response, "从任务排除用例失败，请重试。");
       clearBrowserSnapshots();
       setMissingCaseIds((current) =>
@@ -794,38 +802,17 @@ export function CaseSelectionTable({
                       });
                   }}
                   type="button"
+                  size="compact"
                   variant={missingOnly ? "primary" : "secondary"}
                 >
                   {membershipPending ? <LoadingIcon size={15} /> : <ListFilter size={15} />}
                   {missingOnly ? "仅看未加入" : "筛选未加入"}
                 </Button>
-                <div className="w-44 shrink-0">
-                  <Input
-                    aria-label="加入任务原因"
-                    aria-required="true"
-                    placeholder="加入原因（必填）"
-                    value={addRemark}
-                    maxLength={CASE_SUITE_MEMBER_REMARK_LIMIT}
-                    onChange={(event) => setAddRemark(event.target.value)}
-                    disabled={pending}
-                  />
-                </div>
                 <Button
-                  className={cn(
-                    "button button-primary",
-                    uiPatterns["button"],
-                    uiPatterns["button-primary"],
-                  )}
                   type="button"
-                  disabled={
-                    checkedCaseIds.size === 0 ||
-                    pending ||
-                    collecting ||
-                    crossProjectSelection ||
-                    !selectedCasesCanManageSuite ||
-                    !addRemark.trim() ||
-                    !effectiveSuiteId
-                  }
+                  size="compact"
+                  variant="primary"
+                  disabled={!canChangeMembership}
                   onClick={addToSuite}
                 >
                   {pendingOperation === "add" ? <LoadingIcon size={15} /> : <Check size={15} />}
@@ -833,15 +820,9 @@ export function CaseSelectionTable({
                 </Button>
                 <Button
                   type="button"
+                  size="compact"
                   variant="secondary"
-                  disabled={
-                    checkedCaseIds.size === 0 ||
-                    pending ||
-                    collecting ||
-                    crossProjectSelection ||
-                    !selectedCasesCanManageSuite ||
-                    !effectiveSuiteId
-                  }
+                  disabled={!canChangeMembership}
                   onClick={excludeFromSuite}
                 >
                   {pendingOperation === "exclude" ? (

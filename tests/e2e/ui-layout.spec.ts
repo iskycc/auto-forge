@@ -3997,7 +3997,6 @@ test("imported case selection keeps counts compact before adding to a task", asy
     await expect(stats).toContainText("已勾选 8 个用例");
     await expect(stats).toContainText("未执行 8");
     await expect(checkbox).toBeChecked();
-    await page.getByLabel("加入任务原因", { exact: true }).fill("补充任务验证用例");
     await expect(page.getByRole("button", { name: "加入任务", exact: true })).toBeEnabled();
     await page.screenshot({
       path: testInfo.outputPath(`selected-cases-${viewport.width}.png`),

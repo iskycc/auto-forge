@@ -9,7 +9,12 @@ import {
   type RenewLeaseResponse,
 } from "@autoforge/contracts";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
-import { browserJson, ensureAdministrator, selectProjectContext } from "./support/session";
+import {
+  addSelectedTestngCasesToTask,
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+} from "./support/session";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { expectUiIntegrity } from "./support/ui-guard";
@@ -168,8 +173,7 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
   await page.getByLabel("页内搜索用例").fill("MemoryPolicy");
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-card", { hasText: "已将 8 个用例加入任务" })).toBeVisible();
   const suites = await browserJson<{ items: Array<{ id: string; name: string }> }>(
     page,

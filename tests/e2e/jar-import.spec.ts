@@ -30,6 +30,7 @@ import {
   startTaskFromTopbar,
 } from "./support/task-execution";
 import {
+  addSelectedTestngCasesToTask,
   acceptSystemDialog,
   appAlert,
   browserJson,
@@ -1069,8 +1070,7 @@ public class MixedVisibleTest {
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByRole("combobox", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 
   await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
@@ -1128,7 +1128,7 @@ public class MixedVisibleTest {
   await caseImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(caseImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
-  await expect(page.locator(".inline-feedback")).toContainText("已从表格勾选 1 个用例");
+  await expect(page.locator(".toast-viewport")).toContainText("已从表格勾选 1 个用例");
   // Collapsed directories stay unloaded; reveal the case before checking its selection.
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await expect(page.getByLabel(`选择 ${taskCase.displayName}`)).toBeChecked();
@@ -1240,8 +1240,7 @@ public class MixedVisibleTest {
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByRole("combobox", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 
   await configureTaskExecution(page, dailySuiteId, identity.runnerId, { retryLimit: 2 });

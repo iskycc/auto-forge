@@ -11,6 +11,7 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import {
+  addSelectedTestngCasesToTask,
   acceptSystemDialog,
   browserJson,
   ensureAdministrator,
@@ -482,8 +483,7 @@ test("completion immediately refills free runner slots without waiting for the w
   await page
     .locator('select[aria-label="目标用例任务"]')
     .selectOption({ label: "即时补槽验收任务" });
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-card", { hasText: "已将 5 个用例加入任务" })).toBeVisible();
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {

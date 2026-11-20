@@ -6,6 +6,21 @@ and known limitations.
 
 ## Unreleased
 
+## 1.23.9 - 2026-11-20
+
+### Fixed
+
+- 普通用例勾选或清单匹配后可直接点击「加入任务」，在确认弹窗核对目标任务和数量并填写必填原因。
+
+### Compatibility
+
+- 加入原因继续写入任务用例变更记录。升级无需数据库迁移或部署配置调整。离线包继续提供 amd64、arm64 镜像和 Compose 部署文件。
+
+### Verification
+
+- 79 项定向测试、Lite 与 Full Playwright 回归和 Web 生产构建通过。已检查 1024px 和 1536px 下的工具栏及弹窗。
+- 本次按快速路径运行 Release，保留双架构镜像启动、SBOM、签名及资产校验。标准 CI 和发布后验收未运行。
+
 ## 1.23.8 - 2026-11-20
 
 ### Fixed

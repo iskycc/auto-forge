@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import {
+  addSelectedTestngCasesToTask,
   acceptSystemDialog,
   browserJson,
   ensureAdministrator,
@@ -56,17 +57,39 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   const suite = result.body;
   const base = `/api/v1/case-suites/${suite.id}`;
   const markerReads: string[] = [];
+  let memberWrites = 0;
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (request.method() === "GET" && url.pathname === `${base}/markers`) {
       markerReads.push(url.search);
     }
+    if (request.method() === "POST" && url.pathname === `${base}/cases`) memberWrites++;
   });
   await page.goto(`/cases?targetSuiteId=${suite.id}`);
+  await page.getByRole("button", { name: "导入用例", exact: true }).click();
+  const importer = page.getByRole("dialog", { name: "导入用例", exact: true });
+  await importer.getByLabel("粘贴用例路径").fill(className);
+  await importer.getByRole("button", { name: "解析并预览" }).click();
+  await importer.getByRole("button", { name: "勾选匹配用例" }).click();
   const checkbox = page.getByLabel(`选择 ${className.split(".").at(-1)!}`, { exact: true });
-  await checkbox.check();
-  await expect(page.getByRole("button", { name: "加入任务", exact: true })).toBeDisabled();
-  await page.getByRole("textbox", { name: "加入任务原因", exact: true }).fill("补充钱包支付回归");
+  await expect(checkbox).toBeChecked();
+  const add = page.getByRole("button", { name: "加入任务", exact: true });
+  await expect(add).toBeEnabled();
+  await add.click();
+  const addition = page.getByRole("dialog", { name: "将普通用例加入任务", exact: true });
+  await expect(addition).toContainText("钱包任务 · 成员标识与变更记录");
+  await expect(addition).toContainText("1 个普通用例");
+  const reason = addition.getByRole("textbox", { name: "加入任务原因（必填）", exact: true });
+  const confirm = addition.getByRole("button", { name: "确认加入", exact: true });
+  await expect(confirm).toBeDisabled();
+  await reason.fill("  ");
+  await expect(confirm).toBeDisabled();
+  await addition.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(addition).toBeHidden();
+  await expect(checkbox).toBeChecked();
+  expect(memberWrites).toBe(0);
+  await add.click();
+  await reason.fill("补充钱包支付回归");
   const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
   await mkdir(directory, { recursive: true });
   for (const width of [1024, 1536]) {
@@ -77,8 +100,9 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
       animations: "disabled",
     });
   }
-  await page.getByRole("button", { name: "加入任务", exact: true }).click();
+  await confirm.click();
   await expect(page.locator(".toast-viewport")).toContainText("已将 1 个用例加入任务");
+  expect(memberWrites).toBe(1);
   await page.goto(`/case-suites/${suite.id}`);
   const history = page.locator("#suite-member-history");
   await expect(history).toContainText("补充钱包支付回归");
@@ -2636,8 +2660,7 @@ test("tasks and execution history follow the selected project version", async ({
   await expect(page.getByLabel(`选择 ${unassignedClassName.split(".").at(-1)!}`)).toBeVisible();
   await expect(page.getByLabel(`选择 ${firstClassName.split(".").at(-1)!}`)).toHaveCount(0);
   await page.getByLabel(`选择 ${unassignedClassName.split(".").at(-1)!}`).check();
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务" }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.getByText("已将 1 个用例加入任务。")).toBeVisible();
 
   const runner = await registerRunner(page, suffix);
@@ -3731,8 +3754,7 @@ test("TestNG selections exclude ordinary cases from only the chosen task without
     page.getByLabel(`选择 ${keepClass.split(".").at(-1)!}`, { exact: true }),
   ).toHaveCount(0);
   await removedCheckbox.check();
-  await page.getByLabel("加入任务原因", { exact: true }).fill("准备任务验证数据");
-  await page.getByRole("button", { name: "加入任务", exact: true }).click();
+  await addSelectedTestngCasesToTask(page, "准备任务验证数据");
   await expect(page.locator(".toast-viewport")).toContainText("已将 1 个用例加入任务");
   expect(await readMembers(suite.id)).toEqual([removed!.id, kept!.id].sort());
 
