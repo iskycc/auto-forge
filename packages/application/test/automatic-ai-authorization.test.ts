@@ -155,13 +155,27 @@ describe("automatic AI disclosure authority", () => {
     f.listSystemRoleBindings.mockImplementation(async (ids) =>
       ids.includes(initiator.id) ? [{ roleId: "ai-role" }] : [],
     );
-    const authority = await resolveAutomaticAiAuthority(
-      f.identities,
-      f.batches,
-      "batch",
-      " Visitor ",
-    );
+    const authority = await resolveAutomaticAiAuthority(f.identities, f.batches, "batch", {
+      legacyInitiatorUsername: " Visitor ",
+    });
     expect(authority.actor?.user.id).toBe(initiator.id);
     expect(f.findUserByUsername).toHaveBeenCalledWith("visitor");
+  });
+
+  it("requires batch publication evidence before treating a service-like name as a Jenkins account", async () => {
+    const f = fixture();
+    Reflect.deleteProperty(f.snapshot, "publicExecution");
+    const accountId = "01999999-1111-7222-8333-444444444444";
+    f.snapshot.requestedBy.username = `service-${accountId}`;
+    const serviceAccounts = { findBatchServiceAccountPublisher: vi.fn().mockResolvedValue(null) };
+    await expect(
+      resolveAutomaticAiAuthority(f.identities, f.batches, "batch", { serviceAccounts }),
+    ).resolves.toMatchObject({ actor: null, actorLabel: "执行拉起人" });
+    expect(serviceAccounts.findBatchServiceAccountPublisher).toHaveBeenCalledWith(
+      "batch",
+      accountId,
+    );
+    expect(f.findUserByUsername).toHaveBeenCalledWith(`service-${accountId}`);
+    expect(f.findUser).not.toHaveBeenCalledWith(publisher.id);
   });
 });

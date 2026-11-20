@@ -1756,6 +1756,7 @@ export type CreateRunBatchRecord = {
   id: string;
   /** Persisted atomically with the batch and its dispatch message. */
   creationAudit?: AuditEvent;
+  publishedBy?: string;
   projectId?: string;
   environmentId?: string;
   environmentVersionId?: string;
@@ -2572,7 +2573,7 @@ export interface PlatformOperationsRepository {
   findBatchServiceAccountPublisher(
     batchId: string,
     serviceAccountId: string,
-  ): Promise<{ name: string | null } | null>;
+  ): Promise<{ name: string | null; creatorId: string | null } | null>;
   createServiceAccount(record: ServiceAccount): Promise<ServiceAccount>;
   updateServiceAccount(input: {
     accountId: string;

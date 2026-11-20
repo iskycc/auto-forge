@@ -18,6 +18,8 @@ import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { PostgresCaseSuiteRepository } from "../src/postgres-platform-repository";
+import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
+import { PostgresPlatformOperationsRepository } from "../src/postgres-platform-operations";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
 import {
@@ -35,6 +37,69 @@ for (const adapter of ["sqlite", "postgres"] as const)
   describe.skipIf(adapter === "postgres" && !postgresUrl)(
     `${adapter} public task execution`,
     () => {
+      it("uses the Jenkins service account creator's current permissions for automatic AI", async () => {
+        await withHarness(adapter, async (h) => {
+          const accountId = randomUUID();
+          await h.operations.createServiceAccount({
+            id: accountId,
+            name: `Jenkins ${accountId}`,
+            description: "",
+            status: "active",
+            systemPermissions: [],
+            projectPermissions: { [h.suite.projectId]: ["run.create"] },
+            createdBy: h.publisher.id,
+            createdAt: now,
+            updatedAt: now,
+            revision: 1,
+          });
+          const record = h.record();
+          delete record.publicExecution;
+          record.requestedBy = { username: `service-${accountId}`, source: "local" };
+          record.policy = {
+            executor: "testng",
+            concurrency: 1,
+            runnerLabels: [],
+            artifactPatterns: [],
+            aiAnalysisAfterCompletion: true,
+            aiAnalysisExecutionId: record.id,
+          };
+          const batch = await h.batches.create({ ...record, publishedBy: accountId });
+          await h.query("UPDATE run_batches SET status='failed' WHERE id=?", [batch.id]);
+          const options = { serviceAccounts: h.operations };
+          const lookup = () =>
+            resolveAutomaticAiAuthority(h.identities, h.batches, batch.id, options);
+          expect(await lookup()).toMatchObject({ actor: null, actorLabel: "服务账号创建人" });
+          await h.identities.ensureBuiltInRoles(builtInRoleDefinitions, now);
+          const roleId = builtInRoleDefinitions[0]!.id;
+          await h.identities.assignSystemRole(h.publisher.id, roleId, h.publisher.id, now);
+          const authority = await lookup();
+          expect(authority).toMatchObject({ actor: { user: { id: h.publisher.id } } });
+          const configuration = aiModelConfigurationSchema.parse({
+            enabled: true,
+            baseUrl: "http://model/v1",
+            modelId: "fixture",
+          });
+          await h.ai.saveConfiguration({ revision: 1, configuration, encryptedKey: null }, 0);
+          const service = new AiAnalysisService(
+            h.ai,
+            h.batches,
+            { available: true, encrypt: () => "unused", decrypt: () => "unused" },
+            { now: () => new Date(now) },
+            { next: randomUUID },
+          );
+          expect(await service.createAutomatic(authority.actor!, batch.id)).toMatchObject({
+            requestedBy: h.publisher.id,
+          });
+          await h.identities.assignSystemRole(h.visitor.id, roleId, h.publisher.id, now);
+          await h.identities.removeSystemRole(h.publisher.id, roleId);
+          expect(await lookup()).toMatchObject({
+            actor: null,
+            unavailableReason: expect.stringContaining("服务账号创建人缺少当前 AI 或证据权限"),
+          });
+          expect((await h.batches.getMetadata(batch.id))?.requestedBy).toEqual(record.requestedBy);
+        });
+      });
+
       it("authorizes automatic AI with the public publisher and retains the actual initiator", async () => {
         await withHarness(adapter, async (h) => {
           await h.links.publish(h.suite.id, h.publisher.id, now);
@@ -579,6 +644,9 @@ async function createHarness(adapter: "sqlite" | "postgres") {
   const identities = sqlite
     ? new SqliteIdentityAccessRepository(sqlite)
     : new PostgresIdentityAccessRepository(postgres!);
+  const operations = sqlite
+    ? new SqlitePlatformOperationsRepository(sqlite)
+    : new PostgresPlatformOperationsRepository(postgres!);
   const ai = sqlite
     ? new SqliteAiAnalysisRepository(sqlite)
     : new PostgresAiAnalysisRepository(postgres!);
@@ -620,6 +688,7 @@ async function createHarness(adapter: "sqlite" | "postgres") {
     suites,
     links,
     identities,
+    operations,
     ai,
     batches,
     executions,
@@ -628,6 +697,10 @@ async function createHarness(adapter: "sqlite" | "postgres") {
       try {
         await query("DELETE FROM run_batches WHERE suite_id=?", [suite.id]);
         await query("DELETE FROM case_suites WHERE id=?", [suite.id]);
+        await query("DELETE FROM service_accounts WHERE created_by IN (?,?)", [
+          publisher.id,
+          visitor.id,
+        ]);
         for (const actor of [publisher, visitor])
           await query("DELETE FROM users WHERE id=?", [actor.id]);
       } finally {

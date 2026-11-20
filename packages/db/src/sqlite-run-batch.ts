@@ -1,4 +1,3 @@
-import { snapshotSuiteMarkers } from "./case-suite-membership";
 import { discoverableExecutionWorkSql, recoverableRoundTailSql } from "./round-dispatch-probe";
 import {
   attemptRerunEnvironmentQuery,
@@ -481,8 +480,10 @@ export class SqliteRunBatchRepository
             )
             .run();
         }
-        if (record.expectedSuiteRevision !== undefined)
-          this.handle.db.run(snapshotSuiteMarkers(record.id, record.suiteId));
+        if (record.publishedBy) {
+          this.handle.db.run(sql`INSERT INTO public_batch_access(batch_id,created_by,created_at)
+            VALUES (${record.id},${record.publishedBy},${record.createdAt})`);
+        }
         if (record.dispatchJob) {
           this.handle.client
             .prepare(

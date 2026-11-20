@@ -298,7 +298,7 @@ export function CaseSuiteMarkersDialogButton({
       >
         <Flex vertical gap="middle">
           <Typography.Text type="secondary">
-            每个用例可填写五个标识。执行时保存标识，失败分析表按实际有值的列导出。
+            每个用例可填写五个标识。导出失败结果时读取当前标识，历史执行也适用。
           </Typography.Text>
           <Flex justify="space-between" align="center" gap="small" wrap>
             <Flex gap="small" wrap align="center">

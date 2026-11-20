@@ -72,9 +72,10 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         outcomes,
         ...(projectIds ? { projectIds } : {}),
       },
-      parsed.template === "failure-analysis"
-        ? { includeMarkerColumns: true, signal: request.signal }
-        : undefined,
+      {
+        includeMarkerColumns: outcomes.some((outcome) => outcome !== "succeeded"),
+        signal: request.signal,
+      },
     );
     const base = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const timeZone = services.configurationStore.read().web.timeZone;

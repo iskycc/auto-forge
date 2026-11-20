@@ -73,7 +73,10 @@ try {
               resources.identities,
               resources.batches,
               candidate.batchId,
-              candidate.requestedByUsername,
+              {
+                legacyInitiatorUsername: candidate.requestedByUsername,
+                serviceAccounts: resources.serviceAccounts,
+              },
             );
             if (!authority.actor) {
               await recordSkipped(candidate, authority.unavailableReason);
@@ -152,6 +155,7 @@ async function initialize() {
       repository: new db.SqliteAiAnalysisRepository(handle) as AiAnalysisRepository,
       batches: new db.SqliteRunBatchRepository(handle),
       identities: new db.SqliteIdentityAccessRepository(handle),
+      serviceAccounts: new db.SqlitePlatformOperationsRepository(handle),
       logs: new db.SqliteExecutionControlRepository(handle, local, logs),
       objects,
       cache: undefined as CachePort | undefined,
@@ -214,6 +218,7 @@ async function initialize() {
     repository: new db.PostgresAiAnalysisRepository(handle) as AiAnalysisRepository,
     batches: new db.PostgresRunBatchRepository(handle),
     identities: new db.PostgresIdentityAccessRepository(handle),
+    serviceAccounts: new db.PostgresPlatformOperationsRepository(handle),
     logs: new db.PostgresExecutionControlRepository(handle, logs),
     objects,
     cache,

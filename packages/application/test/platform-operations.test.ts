@@ -34,7 +34,10 @@ describe("execution initiator display", () => {
 
   it("uses the recorded service publisher's configured name for readers without account management permissions", async () => {
     const { findBatchServiceAccountPublisher, service } = fixture();
-    findBatchServiceAccountPublisher.mockResolvedValue({ name: "支付 Jenkins 流水线" });
+    findBatchServiceAccountPublisher.mockResolvedValue({
+      name: "支付 Jenkins 流水线",
+      creatorId: "creator",
+    });
 
     await expect(service.readExecutionInitiatorName(reader(), batch)).resolves.toBe(
       "支付 Jenkins 流水线",
@@ -45,7 +48,7 @@ describe("execution initiator display", () => {
   it("distinguishes a deleted publisher from an ordinary user with the same alias", async () => {
     const { findBatchServiceAccountPublisher, service } = fixture();
     findBatchServiceAccountPublisher
-      .mockResolvedValueOnce({ name: null })
+      .mockResolvedValueOnce({ name: null, creatorId: null })
       .mockResolvedValueOnce(null);
 
     await expect(service.readExecutionInitiatorName(reader(), batch)).resolves.toBe(

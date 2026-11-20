@@ -70,6 +70,7 @@ export const runBatchCreationAuditSchema = z
     actorId: z.string().min(1).max(128),
     actorName: z.string().min(1).max(512),
     requestId: z.string().min(1).max(128),
+    publishResult: z.boolean().optional(),
   })
   .strict();
 

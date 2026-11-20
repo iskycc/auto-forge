@@ -73,7 +73,7 @@ for (const dialect of ["sqlite", "postgres"] as const)
       }
     }, 30_000);
 
-    it("audits actual task member changes and snapshots only markers on exported failures", async () => {
+    it("audits membership changes and reads the current task markers for existing failed runs", async () => {
       const f = await exportDatabase(dialect);
       const now = "2026-11-18T00:00:00.000Z";
       const user = "member-operator";
@@ -199,13 +199,26 @@ for (const dialect of ["sqlite", "postgres"] as const)
           await f.execute(
             `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,outcome,result_code,scheduling_score,created_at) VALUES ('attempt-${id}','run-${id}','runner',1,'${outcome}','${outcome}','${code}',1,'${now}')`,
           );
+        const refreshed = await f.suites.updateMemberMarkers({
+          ...mutation,
+          versionId: "markers-after-execution",
+          expectedRevision: updated.revision,
+          edits: [{ kind: "ddt", memberId: "member-ddt", markers: ["导出实时值", "", "复测"] }],
+        });
+        const exportService = new RunBatchExportService(f.batches);
+        const query = { batchId: "marker-batch", scope: "final", outcomes: ["failed"] } as const;
+        const report = await exportService.prepare(query, { includeMarkerColumns: true });
+        expect(report.markerColumns).toEqual([0, 2]);
+        const rows = [];
+        for await (const page of report.pages) rows.push(...page);
+        expect(rows.map((row) => row.markers)).toEqual([["导出实时值", "", "复测"]]);
         const cleared = await f.suites.updateMemberMarkers({
           ...mutation,
           versionId: "markers-clear",
-          expectedRevision: updated.revision,
+          expectedRevision: refreshed.revision,
           edits: [{ kind: "ddt", memberId: "member-ddt", markers: [""] }],
         });
-        expect(cleared.revision).toBeGreaterThan(updated.revision);
+        expect(cleared.revision).toBeGreaterThan(refreshed.revision);
         await f.suites.removeDdtCases({
           ...mutation,
           versionId: "change-3",
@@ -219,14 +232,12 @@ for (const dialect of ["sqlite", "postgres"] as const)
           { operation: "remove", count: 1, remark: "支付迁移" },
           { operation: "add", count: 2, remark: "补充支付场景" },
         ]);
-        const report = await new RunBatchExportService(f.batches).prepare(
-          { batchId: "marker-batch", scope: "final", outcomes: ["failed"] },
-          { includeMarkerColumns: true },
-        );
-        expect(report.markerColumns).toEqual([1, 4]);
-        const rows = [];
-        for await (const page of report.pages) rows.push(...page);
-        expect(rows.map((row) => row.markers)).toEqual([["", "支付域", "", "", "优先"]]);
+        const afterRemoval = await exportService.prepare(query, { includeMarkerColumns: true });
+        expect(afterRemoval.markerColumns).toEqual([]);
+        for await (const page of afterRemoval.pages) {
+          expect(page).toMatchObject([{ executionRunId: "run-ddt" }]);
+          expect(page[0]?.markers).toBeUndefined();
+        }
         const removed = await f.suites.unlinkDdtScopePage({
           ...mutation,
           scope: {

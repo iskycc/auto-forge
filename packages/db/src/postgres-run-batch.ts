@@ -1,4 +1,3 @@
-import { snapshotSuiteMarkers } from "./case-suite-membership";
 import {
   attemptRerunEnvironmentQuery,
   mapAttemptRerunEnvironment,
@@ -467,8 +466,10 @@ export class PostgresRunBatchRepository
                       class_data_json text, class_data_size_bytes integer, class_data_sha256 text,
                       ddt_sr_num text, parameters_json text, dispatch_order_key text)`);
       }
-      if (record.expectedSuiteRevision !== undefined)
-        await transaction.execute(snapshotSuiteMarkers(record.id, record.suiteId));
+      if (record.publishedBy) {
+        await transaction.execute(sql`INSERT INTO public_batch_access(batch_id,created_by,created_at)
+          VALUES (${record.id},${record.publishedBy},${record.createdAt})`);
+      }
       if (record.dispatchJob) {
         await transaction.execute(sql`
           INSERT INTO transactional_outbox

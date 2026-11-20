@@ -1,4 +1,8 @@
-import { createRunBatchInputSchema, DEFAULT_PLATFORM_TIME_ZONE } from "@autoforge/contracts";
+import {
+  createRunBatchInputSchema,
+  DEFAULT_PLATFORM_TIME_ZONE,
+  publicExecutionPath,
+} from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
@@ -18,23 +22,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 授权只需任务的归属项目；完整任务快照由 create 内部读取一次，避免重复加载全量用例成员。
     const suite = await services.caseSuites.getSummary(input.suiteId, projectScope);
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
-    const batch = await services.runBatches.create(input, {
-      username: identity.user.username,
-      source: identity.user.source,
-    });
+    const batch = await services.runBatches.create(
+      input,
+      { username: identity.user.username, source: identity.user.source },
+      undefined,
+      {
+        actorId: identity.user.id,
+        actorName: `${identity.user.displayName} · ${identity.user.username}`,
+        requestId: currentRequestId,
+        publishResult: true,
+      },
+    );
     const progressToken = issueRunProgressToken(
       services.config.masterKey,
       batch.id,
       services.clock.now(),
     );
-    const resultPath = await services.publicExecutionAccess.publishBatch(
-      batch.id,
-      identity.user.id,
-      projectScope,
-    );
     const web = services.configurationStore.read().web;
     const baseUrl = publicLinkBase(web.publicBaseUrl, request);
-    const resultUrl = new URL(resultPath, baseUrl).toString();
+    const resultUrl = new URL(publicExecutionPath(batch.id), baseUrl).toString();
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "jenkins.run_batch.create",
       resourceType: "run_batch",

@@ -279,6 +279,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
         paragraphs: [
           "在服务账号和 API 密钥管理中为自动化创建专用身份，按目标项目授予任务执行或文件导入所需权限。不要把个人登录密码写入 Jenkinsfile。",
           "Jenkins 访问平台的 API 密钥与平台触发 Jenkins 时使用的 Jenkins API Token 是两个方向的凭据，不能互相替代。注销密钥后停止使用，并按需要删除保留记录。",
+          "任务启用了自动初析时，平台检查该 Jenkins 服务账号创建人当前是否有目标项目的发起 AI 初析、查看执行与质量洞察、查看用例、查看执行日志权限。服务账号和 API 密钥使用原有的执行权限。",
         ],
       },
       {

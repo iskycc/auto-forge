@@ -10,7 +10,6 @@ const runtime = vi.hoisted(() => ({
   createSingleCase: vi.fn(),
   createSingleDdtCase: vi.fn(),
   createDebugCase: vi.fn(),
-  publishBatch: vi.fn(),
 }));
 vi.mock("./auth", () => ({
   authenticateRequest: runtime.authenticate,
@@ -44,7 +43,6 @@ const services = {
     createSingleDdtCase: runtime.createSingleDdtCase,
     createDebugCase: runtime.createDebugCase,
   },
-  publicExecutionAccess: { publishBatch: runtime.publishBatch },
   clock: { now: () => new Date("2026-10-08T00:00:00Z") },
   config: { masterKey: "1".repeat(64) },
   configurationStore: { read: () => ({ web: { publicBaseUrl: "http://localhost" } }) },
@@ -112,7 +110,6 @@ const entries = [
 
 beforeEach(() => {
   vi.resetAllMocks();
-  runtime.publishBatch.mockResolvedValue("/Execution?BatchId=batch");
   runtime.authenticate.mockResolvedValue({
     user: { id: "launcher-id", username: "actual-launcher", source: "local" },
     sessionId: "session",
@@ -139,12 +136,13 @@ describe.each(entries)("$name execution initiator", (entry) => {
         const payload = await response.json();
         expect(payload.resultUrl).toBe("http://localhost/Execution?BatchId=batch");
         expect(payload.progressUrl).toBe(payload.resultUrl);
-        expect(runtime.publishBatch).toHaveBeenCalledWith("batch", "launcher-id", [
-          scope.projectId,
-        ]);
+        expect(runtime.create.mock.calls[0]?.[3]).toMatchObject({
+          actorId: "launcher-id",
+          publishResult: true,
+        });
       }
       const initiator =
-        entry.name === "task"
+        entry.name === "task" || entry.name === "Jenkins"
           ? entry.create.mock.calls[0]?.[1]
           : entry.create.mock.calls[0]?.at(-1);
       expect(initiator).toEqual({ username: "actual-launcher", source });

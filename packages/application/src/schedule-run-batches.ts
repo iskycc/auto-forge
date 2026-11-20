@@ -302,6 +302,7 @@ export class RunBatchSchedulingService {
     };
     try {
       return await this.batches.create({
+        ...(audit?.publishResult ? { publishedBy: audit.actorId } : {}),
         ...(audit
           ? {
               creationAudit: {

@@ -24,6 +24,16 @@ type ExportRecord = {
   durationMs: number | null;
 };
 
+function currentTaskMarkerJoins(batchId: string, caseType: SQL, caseId: SQL): SQL {
+  const suiteId = sql`(SELECT suite_id FROM run_batches WHERE id=${batchId})`;
+  return sql`LEFT JOIN case_suite_items ordinary
+      ON ${caseType}='testng' AND ordinary.suite_id=${suiteId} AND ordinary.case_definition_id=${caseId}
+    LEFT JOIN case_suite_standard_markers ordinary_marker ON ordinary_marker.member_id=ordinary.id
+    LEFT JOIN case_suite_ddt_items data_driven
+      ON ${caseType}='ddt' AND data_driven.suite_id=${suiteId} AND data_driven.ddt_case_id=${caseId}
+    LEFT JOIN case_suite_ddt_markers ddt_marker ON ddt_marker.member_id=data_driven.id`;
+}
+
 /** Select latest physical attempts before outcome filtering, so recovered failures stay excluded. */
 export function runBatchExportPageQuery(
   input: RunBatchExportPageQuery,
@@ -31,8 +41,9 @@ export function runBatchExportPageQuery(
 ): SQL {
   const round = sql`COALESCE(attempt.execution_round,attempt.attempt_number)`;
   const markedOnly = input.markers === "only";
+  const currentMarkers = sql`COALESCE(ordinary_marker.markers_json,ddt_marker.markers_json)`;
   const conditions = [sql`run.batch_id=${input.batchId}`];
-  if (markedOnly) conditions.push(sql`marker.batch_id=${input.batchId}`);
+  if (markedOnly) conditions.push(sql`${currentMarkers} IS NOT NULL`);
   if (input.scope === "round") conditions.push(sql`${round}=${input.round}`);
   conditions.push(sql`NOT EXISTS (
     SELECT 1 FROM run_attempts newer WHERE newer.execution_run_id=run.id
@@ -55,23 +66,21 @@ export function runBatchExportPageQuery(
     attempt.id AS "attemptId",attempt.attempt_number AS "attemptNumber",${round} AS round,
     attempt.status,attempt.outcome,attempt.result_code AS "resultCode",attempt.result_summary AS summary,
     attempt.started_at AS "startedAt",attempt.finished_at AS "finishedAt",attempt.duration_ms AS "durationMs"
-    FROM ${
-      markedOnly
-        ? sql`execution_run_suite_markers marker JOIN execution_runs run ON run.id=marker.run_id`
-        : sql`execution_runs run`
-    }
+    ${markedOnly ? sql`,${currentMarkers} AS "markersJson"` : sql``}
+    FROM execution_runs run
     JOIN run_attempts attempt ON attempt.execution_run_id=run.id
+    ${markedOnly ? currentTaskMarkerJoins(input.batchId, sql`run.case_type`, sql`run.case_definition_id`) : sql``}
     WHERE ${sql.join(conditions, sql` AND `)}
     ORDER BY run.class_name,run.display_name,run.id,${round} LIMIT ${Math.min(200, Math.max(1, input.limit)) + 1}
   )
   SELECT page."runId",page."className",page."displayName",page."runStatus",page."caseType",
-    ${input.markers ? sql`marker.markers_json` : sql`NULL`} AS "markersJson",
+    ${markedOnly ? sql`page."markersJson"` : input.markers ? currentMarkers : sql`NULL`} AS "markersJson",
     ${markedOnly ? sql`NULL` : ddtFieldJson("CaseName")} AS "ddtCaseNameJson",
     ${markedOnly ? sql`NULL` : ddtFieldJson("SRID")} AS "ddtSrIdJson",
     page."attemptId",page."attemptNumber",page.round,page.status,page.outcome,page."resultCode",
     page.summary,page."startedAt",page."finishedAt",page."durationMs"
   FROM export_page page
-  ${input.markers ? sql`LEFT JOIN execution_run_suite_markers marker ON marker.run_id=page."runId"` : sql``}
+  ${input.markers === "include" ? currentTaskMarkerJoins(input.batchId, sql`page."caseType"`, sql`page."caseDefinitionId"`) : sql``}
   ${markedOnly ? sql`` : sql`LEFT JOIN ddt_cases ddt ON page."caseType"='ddt' AND ddt.id=page."caseDefinitionId"`}
   ORDER BY page."className",page."displayName",page."runId",page.round`;
 }

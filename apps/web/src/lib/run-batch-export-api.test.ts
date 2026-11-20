@@ -448,7 +448,7 @@ describe("execution result export time zone", () => {
           outcomes: ["failed"],
           projectIds: ["project"],
         },
-        undefined,
+        { includeMarkerColumns: true, signal: expect.any(AbortSignal) },
       );
     },
   );

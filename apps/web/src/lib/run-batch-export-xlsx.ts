@@ -132,7 +132,7 @@ export async function buildRunBatchExportWorkbook(
 ): Promise<{ buffer: Buffer }> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AutoForge";
-  if (input.template === "failure-analysis" && input.markerColumns === undefined)
+  if (input.markerColumns === undefined)
     input = {
       ...input,
       markerColumns: CASE_SUITE_MARKER_HEADERS.flatMap((_, index) =>
@@ -260,6 +260,7 @@ function buildExecutionResultsSheet(
       : []),
     ...EXPORT_COLUMNS.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
+    ...markerExportColumns(input.markerColumns),
     ...EXPORT_COLUMNS.slice(2, -1),
     ...(input.includesAi ? AI_EXPORT_COLUMNS : []),
     ...EXPORT_COLUMNS.slice(-1),
@@ -314,6 +315,7 @@ function executionResultCells(
     row.casePath,
     row.displayName,
     ...ddtExportCells(row, input),
+    ...markerExportCells(row, input),
     OUTCOME_LABELS[row.outcome],
     row.summary ?? "",
     formatExportTimestamp(row.startedAt, timestampFormatter),
@@ -365,7 +367,7 @@ function buildFailureAnalysisSheet(
           ),
         )
       : []),
-    ...(input.markerColumns ?? []).map(() => 22),
+    ...markerExportColumns(input.markerColumns).map((column) => column.minimum),
     FAILURE_ANALYSIS_COLUMN_WIDTHS[2],
     ...(input.includesAi ? AI_EXPORT_COLUMNS.map((column) => column.minimum) : []),
     ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(3),
@@ -399,7 +401,7 @@ function failureAnalysisCells(
     item.casePath,
     item.displayName,
     ...ddtExportCells(item, input),
-    ...(input.markerColumns ?? []).map((index) => item.markers?.[index] ?? ""),
+    ...markerExportCells(item, input),
     item.summary ?? "",
     ...aiAnalysisExportCells(item, input),
     claim ? analystLabel(claim) : "",
@@ -477,6 +479,19 @@ function exportHeaders(
   return exportColumns(input).map((column) => column.header);
 }
 
+function markerExportColumns(indices: readonly number[] = []) {
+  return indices.map((index) => ({
+    header: CASE_SUITE_MARKER_HEADERS[index]!,
+    group: "metadata" as const,
+    minimum: 22,
+    maximum: 32,
+  }));
+}
+
+function markerExportCells(row: RunBatchExportRow, input: RunBatchExportWorkbookInput) {
+  return (input.markerColumns ?? []).map((index) => row.markers?.[index] ?? "");
+}
+
 function exportColumns(
   input: Pick<
     RunBatchExportWorkbookInput,
@@ -490,15 +505,8 @@ function exportColumns(
       : []),
     ...columns.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
-    ...(input.template === "failure-analysis"
-      ? [
-          ...(input.markerColumns ?? []).map((index) => ({
-            header: CASE_SUITE_MARKER_HEADERS[index]!,
-            group: "metadata" as const,
-          })),
-          ...columns.slice(2, 3),
-        ]
-      : []),
+    ...markerExportColumns(input.markerColumns),
+    ...(input.template === "failure-analysis" ? columns.slice(2, 3) : []),
     ...(input.template === "failure-analysis" && input.includesAi ? AI_EXPORT_COLUMNS : []),
     ...columns.slice(input.template === "failure-analysis" ? 3 : 2, -1),
     ...(input.template !== "failure-analysis" && input.includesAi ? AI_EXPORT_COLUMNS : []),

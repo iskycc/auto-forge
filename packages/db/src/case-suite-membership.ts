@@ -163,17 +163,3 @@ export function* writeSuiteMarkers(edits: readonly CaseSuiteMarkerEdit[]): Gener
         ON CONFLICT(member_id) DO UPDATE SET markers_json=excluded.markers_json`;
   }
 }
-
-export function snapshotSuiteMarkers(batchId: string, suiteId: string) {
-  return sql`INSERT INTO execution_run_suite_markers (run_id,batch_id,markers_json)
-    SELECT run.id,run.batch_id,stored.markers_json FROM (
-      SELECT m.case_definition_id AS case_id,'testng' AS kind,marker.markers_json
-      FROM case_suite_items m JOIN case_suite_standard_markers marker ON marker.member_id=m.id
-      WHERE m.suite_id=${suiteId}
-      UNION ALL
-      SELECT m.ddt_case_id,'ddt',marker.markers_json
-      FROM case_suite_ddt_items m JOIN case_suite_ddt_markers marker ON marker.member_id=m.id
-      WHERE m.suite_id=${suiteId}
-    ) stored JOIN execution_runs run ON run.batch_id=${batchId}
-      AND run.case_definition_id=stored.case_id AND run.case_type=stored.kind`;
-}

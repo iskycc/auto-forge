@@ -92,8 +92,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async findBatchServiceAccountPublisher(batchId: string, serviceAccountId: string) {
     await this.ready();
-    const result = await this.handle.pool.query<{ name: string | null }>(
-      `SELECT a.name FROM public_batch_access g
+    const result = await this.handle.pool.query<{ name: string | null; creatorId: string | null }>(
+      `SELECT a.name, a.created_by AS "creatorId" FROM public_batch_access g
        LEFT JOIN service_accounts a ON a.id = g.created_by
        WHERE g.batch_id = $1 AND g.created_by = $2`,
       [batchId, serviceAccountId],

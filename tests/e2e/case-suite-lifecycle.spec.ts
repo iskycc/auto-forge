@@ -176,18 +176,15 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   const claim = await claimDeletionAttempt(page, runner);
   await uploadDeletionLog(page, runner, claim, "member markers export browser fixture");
   await completeDeletionAttempt(page, runner, claim, "failed");
-  const report = await page.request.get(
-    `/api/v1/run-batches/${batch.id}/export?scope=final&template=failure-analysis`,
-  );
-  expect(report.status()).toBe(200);
-  const analysisSheet = (await readExportedWorkbook(await report.body())).worksheets[0]!;
-  const markerColumns: string[] = [];
-  analysisSheet.getRow(1).eachCell((cell, index) => {
-    if (!cell.text.startsWith("标识")) return;
-    markerColumns.push(cell.text);
-    expect(analysisSheet.getCell(2, index).text).toBe(cell.text === "标识1" ? "00017" : "回归重点");
-  });
-  expect(markerColumns).toEqual(["标识1", "标识5"]);
+  await expect
+    .poll(async () => {
+      const progress = await browserJson<{ active: boolean }>(
+        page,
+        `/api/v1/run-batches/${batch.id}/progress`,
+      );
+      return progress.body.active;
+    })
+    .toBe(false);
 
   const ddtCaseId = "钱包-支付-00008";
   const db = await openHistoryFixtureConnection({
@@ -245,6 +242,18 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     items: [{ caseLabel: ddtCaseId, markers: ["", "", "DDT-支付", "", ""] }],
   });
   await markers.getByRole("button", { name: "关闭", exact: true }).last().click();
+
+  for (const template of ["failure-analysis", "results"]) {
+    const query = new URLSearchParams({ scope: "final", template, outcomes: "failed" });
+    const report = await page.request.get(`/api/v1/run-batches/${batch.id}/export?${query}`);
+    expect(report.status()).toBe(200);
+    const sheet = (await readExportedWorkbook(await report.body())).worksheets[0]!;
+    const exportedMarkers: Record<string, string> = {};
+    sheet.getRow(1).eachCell((cell, index) => {
+      if (cell.text.startsWith("标识")) exportedMarkers[cell.text] = sheet.getCell(2, index).text;
+    });
+    expect(exportedMarkers).toEqual({ 标识1: "普通-回归", 标识5: "回归重点" });
+  }
 
   await page.goto(`/cases?targetSuiteId=${suite.id}`);
   await checkbox.check();
