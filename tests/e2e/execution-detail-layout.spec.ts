@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { mkdir, readFile } from "node:fs/promises";
+import { unzipSync } from "fflate";
 import { readExportedWorkbook } from "./support/export-workbook";
 import { resolve } from "node:path";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
@@ -162,10 +163,12 @@ test("console and anonymous execution overviews isolate full-screen case details
             const exportDialog = target.getByRole("dialog", { name: "导出执行结果", exact: true });
             await expect(exportDialog).toBeVisible();
             await expect(exportDialog).not.toHaveClass(/ant-zoom-(?:appear|enter)/u);
-            await expect(exportDialog.getByRole("radio", { name: /分析/ })).toHaveCount(0);
+            await expect(
+              exportDialog.getByRole("radio", { name: /失败用例分析清单/ }),
+            ).toBeEnabled();
             await expect(
               exportDialog.getByRole("button", { name: "导出失败日志 ZIP", exact: true }),
-            ).toHaveCount(0);
+            ).toBeEnabled();
             if (scope === "summary")
               for (const width of [1024, 1536]) {
                 await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -185,6 +188,19 @@ test("console and anonymous execution overviews isolate full-screen case details
             expect(workbook.worksheets[0]!.getRow(1).values!.toString()).not.toContain(
               "AI 初步分析",
             );
+            await expect(exportDialog).not.toBeVisible();
+          }
+          if (theme === "light") {
+            await workspace.getByRole("button", { name: "导出结果", exact: true }).click();
+            const exportDialog = target.getByRole("dialog", { name: "导出执行结果", exact: true });
+            await expect(exportDialog).not.toHaveClass(/ant-zoom-(?:appear|enter)/u);
+            const [archive] = await Promise.all([
+              target.waitForEvent("download"),
+              exportDialog.getByRole("button", { name: "导出失败日志 ZIP", exact: true }).click(),
+            ]);
+            expect(archive.suggestedFilename()).toMatch(/\.zip$/u);
+            const files = unzipSync(await readFile((await archive.path())!));
+            expect(Object.keys(files)).toHaveLength(4);
             await expect(exportDialog).not.toBeVisible();
           }
           await workspace
@@ -237,14 +253,17 @@ test("console and anonymous execution overviews isolate full-screen case details
           await expect(
             workspace.getByRole("button", { name: "导出结果", exact: true }),
           ).toHaveCount(1);
-          for (const name of [
-            "终止任务",
-            "再次执行",
-            "以未通过用例创建任务",
-            "总体调度日志",
-            "AI 初步分析",
-          ])
+          for (const name of ["终止任务", "再次执行", "以未通过用例创建任务"])
             await expect(workspace.getByRole("button", { name, exact: true })).toHaveCount(0);
+          await workspace.getByRole("button", { name: "总体调度日志", exact: true }).click();
+          const scheduling = target.getByRole("dialog", { name: "总体调度日志", exact: true });
+          await expect(scheduling.getByRole("textbox", { name: "搜索调度日志" })).toBeVisible();
+          await scheduling.getByRole("button", { name: "关闭日志终端", exact: true }).click();
+          await workspace.getByRole("button", { name: "AI 初步分析", exact: true }).first().click();
+          const analysis = target.getByRole("dialog", { name: "用例 AI 初步分析" });
+          await expect(analysis.getByText("尚无初析记录", { exact: true })).toBeVisible();
+          await expect(analysis.getByRole("button", { name: /重新分析|取消分析/ })).toHaveCount(0);
+          await analysis.getByRole("button", { name: "关闭", exact: true }).last().click();
           await expect(
             workspace.getByRole("link", { name: "查看公开日志", exact: true }).first(),
           ).toHaveAttribute("target", "_blank");

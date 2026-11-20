@@ -9,20 +9,19 @@ import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, bearerToken, readJsonBody } from "@/lib/api-response";
-import { authenticateRequest } from "@/lib/auth";
+import { authorizeAttemptRead } from "@/lib/execution-public-access";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ attemptId: string }> };
 
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {
-    const identity = await authenticateRequest(request);
     const { attemptId } = await context.params;
     const query = attemptLogQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams),
     );
     const services = await getPlatformServices();
-    const projectIds = services.identityAccess.projectScope(identity, "log.read");
+    const { projectIds } = await authorizeAttemptRead(request, attemptId, "log.read", services);
     return NextResponse.json(
       await services.executionControl.listLogs({
         attemptId,
@@ -34,6 +33,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         ...(query.recordedAfter ? { recordedAfter: query.recordedAfter } : {}),
         ...(query.recordedBefore ? { recordedBefore: query.recordedBefore } : {}),
       }),
+      { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {
     return apiErrorResponse(error);

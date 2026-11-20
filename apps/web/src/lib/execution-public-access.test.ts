@@ -4,18 +4,58 @@ import { DomainError } from "@autoforge/domain";
 vi.mock("server-only", () => ({}));
 const { authenticateRequest } = vi.hoisted(() => ({ authenticateRequest: vi.fn() }));
 vi.mock("./auth", () => ({ authenticateRequest }));
-import { executionReadProjectScope } from "./execution-public-access";
+import { authorizeAttemptRead, executionReadProjectScope } from "./execution-public-access";
 import { issuePermanentShareToken } from "./permanent-share-token";
 
 const services = {
   config: { masterKey: "a".repeat(64) },
   identityAccess: { projectScope: vi.fn() },
-  publicExecutionAccess: { isBatchPublic: vi.fn() },
+  publicExecutionAccess: { isBatchPublic: vi.fn(), assertAttemptInBatch: vi.fn() },
 };
 const request = new Request("http://localhost/api/v1/run-batches/batch-1/cases");
 beforeEach(() => {
   vi.resetAllMocks();
   services.identityAccess.projectScope.mockReturnValue(["project-1"]);
+});
+
+describe("public batch attempt reads", () => {
+  it("checks the exact attempt in the published batch without reading the session", async () => {
+    services.publicExecutionAccess.isBatchPublic.mockResolvedValue(true);
+    const url = new Request("http://localhost/attempt/logs?public=1&batchId=batch-1");
+    expect(await authorizeAttemptRead(url, "attempt-1", "log.read", services)).toEqual({
+      actorId: "public-execution",
+      shared: true,
+    });
+    expect(services.publicExecutionAccess.assertAttemptInBatch).toHaveBeenCalledWith(
+      "batch-1",
+      "attempt-1",
+    );
+    expect(authenticateRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unpublished batch before looking up its attempt", async () => {
+    services.publicExecutionAccess.isBatchPublic.mockResolvedValue(false);
+    const url = new Request("http://localhost/attempt/logs?public=1&batchId=batch-1");
+    await expect(
+      authorizeAttemptRead(url, "attempt-1", "log.read", services),
+    ).rejects.toMatchObject({
+      code: "RUN_BATCH_SHARE_TOKEN_INVALID",
+    });
+    expect(services.publicExecutionAccess.assertAttemptInBatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects foreign attempts even under a valid legacy batch signature", async () => {
+    const accessToken = issuePermanentShareToken(services.config.masterKey, "run_batch", "batch-1");
+    services.publicExecutionAccess.assertAttemptInBatch.mockRejectedValue(
+      new DomainError("RUN_ATTEMPT_NOT_FOUND", "Wrong batch"),
+    );
+    const url = new Request(
+      `http://localhost/attempt/ticket?batchId=batch-1&access_token=${accessToken}`,
+    );
+    await expect(authorizeAttemptRead(url, "foreign", "log.read", services)).rejects.toMatchObject({
+      code: "RUN_ATTEMPT_NOT_FOUND",
+    });
+  });
 });
 
 describe("execution public read boundary", () => {

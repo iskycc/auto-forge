@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { LogReadAdmission } from "./log-read-admission";
 
 describe("log request admission", () => {
+  it("reserves progress and single-log reading capacity when archive exports occupy both slots", () => {
+    const admission = new LogReadAdmission(1);
+    const archive = "/api/v1/run-batches/batch/failure-logs/export?scope=final&public=1";
+    const first = admission.acquire("GET", archive);
+    expect(first.admitted).toBe(true);
+    expect(admission.acquire("GET", archive).admitted).toBe(true);
+    expect(admission.acquire("GET", archive).admitted).toBe(false);
+    expect(admission.acquire("GET", "/api/v1/run-attempts/one/logs?public=1").admitted).toBe(true);
+    expect(admission.acquire("POST", "/api/v1/run-attempts/one/logs").admitted).toBe(true);
+    first.release();
+    first.release();
+    expect(admission.acquire("GET", archive).admitted).toBe(true);
+    expect(admission.acquire("GET", archive).admitted).toBe(false);
+  });
+
   it.each(["GET", "HEAD"])(
     "counts %s business-ID log pages against the shared read capacity",
     (method) => {

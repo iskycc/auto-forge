@@ -1,5 +1,7 @@
-import { type CaseSuiteMarkerEdit, type CaseSuiteMemberKind } from "@autoforge/contracts";
 import type {
+  CaseSuiteMarkerEdit,
+  CaseSuiteMarkerImportRow,
+  CaseSuiteMemberKind,
   CopyCaseSuiteInput,
   CreateFailureCaseSuiteInput,
   CreateCaseSuiteInput,
@@ -667,14 +669,66 @@ export class CaseSuiteService {
 
   async *exportMarkerMembers(suiteId: string, projectIds?: readonly string[]) {
     await this.getSummary(suiteId, projectIds);
+    yield* this.readMarkerMembers(suiteId);
+  }
+
+  private async *readMarkerMembers(suiteId: string, signal?: AbortSignal) {
     for (const kind of ["standard", "ddt"] as const) {
       let cursor: string | undefined;
       do {
-        const page = await this.suites.listMarkerMembers(suiteId, kind, cursor, 200, "");
+        signal?.throwIfAborted();
+        const page = await this.suites.listMarkerMembers(suiteId, kind, cursor, 500, "");
         yield* page.items;
         cursor = page.nextCursor;
       } while (cursor);
     }
+  }
+
+  async importMemberMarkers(
+    suiteId: string,
+    rows: readonly CaseSuiteMarkerImportRow[],
+    expectedRevision: number,
+    actorId: string,
+    projectIds?: readonly string[],
+    signal?: AbortSignal,
+  ) {
+    const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteEditable(suite, actorId);
+    assertCaseSuiteRevision(suite.revision, expectedRevision);
+    const rowsByLabel = new Map<string, CaseSuiteMarkerImportRow>();
+    for (const row of rows) {
+      const previous = rowsByLabel.get(row.caseLabel);
+      if (previous)
+        throw new DomainError(
+          "CASE_SUITE_MARKER_ROWS_INVALID",
+          `第 ${row.rowNumber} 行的用例与第 ${previous.rowNumber} 行重复，请每个用例只保留一行。`,
+        );
+      rowsByLabel.set(row.caseLabel, row);
+    }
+
+    const editsByLabel = new Map<string, CaseSuiteMarkerEdit>();
+    for await (const { caseLabel, kind, memberId } of this.readMarkerMembers(suiteId, signal)) {
+      const row = rowsByLabel.get(caseLabel);
+      if (!row) continue;
+      if (editsByLabel.has(caseLabel))
+        throw new DomainError(
+          "CASE_SUITE_MARKER_ROWS_INVALID",
+          `第 ${row.rowNumber} 行匹配到当前任务的多个用例，请在任务内单独编辑这些用例的标识。`,
+        );
+      editsByLabel.set(caseLabel, { kind, memberId, markers: row.markers });
+    }
+
+    const edits = rows.map(({ rowNumber, caseLabel }) => {
+      const edit = editsByLabel.get(caseLabel);
+      if (!edit)
+        throw new DomainError(
+          "CASE_SUITE_MARKER_MEMBER_MISMATCH",
+          `第 ${rowNumber} 行的用例不在当前任务中，请核对类路径或 CaseID。`,
+        );
+      return edit;
+    });
+    signal?.throwIfAborted();
+    return this.writeMemberMarkers(suiteId, edits, expectedRevision, actorId);
   }
 
   async updateMemberMarkers(
@@ -685,6 +739,15 @@ export class CaseSuiteService {
     projectIds?: readonly string[],
   ) {
     assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
+    return this.writeMemberMarkers(suiteId, edits, expectedRevision, actorId);
+  }
+
+  private writeMemberMarkers(
+    suiteId: string,
+    edits: readonly CaseSuiteMarkerEdit[],
+    expectedRevision: number,
+    actorId: string,
+  ) {
     if (
       edits.length === 0 ||
       new Set(edits.map((edit) => `${edit.kind}:${edit.memberId}`)).size !== edits.length

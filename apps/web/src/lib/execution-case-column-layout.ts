@@ -3,7 +3,6 @@ export const executionCaseColumnWidthsRem = {
   duration: 4.75,
   // Three compact actions need 263px, plus the two 9px cell insets.
   actions: 18,
-  sharedActions: 12,
 } as const;
 
 export const minimumCaseNameWidthCh = 22;
@@ -13,16 +12,11 @@ const minimumFailureStatusWidthCh = 24;
 export function executionCaseColumnLayout({
   widths,
   showRoundColumn,
-  access,
 }: {
   widths: { case: number; status: number; runner: number };
   showRoundColumn: boolean;
-  access: "console" | "public";
 }) {
-  const actionsWidthRem =
-    access === "public"
-      ? executionCaseColumnWidthsRem.sharedActions
-      : executionCaseColumnWidthsRem.actions;
+  const actionsWidthRem = executionCaseColumnWidthsRem.actions;
   const fixedWidthRem =
     executionCaseColumnWidthsRem.duration +
     actionsWidthRem +

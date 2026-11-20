@@ -63,6 +63,17 @@ async function updateMarkers(request: Request, { params }: Context, operation: "
         ? await readMarkerEdit(request)
         : await readMarkerImport(request, services);
     request.signal.throwIfAborted();
+    if ("rows" in input) {
+      const updated = await services.caseSuites.importMemberMarkers(
+        suiteId,
+        input.rows,
+        input.expectedRevision,
+        identity.user.id,
+        scope,
+        request.signal,
+      );
+      return Response.json({ revision: updated.revision, updatedCount: input.rows.length });
+    }
     const updated = await services.caseSuites.updateMemberMarkers(
       suiteId,
       input.edits,
@@ -94,7 +105,7 @@ async function readMarkerImport(
   try {
     return {
       expectedRevision,
-      edits: await services.parseCaseSuiteMarkers(file.content, file.fileName),
+      rows: await services.parseCaseSuiteMarkers(file.content, file.fileName),
     };
   } catch (cause) {
     if (isDomainError(cause) || cause instanceof ZodError) throw cause;

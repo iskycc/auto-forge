@@ -6,6 +6,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
+import { executionReadProjectScope } from "@/lib/execution-public-access";
+import {
+  executionShareAccess,
+  executionShareQuerySchema,
+  hasExecutionShareAccess,
+} from "@/lib/execution-share-query";
 import { getPlatformServices } from "@/lib/services";
 import { attemptLogExportText } from "@/lib/attempt-log-export";
 import {
@@ -16,7 +22,7 @@ import {
 import { failureLogsExportFilename, exportContentDisposition } from "@/lib/export-filename";
 import { readRunBatchExportFile } from "@/lib/run-batch-export-file";
 
-const querySchema = z.object({
+const querySchema = executionShareQuerySchema.extend({
   scope: z.enum(["round", "final", "all"]),
   round: z.coerce.number().int().min(1).optional(),
 });
@@ -24,13 +30,18 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ batchId: string }> }) {
   try {
-    const identity = await authenticateRequest(request);
     const { batchId } = await context.params;
     const query = querySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
     if (query.scope === "round" && query.round === undefined)
       throw new DomainError("INVALID_ROUND", "按轮次导出时必须提供轮次号。");
     const services = await getPlatformServices();
-    const projectIds = services.identityAccess.projectScope(identity, "run.read");
+    const access = executionShareAccess(query);
+    const identity = hasExecutionShareAccess(access)
+      ? undefined
+      : await authenticateRequest(request);
+    const projectIds = identity
+      ? services.identityAccess.projectScope(identity, "run.read")
+      : await executionReadProjectScope(request, batchId, access, services);
     const exported = await services.runBatchExport.prepare({
       batchId,
       scope: query.scope,
@@ -38,7 +49,7 @@ export async function GET(request: Request, context: { params: Promise<{ batchId
       outcomes: [...FAILURE_ANALYSIS_EXPORT_OUTCOMES],
       ...(projectIds ? { projectIds } : {}),
     });
-    services.identityAccess.authorize(identity, "log.read", exported.projectId);
+    if (identity) services.identityAccess.authorize(identity, "log.read", exported.projectId);
     async function* entries(): AsyncGenerator<FailureLogArchiveEntry> {
       let ordinal = 0;
       for await (const rows of exported.pages) {

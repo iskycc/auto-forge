@@ -812,8 +812,13 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await expectUiIntegrity(anonymousPage);
     await captureUi(anonymousPage, "shared-execution-dark", 1536);
     await anonymousPage.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
-    await expect(anonymousPage.locator(".runner-card")).toHaveCount(1);
-    await expect(anonymousPage.locator(".runner-card").getByRole("button")).toHaveCount(0);
+    const runnerCard = anonymousPage.locator(".runner-card");
+    await expect(runnerCard).toHaveCount(1);
+    await expect(runnerCard.getByRole("button")).toHaveText("调度日志");
+    await runnerCard.getByRole("button", { name: "调度日志", exact: true }).click();
+    const scheduling = anonymousPage.getByRole("dialog", { name: /调度日志$/u });
+    await expect(scheduling.getByRole("textbox", { name: "搜索调度日志" })).toBeVisible();
+    await scheduling.getByRole("button", { name: "关闭日志终端", exact: true }).click();
     await expectUiIntegrity(anonymousPage);
     await anonymousPage.locator(".round-tab-toolbar").getByText("用例", { exact: true }).click();
     for (const executionPath of [share.body.shareUrl, legacyExecutionPath(fixture.batchId)]) {

@@ -3,13 +3,18 @@ import { z } from "zod";
 import { apiErrorResponse } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
-import { authenticateRequest } from "@/lib/auth";
+import { executionReadProjectScope } from "@/lib/execution-public-access";
+import {
+  executionShareAccess,
+  executionShareQuerySchema,
+  hasExecutionShareAccess,
+} from "@/lib/execution-share-query";
 
 type Context = { params: Promise<{ batchId: string }> };
 
 // 查询参数在入口校验：limit 有上限，避免无界查询。
-const querySchema = z
-  .object({
+const querySchema = executionShareQuerySchema
+  .extend({
     query: z.string().trim().max(256).optional(),
     runnerId: z.string().min(1).max(128).optional(),
     afterId: z.string().min(1).max(128).optional(),
@@ -31,12 +36,12 @@ const querySchema = z
 
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {
-    const identity = await authenticateRequest(request);
     const { batchId } = await context.params;
     const url = new URL(request.url);
     const query = querySchema.parse(Object.fromEntries(url.searchParams));
     const services = await getPlatformServices();
-    const projectIds = services.identityAccess.projectScope(identity, "run.read");
+    const access = executionShareAccess(query);
+    const projectIds = await executionReadProjectScope(request, batchId, access, services);
     // 只读取批次摘要完成范围校验，不能为了鉴权加载数十万条 run/attempt。
     await services.runBatches.getMetadata(batchId, projectIds);
     const page = await services.runBatches.listSchedulingEvents(batchId, {
@@ -48,11 +53,21 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       ...(query.latest !== undefined ? { latest: query.latest } : {}),
     });
     // nextAfterId 缺失时不输出 undefined 值，保持 JSON 形状稳定。
-    return NextResponse.json({
-      items: page.items,
-      ...(page.nextAfterId !== undefined ? { nextAfterId: page.nextAfterId } : {}),
-      ...(page.nextBeforeId !== undefined ? { nextBeforeId: page.nextBeforeId } : {}),
-    });
+    return NextResponse.json(
+      {
+        items: hasExecutionShareAccess(access)
+          ? page.items.map(({ payload, ...event }) => ({
+              ...event,
+              ...(event.eventType === "attempt_completed"
+                ? { payload: { outcome: payload?.outcome } }
+                : {}),
+            }))
+          : page.items,
+        ...(page.nextAfterId !== undefined ? { nextAfterId: page.nextAfterId } : {}),
+        ...(page.nextBeforeId !== undefined ? { nextBeforeId: page.nextBeforeId } : {}),
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     return apiErrorResponse(error);
   }

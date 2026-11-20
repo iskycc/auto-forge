@@ -48,6 +48,12 @@ export class PublicExecutionAccessService {
     return this.access.isBatchPublic(batchId);
   }
 
+  async assertAttemptInBatch(batchId: string, attemptId: string): Promise<void> {
+    const attempt = await this.executions.resolveAttemptSchedulingContext(attemptId);
+    if (attempt?.batchId !== batchId)
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在或不属于该批次。");
+  }
+
   async readAttemptLog(
     anchorAttemptId: string,
     selectedAttemptId?: string,

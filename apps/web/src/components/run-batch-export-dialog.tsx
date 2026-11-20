@@ -37,7 +37,6 @@ export function RunBatchExportDialog({
   onClose: () => void;
   access?: RunBatchExportAccess;
 }) {
-  const publicExport = !!(access?.accessToken || access?.publicAccess);
   const [scope, setScope] = useState<RunBatchExportScope>(
     defaultScope ?? (round === undefined ? "all" : "round"),
   );
@@ -58,6 +57,7 @@ export function RunBatchExportDialog({
     onDownloaded: onClose,
     downloadFile: downloadFailureLogsExport,
     failureMessage: "导出失败日志失败。",
+    ...(access ? { access } : {}),
   });
   const exporting = exportingWorkbook || failureLogs.exporting;
   const hasSelection = template === "failure-analysis" || selectedOutcomes.length > 0;
@@ -79,11 +79,7 @@ export function RunBatchExportDialog({
         open
         inactive={report !== null}
         title="导出执行结果"
-        description={
-          publicExport
-            ? "按所选范围导出公开执行结果或失败用例分析清单。"
-            : "选择导出范围，可分别下载 Excel 或失败日志 ZIP。"
-        }
+        description="选择导出范围，可分别下载 Excel 或失败日志 ZIP。"
         onClose={onClose}
         closeDisabled={exporting}
         footer={
@@ -184,37 +180,35 @@ export function RunBatchExportDialog({
           ) : (
             <Notice tone="info">分析结果列可选：重跑通过、用例问题已修改、代码问题已提单。</Notice>
           )}
-          {!publicExport ? (
-            <section
-              aria-label="失败日志导出"
-              className="grid min-w-0 gap-3 rounded-lg border border-border bg-muted/40 p-3"
-            >
-              <div>
-                <h3 className="m-0 text-sm font-semibold">失败日志</h3>
-                <p className="m-0 mt-1 text-xs leading-5 text-muted-foreground">
-                  独立下载 ZIP，范围沿用上方选择，仅包含失败或异常结束的执行记录。每例一个完整 .log
-                  文件，按类路径／CaseID 命名，清理颜色控制字符；不修改 Excel 内容。
-                </p>
-              </div>
-              <div>
-                <Button
-                  type="button"
-                  disabled={exporting}
-                  loading={failureLogs.exporting}
-                  aria-label="导出失败日志 ZIP"
-                  onClick={() => {
-                    const parameters = new URLSearchParams({ scope });
-                    if (scope === "round" && round !== undefined)
-                      parameters.set("round", String(round));
-                    void failureLogs.exportFile(parameters.toString());
-                  }}
-                >
-                  <Download size={15} aria-hidden="true" />
-                  导出失败日志 ZIP
-                </Button>
-              </div>
-            </section>
-          ) : null}
+          <section
+            aria-label="失败日志导出"
+            className="grid min-w-0 gap-3 rounded-lg border border-border bg-muted/40 p-3"
+          >
+            <div>
+              <h3 className="m-0 text-sm font-semibold">失败日志</h3>
+              <p className="m-0 mt-1 text-xs leading-5 text-muted-foreground">
+                独立下载 ZIP，范围沿用上方选择，仅包含失败或异常结束的执行记录。每例一个完整 .log
+                文件，按类路径／CaseID 命名，清理颜色控制字符；不修改 Excel 内容。
+              </p>
+            </div>
+            <div>
+              <Button
+                type="button"
+                disabled={exporting}
+                loading={failureLogs.exporting}
+                aria-label="导出失败日志 ZIP"
+                onClick={() => {
+                  const parameters = new URLSearchParams({ scope });
+                  if (scope === "round" && round !== undefined)
+                    parameters.set("round", String(round));
+                  void failureLogs.exportFile(parameters.toString());
+                }}
+              >
+                <Download size={15} aria-hidden="true" />
+                导出失败日志 ZIP
+              </Button>
+            </div>
+          </section>
           {failureLogs.error ? (
             <Notice tone="error" role="alert">
               {failureLogs.error}

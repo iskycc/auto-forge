@@ -52,11 +52,13 @@ function formatEventTime(value: string): string {
 
 export function SchedulingLogViewer({
   batchId,
+  shareQuery = "",
   runnerId,
   title,
   onClose,
 }: {
   batchId: string;
+  shareQuery?: string;
   runnerId: string | undefined;
   title: string;
   onClose: () => void;
@@ -97,6 +99,7 @@ export function SchedulingLogViewer({
       <SchedulingLogWindow
         key={JSON.stringify([batchId, runnerId, query, search.revision])}
         batchId={batchId}
+        shareQuery={shareQuery}
         runnerId={runnerId}
         query={query}
       />
@@ -107,14 +110,16 @@ export function SchedulingLogViewer({
 /** Keep one cursor page in memory. Opening a dialog must never drain its full history. */
 function SchedulingLogWindow({
   batchId,
+  shareQuery,
   runnerId,
   query,
 }: {
   batchId: string;
+  shareQuery: string;
   runnerId: string | undefined;
   query: string;
 }) {
-  const cacheKey = `scheduling-events:v2:${JSON.stringify([batchId, runnerId, query])}`;
+  const cacheKey = `scheduling-events:v2:${JSON.stringify([batchId, runnerId, query, shareQuery])}`;
   const [cacheEpoch] = useState(browserCacheEpoch);
   const [page, setPage] = useState<EventPage>(
     () => (readBrowserSnapshot(cacheKey) as EventPage | undefined) ?? { items: [] },
@@ -140,12 +145,12 @@ function SchedulingLogWindow({
       }
       if (initial) setLoading(true);
       try {
-        const parameters = new URLSearchParams({
+        const parameters = new URLSearchParams(shareQuery);
+        for (const [name, value] of Object.entries({
           limit: String(PAGE_SIZE),
-          ...Object.fromEntries(
-            Object.entries(cursor).map(([name, value]) => [name, String(value)]),
-          ),
-        });
+          ...cursor,
+        }))
+          parameters.set(name, String(value));
         if (runnerId) parameters.set("runnerId", runnerId);
         if (query) parameters.set("query", query);
         const response = await fetch(
@@ -199,7 +204,7 @@ function SchedulingLogWindow({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [batchId, runnerId, query, cacheKey, cacheEpoch, cursor, live, revision]);
+  }, [batchId, runnerId, query, shareQuery, cacheKey, cacheEpoch, cursor, live, revision]);
 
   useEffect(() => {
     const log = logRef.current;

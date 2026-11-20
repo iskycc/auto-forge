@@ -20,9 +20,11 @@ function gibibytes(bytes: number): string {
 
 export function ConcurrencyDiagnosticsDialog({
   batchId,
+  shareQuery = "",
   onClose,
 }: {
   batchId: string;
+  shareQuery?: string;
   onClose: () => void;
 }) {
   const [result, setResult] = useState<ConcurrencyDiagnostics | null>(null);
@@ -41,7 +43,7 @@ export function ConcurrencyDiagnosticsDialog({
       setError("");
       try {
         const response = await fetch(
-          `/api/v1/run-batches/${encodeURIComponent(batchId)}/concurrency-diagnostics`,
+          `/api/v1/run-batches/${encodeURIComponent(batchId)}/concurrency-diagnostics${shareQuery ? `?${shareQuery}` : ""}`,
           { cache: "no-store", signal: controller.signal },
         );
         if (!response.ok)
@@ -61,7 +63,7 @@ export function ConcurrencyDiagnosticsDialog({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [batchId, revision]);
+  }, [batchId, revision, shareQuery]);
   return (
     <Dialog
       open

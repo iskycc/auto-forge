@@ -31,15 +31,21 @@ function streamLabel(stream: LogStream): string {
   return { stdout: "标准输出", stderr: "错误输出", agent: "Agent 诊断" }[stream];
 }
 
-function parseLiveLogMessage(value: unknown): { chunks: LogChunk[] } | null {
+function parseLiveLogMessage(value: unknown, attemptId: string): { chunks: LogChunk[] } | null {
   if (typeof value !== "string") return null;
   try {
     const parsed = JSON.parse(value) as {
       schemaVersion?: unknown;
       type?: unknown;
       chunks?: unknown;
+      attemptId?: unknown;
     };
-    if (parsed.schemaVersion !== 1 || parsed.type !== "chunks" || !Array.isArray(parsed.chunks)) {
+    if (
+      parsed.schemaVersion !== 1 ||
+      parsed.type !== "chunks" ||
+      parsed.attemptId !== attemptId ||
+      !Array.isArray(parsed.chunks)
+    ) {
       return null;
     }
     const chunks = parsed.chunks.filter(
@@ -74,19 +80,23 @@ function toIsoFilter(value: string): string | undefined {
 export function AttemptLogViewer({
   attemptId,
   attemptStatus,
+  batchTerminal = false,
   canReadLogs,
   canRetryRuns,
   onClose,
   logEndpoint,
+  shareQuery = "",
   initialStream = "stdout",
 }: {
   attemptId: string;
   attemptStatus: RunAttempt["status"];
+  batchTerminal?: boolean;
   canReadLogs: boolean;
   canRetryRuns: boolean;
   onClose: () => void;
   /** A scoped, read-only log source; execution and live-stream endpoints stay unchanged. */
   logEndpoint?: string;
+  shareQuery?: string;
   initialStream?: LogStream;
 }) {
   const [stream, setStream] = useState<LogStream>(initialStream);
@@ -110,7 +120,9 @@ export function AttemptLogViewer({
     status: attemptStatus,
   });
   const viewingManualRerun = activeAttempt.id !== attemptId;
-  const attemptTerminal = isTerminalAttemptStatus(activeAttempt.status);
+  const attemptTerminal = isTerminalAttemptStatus(
+    viewingManualRerun ? activeAttempt.status : attemptStatus,
+  );
 
   const loadLogs = useCallback(
     async (
@@ -127,11 +139,10 @@ export function AttemptLogViewer({
       setLoading(true);
       setError("");
       try {
-        const parameters = new URLSearchParams({
-          stream: selectedStream,
-          afterSequence: String(afterSequence),
-          limit: "200",
-        });
+        const parameters = new URLSearchParams(shareQuery);
+        parameters.set("stream", selectedStream);
+        parameters.set("afterSequence", String(afterSequence));
+        parameters.set("limit", "200");
         if (search.trim()) parameters.set("query", search.trim());
         const afterTimestamp = toIsoFilter(timeRange.after);
         const beforeTimestamp = toIsoFilter(timeRange.before);
@@ -159,7 +170,7 @@ export function AttemptLogViewer({
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [activeAttempt.id, logEndpoint],
+    [activeAttempt.id, logEndpoint, shareQuery],
   );
 
   useEffect(() => {
@@ -183,69 +194,112 @@ export function AttemptLogViewer({
     if (
       !canReadLogs ||
       attemptTerminal ||
+      (batchTerminal && !viewingManualRerun) ||
       activeQuery ||
       activeTimeRange.after ||
       activeTimeRange.before
     ) {
       return;
     }
-    let disposed = false;
+    if (logEndpoint) return;
+    const controller = new AbortController();
     let socket: WebSocket | undefined;
     let reconnectTimer: number | undefined;
+    let reconnects = 0;
+    let connecting = false;
+    const stop = () => {
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+      socket?.close(1000, "Log view changed");
+      socket = undefined;
+    };
+    const scheduleReconnect = (delay: number) => {
+      if (controller.signal.aborted || document.hidden || reconnects >= 8) return;
+      reconnects += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined;
+        void connect();
+      }, delay);
+    };
     const connect = async (): Promise<void> => {
+      if (controller.signal.aborted || document.hidden || connecting || socket) return;
+      connecting = true;
       try {
         const response = await fetch(
-          `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/log-stream-ticket`,
-          { method: "POST" },
+          `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/log-stream-ticket${shareQuery ? `?${shareQuery}` : ""}`,
+          {
+            method: "POST",
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+          },
         );
-        if (!response.ok || disposed) return;
+        if (controller.signal.aborted || document.hidden) return;
+        if (!response.ok) {
+          if (response.status === 429 || response.status >= 500) scheduleReconnect(5_000);
+          return;
+        }
         const payload = (await response.json()) as { ticket?: string };
-        if (!payload.ticket || disposed) return;
+        if (!payload.ticket || controller.signal.aborted || document.hidden) return;
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        socket = new WebSocket(
+        const connection = new WebSocket(
           `${protocol}//${window.location.host}/api/v1/log-stream`,
           `autoforge-log.${payload.ticket}`,
         );
-        socket.onopen = () => {
-          if (disposed) return;
+        socket = connection;
+        connection.onopen = () => {
+          if (controller.signal.aborted || socket !== connection) return;
           setLiveLogs(true);
           void loadLogs(stream, "", { after: "", before: "" }, -1);
         };
-        socket.onmessage = (event) => {
-          if (disposed) return;
-          const message = parseLiveLogMessage(event.data);
+        connection.onmessage = (event) => {
+          if (controller.signal.aborted || socket !== connection) return;
+          const message = parseLiveLogMessage(event.data, activeAttempt.id);
           if (!message) return;
           const incoming = message.chunks.filter((chunk) => chunk.stream === stream);
           if (incoming.length === 0) return;
           setLogs((current) => mergeLogChunks(current, incoming));
         };
-        socket.onclose = () => {
-          if (disposed) return;
+        connection.onclose = () => {
+          if (controller.signal.aborted || socket !== connection) return;
+          socket = undefined;
           setLiveLogs(false);
-          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+          scheduleReconnect(2_000);
         };
-        socket.onerror = () => socket?.close();
+        connection.onerror = () => connection.close();
       } catch {
-        if (disposed) return;
-        setLiveLogs(false);
-        reconnectTimer = window.setTimeout(() => void connect(), 5_000);
+        scheduleReconnect(5_000);
+      } finally {
+        connecting = false;
       }
     };
+    const syncVisibility = () => {
+      if (document.hidden) {
+        stop();
+        setLiveLogs(false);
+      } else {
+        reconnects = 0;
+        void connect();
+      }
+    };
+    document.addEventListener("visibilitychange", syncVisibility);
     void connect();
     return () => {
-      disposed = true;
+      controller.abort();
+      document.removeEventListener("visibilitychange", syncVisibility);
+      stop();
       setLiveLogs(false);
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      socket?.close(1000, "Log view changed");
     };
   }, [
     activeAttempt.id,
     activeQuery,
     activeTimeRange,
     attemptTerminal,
+    batchTerminal,
     canReadLogs,
     loadLogs,
+    logEndpoint,
+    shareQuery,
     stream,
+    viewingManualRerun,
   ]);
 
   const sequenceGaps = useMemo(() => {

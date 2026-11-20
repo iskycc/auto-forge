@@ -8,6 +8,76 @@ import type { PlatformOperationsRepository, RunBatchRepository } from "../src/po
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 
+describe("execution initiator display", () => {
+  const accountId = "01938a71-e952-7c74-b015-90c9db6c2d4e";
+  const batch = {
+    id: "batch-1",
+    projectId: "project-1",
+    requestedBy: { username: `service-${accountId}`, source: "local" as const },
+  };
+  const reader = (): AuthenticatedIdentity => ({
+    ...projectIdentity,
+    projectPermissions: { "project-1": ["run.read" as const] },
+  });
+
+  function fixture() {
+    const findBatchServiceAccountPublisher =
+      vi.fn<PlatformOperationsRepository["findBatchServiceAccountPublisher"]>();
+    const service = new PlatformOperationsService(
+      { findBatchServiceAccountPublisher } as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    return { findBatchServiceAccountPublisher, service };
+  }
+
+  it("uses the recorded service publisher's configured name for readers without account management permissions", async () => {
+    const { findBatchServiceAccountPublisher, service } = fixture();
+    findBatchServiceAccountPublisher.mockResolvedValue({ name: "支付 Jenkins 流水线" });
+
+    await expect(service.readExecutionInitiatorName(reader(), batch)).resolves.toBe(
+      "支付 Jenkins 流水线",
+    );
+    expect(findBatchServiceAccountPublisher).toHaveBeenCalledExactlyOnceWith(batch.id, accountId);
+  });
+
+  it("distinguishes a deleted publisher from an ordinary user with the same alias", async () => {
+    const { findBatchServiceAccountPublisher, service } = fixture();
+    findBatchServiceAccountPublisher
+      .mockResolvedValueOnce({ name: null })
+      .mockResolvedValueOnce(null);
+
+    await expect(service.readExecutionInitiatorName(reader(), batch)).resolves.toBe(
+      "已删除的服务账号",
+    );
+    await expect(service.readExecutionInitiatorName(reader(), batch)).resolves.toBe(
+      batch.requestedBy.username,
+    );
+  });
+
+  it("keeps LDAP and ordinary local usernames and skips the lookup when the launcher is unknown", async () => {
+    const { findBatchServiceAccountPublisher, service } = fixture();
+
+    await expect(
+      service.readExecutionInitiatorName(reader(), {
+        ...batch,
+        requestedBy: { ...batch.requestedBy, source: "ldap" },
+      }),
+    ).resolves.toBe(batch.requestedBy.username);
+    await expect(
+      service.readExecutionInitiatorName(reader(), {
+        ...batch,
+        requestedBy: { username: "test-operator", source: "local" },
+      }),
+    ).resolves.toBe("test-operator");
+    await expect(
+      service.readExecutionInitiatorName(reader(), { id: batch.id, projectId: batch.projectId }),
+    ).resolves.toBeUndefined();
+    expect(findBatchServiceAccountPublisher).not.toHaveBeenCalled();
+  });
+});
+
 describe("per-suite schedule access", () => {
   function fixture() {
     const findScheduleBySuite = vi

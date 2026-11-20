@@ -46,14 +46,21 @@ export type CaseSuiteChangedMember = { caseId: string; caseLabel: string };
 export type CaseSuiteMembershipPage<T> = { items: T[]; nextCursor?: string };
 
 export const CASE_SUITE_MARKER_SHEET = "任务用例标识";
-export const CASE_SUITE_MARKER_WORKBOOK_HEADERS = [
-  "用例类型",
-  "成员 ID",
-  "用例",
-  ...CASE_SUITE_MARKER_HEADERS,
-] as const;
-export const caseSuiteMarkerEditsSchema = z
-  .array(caseSuiteMarkerEditSchema)
+export const CASE_SUITE_MARKER_WORKBOOK_HEADERS = ["用例", ...CASE_SUITE_MARKER_HEADERS] as const;
+export const caseSuiteMarkerImportRowSchema = z
+  .object({
+    rowNumber: z
+      .number()
+      .int()
+      .min(2)
+      .max(CASE_SUITE_MARKER_IMPORT_LIMIT + 1),
+    caseLabel: z.string().min(1),
+    markers: caseSuiteMarkersSchema,
+  })
+  .strict();
+export type CaseSuiteMarkerImportRow = z.infer<typeof caseSuiteMarkerImportRowSchema>;
+export const caseSuiteMarkerImportRowsSchema = z
+  .array(caseSuiteMarkerImportRowSchema)
   .min(1)
   .max(CASE_SUITE_MARKER_IMPORT_LIMIT);
 export const caseSuiteMarkerRevisionSchema = z.number().int().nonnegative();

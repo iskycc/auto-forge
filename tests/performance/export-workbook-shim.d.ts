@@ -55,6 +55,7 @@ declare module "exceljs" {
         | {
             getCell(reference: string): ExportedCell;
             actualRowCount: number;
+            columnCount: number;
           }
         | undefined;
     };

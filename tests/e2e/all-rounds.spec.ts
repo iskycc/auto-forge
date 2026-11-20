@@ -37,14 +37,14 @@ const RECOVERY_READY_TIMEOUT_MS = 45_000;
  * - 全部轮次视图导出走 scope=all（逐条记录、Excel 含轮次列）。
  */
 
-async function captureUi(page: Page, name: string): Promise<void> {
+async function captureUi(page: Page, name: string, fullPage = true): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!screenshotDirectory) return;
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
   await page.screenshot({
     path: resolve(absoluteDirectory, `${name}.png`),
-    fullPage: true,
+    fullPage,
     animations: "disabled",
   });
 }
@@ -256,15 +256,19 @@ async function browserSessionHeaders(page: Page): Promise<Record<string, string>
 async function issueJenkinsApiToken(
   page: Page,
   permissions = ["run.create", "run.read", "project.manage"],
-): Promise<string> {
-  const account = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
-    method: "POST",
-    body: {
-      name: uniqueName("jenkins-e2e"),
-      description: "Jenkins 插件端到端验收",
-      projectPermissions: { [DEFAULT_PROJECT_ID]: permissions },
+): Promise<{ token: string; accountName: string; accountId: string }> {
+  const account = await browserJson<{ id: string; name: string }>(
+    page,
+    "/api/v1/service-accounts",
+    {
+      method: "POST",
+      body: {
+        name: uniqueName("Jenkins 执行账号"),
+        description: "Jenkins 插件端到端验收",
+        projectPermissions: { [DEFAULT_PROJECT_ID]: permissions },
+      },
     },
-  });
+  );
   expect(account.status).toBe(201);
   const token = await browserJson<{ token: string }>(
     page,
@@ -280,7 +284,7 @@ async function issueJenkinsApiToken(
   );
   expect(token.status).toBe(201);
   expect(token.body.token).toMatch(/^af_api_/);
-  return token.body.token;
+  return { token: token.body.token, accountName: account.body.name, accountId: account.body.id };
 }
 
 async function publishVersionDependency(
@@ -1121,7 +1125,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // Jenkins 的两个 Pipeline 步骤使用同一种 API Key：依赖按项目版本替换，执行接口
   // 开始时与终态返回同一个免登录完整执行详情链接，机器轮询仍使用独立进度 API。
-  const jenkinsToken = await issueJenkinsApiToken(page);
+  const {
+    token: jenkinsToken,
+    accountName: jenkinsAccountName,
+    accountId: jenkinsAccountId,
+  } = await issueJenkinsApiToken(page);
   const dependencyPublication = await page.request.post("/api/v1/jenkins/dependencies", {
     headers: { authorization: `Bearer ${jenkinsToken}` },
     data: {
@@ -1164,6 +1172,24 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(jenkinsRun.completionTimeoutSeconds).toBe(7 * 24 * 60 * 60);
   expect(jenkinsRun.progressUrl).toBe(jenkinsRun.resultUrl);
   expect(jenkinsRun.resultUrl).toContain("/Execution?BatchId=");
+  const workbenchPage = await page.context().newPage();
+  try {
+    await workbenchPage.goto(`/run-batches/${jenkinsRun.batchId}`);
+    const initiator = workbenchPage.locator(".execution-batch-initiator-username");
+    await expect(initiator).toHaveText(jenkinsAccountName);
+    await expect(initiator).toHaveAttribute("title", jenkinsAccountName);
+    await expect(initiator).not.toContainText(`service-${jenkinsAccountId}`);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await workbenchPage.setViewportSize(viewport);
+      await expectUiIntegrity(workbenchPage);
+      await captureUi(workbenchPage, `jenkins-initiator-${viewport.width}`, false);
+    }
+  } finally {
+    await workbenchPage.close();
+  }
   const anonymousContext = await browser.newContext();
   const anonymousProgressPage = await anonymousContext.newPage();
   const progressPageResponse = await anonymousProgressPage.goto(jenkinsRun.progressUrl);
@@ -1264,12 +1290,89 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   for (let claimed = 0; claimed < 2; claimed += 1) {
     const claim = await claimAssignment(page, identity);
     jenkinsAssignedAddresses.push(claim.assignment.executionSpec.adapter?.environmentAddress);
+    const publicLogDialog = anonymousProgressPage.getByRole("dialog", { name: /^执行日志/ });
+    if (claimed === 0) {
+      const logPath = `/api/v1/run-attempts/${claim.assignment.attemptId}`;
+      const sharedRead = `public=1&batchId=${jenkinsRun.batchId}`;
+      const otherBatch = `public=1&batchId=${randomUUID()}`;
+      expect((await anonymousProgressPage.request.get(`${logPath}/logs?${otherBatch}`)).ok()).toBe(
+        false,
+      );
+      const events = await anonymousProgressPage.request.get(`${logPath}/events?${sharedRead}`);
+      expect(events.status()).toBe(200);
+      expect((await events.json()).items.length).toBeGreaterThan(0);
+      const legacyToken = legacyExecutionPath(jenkinsRun.batchId).split("/").at(-1)!;
+      const legacyTicket = await anonymousProgressPage.request.post(
+        `${logPath}/log-stream-ticket?batchId=${jenkinsRun.batchId}&access_token=${legacyToken}`,
+        { headers: { origin: platformOrigin } },
+      );
+      expect(legacyTicket.status()).toBe(200);
+      for (const query of [otherBatch, `${sharedRead}&manualOnly=1`]) {
+        const response = await anonymousProgressPage.request.post(
+          `${logPath}/log-stream-ticket?${query}`,
+          {
+            headers: { origin: platformOrigin },
+          },
+        );
+        expect(response.ok()).toBe(false);
+      }
+      const foreignAttempt = retryClaim.assignment.attemptId;
+      expect(
+        (
+          await anonymousProgressPage.request.get(
+            `/api/v1/run-attempts/${foreignAttempt}/events?${sharedRead}`,
+          )
+        ).status(),
+      ).toBe(404);
+      expect(
+        (
+          await anonymousProgressPage.request.post(
+            `/api/v1/run-attempts/${foreignAttempt}/log-stream-ticket?${sharedRead}`,
+            {
+              headers: { origin: platformOrigin },
+            },
+          )
+        ).status(),
+      ).toBe(404);
+      await anonymousProgressPage.bringToFront();
+      const row = anonymousProgressPage.getByRole("row").filter({
+        has: anonymousProgressPage.locator(
+          `a[href="/CaseLog?ExecutionId=${claim.assignment.attemptId}"]`,
+        ),
+      });
+      await row.getByRole("button", { name: "查看日志", exact: true }).click();
+      await expect(publicLogDialog.locator(".log-viewer-name")).toContainText("标准输出 · 实时");
+    }
     const stdoutWatermark = await uploadCompressibleAttemptLog(
       page,
       identity,
       claim,
       `jenkins-${claimed}`,
     );
+    if (claimed === 0) {
+      // The Runner sends these chunks after the anonymous socket has connected.
+      await expect(publicLogDialog.locator("pre.execution-log")).toContainText(
+        "compressed public log jenkins-0",
+      );
+      await expect(
+        publicLogDialog.getByRole("button", { name: "执行此用例", exact: true }),
+      ).toHaveCount(0);
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await anonymousProgressPage.setViewportSize(viewport);
+        await expectDialogFitsViewport(anonymousProgressPage, publicLogDialog);
+        await expectUiIntegrity(anonymousProgressPage);
+        await captureUi(
+          anonymousProgressPage,
+          `public-execution-live-log-${viewport.width}`,
+          false,
+        );
+      }
+      await publicLogDialog.getByRole("button", { name: "关闭日志终端", exact: true }).click();
+      await expect(publicLogDialog).toBeHidden();
+    }
     await completeAttempt(page, identity, claim, {
       completionId: `e2e-jenkins-completion-${claimed}`,
       status: "succeeded",
@@ -1349,9 +1452,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(anonymousResultPage.locator(".public-progress-card")).toHaveCount(0);
   await expect(
     anonymousResultPage.getByRole("button", {
-      name: /终止任务|再次执行|查看日志|公开日志|调度日志/,
+      name: /终止任务|再次执行|暂停调度|取消该用例/,
     }),
   ).toHaveCount(0);
+  await expect(
+    anonymousResultPage.getByRole("button", { name: "查看日志", exact: true }).first(),
+  ).toBeVisible();
   await expect(
     anonymousResultPage.getByRole("button", { name: "导出结果", exact: true }),
   ).toBeEnabled();
@@ -2074,7 +2180,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
 
   // Jenkins 使用与插件相同的 API Key 终止接口；接受请求不代表已领取用例完成收尾。
-  const terminationToken = await issueJenkinsApiToken(page, [
+  const { token: terminationToken } = await issueJenkinsApiToken(page, [
     "run.create",
     "run.read",
     "run.cancel",

@@ -94,6 +94,17 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     };
   }
 
+  async findBatchServiceAccountPublisher(batchId: string, serviceAccountId: string) {
+    const row = this.handle.client
+      .prepare(
+        `SELECT a.name FROM public_batch_access g
+         LEFT JOIN service_accounts a ON a.id = g.created_by
+         WHERE g.batch_id = ? AND g.created_by = ?`,
+      )
+      .get(batchId, serviceAccountId) as { name: string | null } | undefined;
+    return row ?? null;
+  }
+
   async listServiceAccounts(
     filter?: Parameters<PlatformOperationsRepository["listServiceAccounts"]>[0],
   ): Promise<ServiceAccount[]> {

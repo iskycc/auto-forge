@@ -13,6 +13,38 @@ import type {
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 
+describe("case suite marker workbook import", () => {
+  it.each([
+    { duplicateInWorkbook: true, message: "第 4 行的用例与第 2 行重复" },
+    { duplicateInWorkbook: false, message: "第 2 行匹配到当前任务的多个用例" },
+  ])("rejects ambiguous marker targets before writing ($message)", async (scenario) => {
+    const caseLabel = "example.PaymentTest";
+    const listMarkerMembers = vi
+      .fn<CaseSuiteRepository["listMarkerMembers"]>()
+      .mockResolvedValueOnce({
+        items: [{ memberId: "standard-1", kind: "standard", caseLabel, markers: [] }],
+      })
+      .mockResolvedValueOnce({ items: [], nextCursor: "ddt-cursor" })
+      .mockResolvedValueOnce({
+        items: [{ memberId: "ddt-1", kind: "ddt", caseLabel, markers: [] }],
+      });
+    const updateMemberMarkers = vi.fn<CaseSuiteRepository["updateMemberMarkers"]>();
+    const service = new CaseSuiteService(
+      { ...suiteRepositoryFake(), listMarkerMembers, updateMemberMarkers },
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "marker-version" },
+    );
+    const rows = [{ rowNumber: 2, caseLabel, markers: ["待回归"] }];
+    if (scenario.duplicateInWorkbook) rows.push({ rowNumber: 4, caseLabel, markers: ["跳过"] });
+    await expect(service.importMemberMarkers("suite-1", rows, 2, "operator")).rejects.toThrow(
+      scenario.message,
+    );
+    expect(updateMemberMarkers).not.toHaveBeenCalled();
+  });
+});
+
 describe("case suite update and copy", () => {
   it.each(["addCases", "addDdtCases", "removeCases", "removeDdtCases"] as const)(
     "rejects %s for archived tasks before reading cases or writing members",

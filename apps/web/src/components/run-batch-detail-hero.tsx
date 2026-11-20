@@ -11,7 +11,7 @@ export function RunBatchDetailHero({
   suiteName,
   suiteVersion,
   projectVersionName,
-  requestedByUsername,
+  requestedByName,
   shared = false,
   sharedActions,
 }: {
@@ -20,7 +20,7 @@ export function RunBatchDetailHero({
   suiteName: string;
   suiteVersion: number;
   projectVersionName?: string;
-  requestedByUsername?: string;
+  requestedByName?: string;
   shared?: boolean;
   sharedActions?: ReactNode;
 }) {
@@ -63,13 +63,13 @@ export function RunBatchDetailHero({
           {!shared ? (
             <div className="execution-batch-initiator flex min-w-0 max-w-full items-center gap-1">
               <span className="shrink-0">拉起人：</span>
-              <Tooltip title={requestedByUsername} trigger={["hover", "focus"]}>
+              <Tooltip title={requestedByName} trigger={["hover", "focus"]}>
                 <span
                   className="execution-batch-initiator-username min-w-0 max-w-64 truncate text-foreground"
-                  title={requestedByUsername}
-                  tabIndex={requestedByUsername ? 0 : undefined}
+                  title={requestedByName}
+                  tabIndex={requestedByName ? 0 : undefined}
                 >
-                  {requestedByUsername ?? "未记录"}
+                  {requestedByName ?? "未记录"}
                 </span>
               </Tooltip>
             </div>

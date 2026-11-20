@@ -27,6 +27,10 @@ export default async function RunBatchDetailsPage({
     notFound();
   }
   const batch = overview.batch;
+  const requestedByName = await services.platformOperations.readExecutionInitiatorName(
+    identity,
+    batch,
+  );
   const retrySuite = batch.suiteId.startsWith("single:")
     ? null
     : await services.caseSuites.getSummary(batch.suiteId, projectIds).catch((error: unknown) => {
@@ -60,7 +64,7 @@ export default async function RunBatchDetailsPage({
         sequenceNumber={batch.sequenceNumber}
         suiteName={batch.suiteName}
         suiteVersion={batch.suiteVersion}
-        {...(batch.requestedBy ? { requestedByUsername: batch.requestedBy.username } : {})}
+        {...(requestedByName ? { requestedByName } : {})}
         {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
       />
       <ExecutionBatchDetails

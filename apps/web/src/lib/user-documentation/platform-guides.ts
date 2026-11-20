@@ -269,7 +269,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
         { title: "准备凭据", detail: "服务账号与 API 密钥" },
         { title: "流水线构建", detail: "生成本地运行文件" },
         { title: "直接上传", detail: "插件计算摘要与大小" },
-        { title: "拉起执行", detail: "可传多 IP · 输出实际通过率" },
+        { title: "拉起执行", detail: "可传多 IP · 显示服务账号名称" },
       ],
     },
     sections: [
@@ -298,6 +298,11 @@ export const platformGuides: readonly DocumentationArticle[] = [
             title: "核对执行结果",
             detail:
               "控制台在批次结束后输出带时间戳的总数、完成数、通过、失败、阻塞、报告链接及 ActualPassPercent。实际通过率按通过数除以总数，取整数部分。服务账号需要目标项目的 run.create、run.read 和 run.cancel 权限。",
+          },
+          {
+            title: "查看执行拉起人",
+            detail:
+              "登录平台，从“执行记录”打开该批次。标题下的“拉起人”显示 Jenkins API 密钥对应的服务账号名称。更名后展示当前名称，已删除的账号显示为“已删除的服务账号”。",
           },
         ],
       },

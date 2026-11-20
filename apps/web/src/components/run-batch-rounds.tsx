@@ -31,6 +31,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import { loadExecutionCasePage } from "@/lib/execution-case-page-client";
 import { executionRoundSelection } from "@/lib/execution-round-selection";
+import { executionShareQuery } from "@/lib/execution-share-query";
 
 import type { AttemptEventPage } from "@autoforge/contracts";
 import type {
@@ -80,6 +81,7 @@ import {
   formatAttemptDuration,
   formatBatchDuration,
   formatLocalDateTime,
+  isActiveRunBatch,
 } from "@/lib/run-batch-presentation";
 import {
   executionCaseColumnWidthsRem,
@@ -92,12 +94,17 @@ const EMPTY_CASE_ROWS: RoundCaseRowModel[] = [];
 const CASE_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500] as const;
 // Text stays in bounded previews; filtering or polling must not resize the columns.
 const CASE_PREVIEW_COLUMN_WIDTHS = { case: 40, status: 24, runner: 18 } as const;
+const SHARED_CASE_PREVIEW_COLUMN_WIDTHS = { case: 44, status: 18, runner: 13 } as const;
 
 /** 行内详情缓存：展开过的 attempt 状态事件只请求一次，切换页面/重新展开不再重复拉取。 */
 type AttemptDetailEntry = {
-  events?: AttemptEventPage["items"] | undefined;
+  events?: AttemptTimelineEvent[] | undefined;
   error?: string | undefined;
 };
+type AttemptTimelineEvent = Pick<
+  AttemptEventPage["items"][number],
+  "eventId" | "eventType" | "fromStatus" | "toStatus" | "reasonCode" | "recordedAt"
+>;
 
 /**
  * 页面按权限加载资源快照；批次概要只补充本批次参与节点的名称。
@@ -801,8 +808,10 @@ export function RunBatchRounds({
             <AttemptLogViewer
               attemptId={logAttempt.id}
               attemptStatus={logAttempt.status}
+              batchTerminal={!isActiveRunBatch(batch.status)}
               canReadLogs={canReadLogs}
               canRetryRuns={canRetryRuns}
+              shareQuery={executionShareQuery(batch, batch.id)}
               onClose={() => setLogAttempt(undefined)}
             />
           ) : null}
@@ -810,6 +819,7 @@ export function RunBatchRounds({
             <SchedulingLogViewer
               key={JSON.stringify([batch.id, schedulingViewer.runnerId])}
               batchId={batch.id}
+              shareQuery={executionShareQuery(batch)}
               runnerId={schedulingViewer.runnerId}
               title={schedulingViewer.title}
               onClose={() => setSchedulingViewer(undefined)}
@@ -1528,11 +1538,11 @@ function RoundCasesTable({
     return () => controller.abort();
   }, [casePageUrl, requestKey, batch.updatedAt, batch.statistics?.generation]);
 
-  const columnWidths = CASE_PREVIEW_COLUMN_WIDTHS;
+  const shared = Boolean(batch.accessToken || batch.publicAccess);
+  const columnWidths = shared ? SHARED_CASE_PREVIEW_COLUMN_WIDTHS : CASE_PREVIEW_COLUMN_WIDTHS;
   const columnLayout = executionCaseColumnLayout({
     widths: columnWidths,
     showRoundColumn,
-    access: batch.accessToken || batch.publicAccess ? "public" : "console",
   });
 
   const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -1823,13 +1833,17 @@ function RoundCaseRow({
   const [contentOpen, setContentOpen] = useState(false);
   const [sharePending, setSharePending] = useState(false);
   const [shareError, setShareError] = useState("");
+  const shareQuery = executionShareQuery(
+    { accessToken: publicRunShareToken, publicAccess: publicLogAccess },
+    run.batchId,
+  );
   const hasDetail =
     attempt !== undefined &&
     isTerminalAttemptStatus(attempt.status) &&
     (attempt.testNg !== undefined || canReadAttemptEvents);
   // 终态 attempt 可创建日志公开访问链接；后端校验项目权限并签发永久有效链接。
   const canShareLog =
-    canReadLogs && attempt !== undefined && isTerminalAttemptStatus(attempt.status);
+    canReadLogs && !shareQuery && attempt !== undefined && isTerminalAttemptStatus(attempt.status);
 
   async function openShareLog(): Promise<void> {
     if (!attempt) return;
@@ -1870,10 +1884,14 @@ function RoundCaseRow({
             </Button>
             {attempt &&
             canReadLogs &&
-            !publicRunShareToken &&
-            !publicLogAccess &&
             ["failed", "timed_out"].includes(attempt.outcome ?? attempt.status) ? (
-              <AiAnalysisButton batchId={run.batchId} attemptId={attempt.id} compact iconOnly />
+              <AiAnalysisButton
+                batchId={run.batchId}
+                attemptId={attempt.id}
+                shareQuery={shareQuery}
+                compact
+                iconOnly
+              />
             ) : null}
           </div>
           <div className="flex min-w-0 items-center gap-2">
@@ -2054,6 +2072,7 @@ function RoundCaseRow({
             <AttemptInlineDetail
               attempt={attempt}
               canReadAttemptEvents={canReadAttemptEvents}
+              shareQuery={shareQuery}
               cached={detailEntry}
               onRemember={onRememberDetail}
             />
@@ -2067,15 +2086,17 @@ function RoundCaseRow({
 function AttemptInlineDetail({
   attempt,
   canReadAttemptEvents,
+  shareQuery,
   cached,
   onRemember,
 }: {
   attempt: RunAttempt;
   canReadAttemptEvents: boolean;
+  shareQuery: string;
   cached: AttemptDetailEntry | undefined;
   onRemember: (attemptId: string, entry: AttemptDetailEntry) => void;
 }) {
-  const [events, setEvents] = useState<AttemptEventPage["items"] | undefined>(cached?.events);
+  const [events, setEvents] = useState(cached?.events);
   const [error, setError] = useState(cached?.error ?? "");
   const canLoadRemoteDetails = canReadAttemptEvents;
   // 已缓存的详情不再请求：展开/收起/翻页后重开复用首次加载结果。
@@ -2088,16 +2109,19 @@ function AttemptInlineDetail({
       setError("");
       try {
         const eventResponse = canReadAttemptEvents
-          ? await fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/events?limit=200`, {
-              cache: "no-store",
-            })
+          ? await fetch(
+              `/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/events?limit=200${shareQuery ? `&${shareQuery}` : ""}`,
+              {
+                cache: "no-store",
+              },
+            )
           : null;
         if (eventResponse && !eventResponse.ok) {
           throw new Error((await readApiErrorMessage(eventResponse, "读取执行时间线失败。"))!);
         }
         if (disposed) return;
         const nextEvents = eventResponse
-          ? ((await eventResponse.json()) as AttemptEventPage).items
+          ? ((await eventResponse.json()) as { items: AttemptTimelineEvent[] }).items
           : undefined;
         setEvents(nextEvents);
         setLoaded(true);
@@ -2113,7 +2137,7 @@ function AttemptInlineDetail({
       disposed = true;
       window.clearTimeout(kick);
     };
-  }, [attempt.id, canReadAttemptEvents, loaded, onRemember]);
+  }, [attempt.id, canReadAttemptEvents, loaded, onRemember, shareQuery]);
 
   return (
     <div className={cn("attempt-inline-detail", runBatchRoundsStyles["attempt-inline-detail"])}>

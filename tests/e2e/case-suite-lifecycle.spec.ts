@@ -143,10 +143,22 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
   expect(download.suggestedFilename()).toMatch(/任务用例标识\.xlsx$/u);
   const workbook = await readExportedWorkbook(await readFile(await download.path()));
   const sheet = workbook.getWorksheet("任务用例标识")!;
-  expect(sheet.getCell("C2").text).toBe(className);
-  expect(sheet.getCell("E2").text).toBe("Wallet · 支付");
-  sheet.getCell("D2").value = "00017";
-  sheet.getCell("E2").value = "";
+  expect(sheet.columnCount).toBe(6);
+  expect(sheet.getCell("A1").text).toBe("用例");
+  expect(sheet.getCell("F1").text).toBe("标识5");
+  expect(sheet.getCell("A2").text).toBe(className);
+  expect(sheet.getCell("C2").text).toBe("Wallet · 支付");
+  sheet.getCell("A2").value = `${className}Missing`;
+  await markers.locator('input[type="file"]').setInputFiles({
+    name: "标识用例不匹配.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+  });
+  await expect(markers).toContainText("第 2 行的用例不在当前任务中");
+  await expect(markers).toContainText("Wallet · 支付");
+  sheet.getCell("A2").value = className;
+  sheet.getCell("B2").value = "00017";
+  sheet.getCell("C2").value = "";
   await markers.locator('input[type="file"]').setInputFiles({
     name: "钱包标识.xlsx",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -176,6 +188,63 @@ test("task member changes preserve remarks and marker workbooks round-trip throu
     expect(analysisSheet.getCell(2, index).text).toBe(cell.text === "标识1" ? "00017" : "回归重点");
   });
   expect(markerColumns).toEqual(["标识1", "标识5"]);
+
+  const ddtCaseId = "钱包-支付-00008";
+  const db = await openHistoryFixtureConnection({
+    directory: process.env.AUTOFORGE_E2E_DATA_DIR,
+    postgresUrl: process.env.AUTOFORGE_E2E_POSTGRES_URL,
+  });
+  try {
+    const now = new Date().toISOString();
+    await db.execute(
+      `INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,'Wallet','wallet','standard',?,?,?)`,
+      [
+        uniqueName("marker-ddt"),
+        project.id,
+        project.versionId,
+        project.stageId,
+        ddtCaseId,
+        ddtCaseId,
+        JSON.stringify({ CaseID: ddtCaseId, srNum: "Wallet" }),
+        now,
+        now,
+      ],
+    );
+  } finally {
+    await db.close();
+  }
+  const joined = await browserJson(page, `${base}/ddt-cases`, {
+    method: "POST",
+    body: { testStageId: project.stageId, caseIds: [ddtCaseId] },
+  });
+  expect(joined.status).toBe(200);
+  await page.reload();
+  await opener.click();
+  await expect(markers).toContainText("00017");
+  const mixedDownloadPromise = page.waitForEvent("download");
+  await markers.getByRole("link", { name: "导出标识", exact: true }).click();
+  const mixed = await readExportedWorkbook(
+    await readFile(await (await mixedDownloadPromise).path()),
+  );
+  const mixedSheet = mixed.getWorksheet("任务用例标识")!;
+  expect(mixedSheet.columnCount).toBe(6);
+  expect(mixedSheet.getCell("A2").text).toBe(className);
+  expect(mixedSheet.getCell("A3").text).toBe(ddtCaseId);
+  mixedSheet.getCell("B2").value = "普通-回归";
+  mixedSheet.getCell("D3").value = "DDT-支付";
+  await markers.locator('input[type="file"]').setInputFiles({
+    name: "混合任务标识.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(await mixed.xlsx.writeBuffer()),
+  });
+  await expect(markers).toContainText("已导入 2 条用例标识。");
+  await expect(markers).toContainText("普通-回归");
+  const ddtMarkers = await browserJson(page, `${base}/markers?kind=ddt`);
+  expect(ddtMarkers.body).toMatchObject({
+    items: [{ caseLabel: ddtCaseId, markers: ["", "", "DDT-支付", "", ""] }],
+  });
+  await markers.getByRole("button", { name: "关闭", exact: true }).last().click();
 
   await page.goto(`/cases?targetSuiteId=${suite.id}`);
   await checkbox.check();

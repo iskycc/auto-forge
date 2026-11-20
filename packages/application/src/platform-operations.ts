@@ -27,6 +27,7 @@ import {
   projectIdsForPermission,
   type AuthenticatedIdentity,
   type Permission,
+  type RunBatch,
 } from "@autoforge/domain";
 
 import type {
@@ -40,6 +41,8 @@ import type { JobHandler } from "./run-job-worker";
 import { nextCronOccurrence, validateCronExpression } from "./schedule-expression";
 
 const MAXIMUM_TOKEN_LIFETIME_MS = 366 * 24 * 60 * 60 * 1_000;
+const SERVICE_ACCOUNT_USERNAME =
+  /^service-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u;
 const ANALYTICS_EXPORT_MAXIMUM_ROWS = 25_000;
 const ANALYTICS_EXPORT_MAXIMUM_BYTES = 16 * 1024 * 1024;
 const ANALYTICS_OVERVIEW_MAXIMUM_FACTS = 100_000;
@@ -91,6 +94,24 @@ export class PlatformOperationsService {
   listServiceAccounts(actor: AuthenticatedIdentity) {
     requirePermission(actor, "api_token.manage");
     return this.repository.listServiceAccounts();
+  }
+
+  async readExecutionInitiatorName(
+    actor: AuthenticatedIdentity,
+    batch: Pick<RunBatch, "id" | "projectId" | "requestedBy">,
+  ): Promise<string | undefined> {
+    requirePermission(actor, "run.read", batch.projectId);
+    const initiator = batch.requestedBy;
+    if (initiator?.source !== "local") return initiator?.username;
+    const serviceAccountId = SERVICE_ACCOUNT_USERNAME.exec(initiator.username)?.[1];
+    if (!serviceAccountId) return initiator.username;
+    // Jenkins publishes with the authenticated ID. Check this evidence before
+    // treating a local username formatted like a service alias as a service account.
+    const publisher = await this.repository.findBatchServiceAccountPublisher(
+      batch.id,
+      serviceAccountId,
+    );
+    return publisher ? (publisher.name ?? "已删除的服务账号") : initiator.username;
   }
 
   async listServiceAccountsPage(

@@ -28,6 +28,7 @@ import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { useConfirm } from "@/components/ui-feedback";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
+import { executionShareQuery } from "@/lib/execution-share-query";
 import { isActiveRunBatch, isTerminalRunBatch } from "@/lib/run-batch-presentation";
 
 /**
@@ -87,7 +88,8 @@ export function ExecutionBatchDetails({
   const [exceptionsDialogOpen, setExceptionsDialogOpen] = useState(false);
   const [concurrencyDialogOpen, setConcurrencyDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
-  const canViewBatchAi = canReadLogs && !publicAccess && (!activeBatch || automaticAiAnalysis);
+  const shareQuery = executionShareQuery({ publicAccess, accessToken });
+  const canViewBatchAi = canReadLogs && (!activeBatch || automaticAiAnalysis);
   const statisticsState = batch.statistics?.state;
   const statisticsPending = !!batch.statistics && !batch.statistics.generation;
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
@@ -237,7 +239,7 @@ export function ExecutionBatchDetails({
       <ExecutionBatchOverview batch={batch}>
         {(canViewBatchAi ||
           analysisScope ||
-          (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
+          (activeBatch && canReadConcurrencyDiagnostics) ||
           batch.status === "failed" ||
           canCancelRuns ||
           (canCreateRuns && retrySuiteId) ||
@@ -280,9 +282,13 @@ export function ExecutionBatchDetails({
             </div>
             <div className={cn("button-row", uiPatterns["button-row"])}>
               {canViewBatchAi ? (
-                <AiAnalysisButton batchId={batch.id} waitForAutomatic={activeBatch} />
+                <AiAnalysisButton
+                  batchId={batch.id}
+                  waitForAutomatic={activeBatch}
+                  shareQuery={shareQuery}
+                />
               ) : null}
-              {activeBatch && canReadConcurrencyDiagnostics && !publicAccess ? (
+              {activeBatch && canReadConcurrencyDiagnostics ? (
                 <Button
                   type="button"
                   variant="secondary"
@@ -393,9 +399,10 @@ export function ExecutionBatchDetails({
         )}
       </ExecutionBatchOverview>
 
-      {concurrencyDialogOpen && !publicAccess ? (
+      {concurrencyDialogOpen ? (
         <ConcurrencyDiagnosticsDialog
           batchId={batch.id}
+          shareQuery={shareQuery}
           onClose={() => setConcurrencyDialogOpen(false)}
         />
       ) : null}

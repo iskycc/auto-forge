@@ -2569,6 +2569,10 @@ export interface PlatformOperationsRepository {
     status?: string;
     id?: string;
   }): Promise<ServiceAccount[]>;
+  findBatchServiceAccountPublisher(
+    batchId: string,
+    serviceAccountId: string,
+  ): Promise<{ name: string | null } | null>;
   createServiceAccount(record: ServiceAccount): Promise<ServiceAccount>;
   updateServiceAccount(input: {
     accountId: string;

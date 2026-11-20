@@ -90,6 +90,17 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return metrics;
   }
 
+  async findBatchServiceAccountPublisher(batchId: string, serviceAccountId: string) {
+    await this.ready();
+    const result = await this.handle.pool.query<{ name: string | null }>(
+      `SELECT a.name FROM public_batch_access g
+       LEFT JOIN service_accounts a ON a.id = g.created_by
+       WHERE g.batch_id = $1 AND g.created_by = $2`,
+      [batchId, serviceAccountId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async listServiceAccounts(
     filter?: Parameters<PlatformOperationsRepository["listServiceAccounts"]>[0],
   ): Promise<ServiceAccount[]> {

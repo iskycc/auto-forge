@@ -7,7 +7,7 @@ import { SessionLoginButton } from "@/components/session-login-button";
 import { ExecutionBatchDetails } from "@/components/execution-batch-details";
 import { RunBatchDetailHero } from "@/components/run-batch-detail-hero";
 import type { RunnerDirectoryEntry } from "@/components/run-batch-rounds";
-import { currentIdentity } from "@/lib/auth";
+import { currentIdentity, hasPermissionInAnyScope } from "@/lib/auth";
 import { toExecutionBatchView } from "@/lib/execution-batch-view";
 import { getPlatformServices } from "@/lib/services";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
@@ -30,6 +30,7 @@ export async function PublicExecutionDetail({
   if (!overview) return <InvalidPublicExecution />;
   const batch = overview.batch;
   const identity = await currentIdentity();
+  const canReadTelemetry = Boolean(identity && hasPermissionInAnyScope(identity, "runner.read"));
   const projectVersion = batch.policy?.projectVersionId
     ? (await services.projectStructures.list(batch.projectId)).versions.find(
         (version) => version.id === batch.policy?.projectVersionId,
@@ -40,6 +41,7 @@ export async function PublicExecutionDetail({
   ).map((runner) => ({
     id: runner.id,
     name: runner.name,
+    canReadTelemetry,
     ...(runner.resourceSnapshot ? { resourceSnapshot: runner.resourceSnapshot } : {}),
   }));
 
@@ -68,13 +70,18 @@ export async function PublicExecutionDetail({
         />
         <ExecutionBatchDetails
           batch={toExecutionBatchView(overview)}
+          automaticAiAnalysis={
+            batch.policy?.aiAnalysisAfterCompletion === true &&
+            batch.policy.aiAnalysisExecutionId === batch.id
+          }
           {...(accessToken ? { accessToken } : {})}
           publicAccess={!accessToken}
           canCancelRuns={false}
           canCreateRuns={false}
           canRetryRuns={false}
-          canReadLogs={false}
-          canReadAttemptEvents={false}
+          canReadLogs
+          canReadAttemptEvents
+          canReadConcurrencyDiagnostics
           runnerDirectory={runnerDirectory}
         />
       </div>

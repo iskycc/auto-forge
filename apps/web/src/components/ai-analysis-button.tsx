@@ -22,6 +22,17 @@ import {
   splitAiAnalysisConclusion,
 } from "@/lib/ai-analysis-presentation";
 
+type AnalysisResultView = {
+  job: Pick<
+    AiAnalysisView["job"],
+    "status" | "acceptingFinalResults" | "total" | "prepared" | "completed" | "failed"
+  > &
+    Partial<Pick<AiAnalysisView["job"], "id" | "reason">>;
+  items: (Pick<AiAnalysisView["items"][number], "id" | "displayName" | "status" | "conclusion"> &
+    Partial<Pick<AiAnalysisView["items"][number], "reason">>)[];
+  nextCursor?: string;
+};
+
 const ACTIVE = new Set(["queued", "preparing", "analyzing", "summarizing"]);
 const LABELS: Record<string, string> = {
   queued: "等待分配",
@@ -45,17 +56,20 @@ export function AiAnalysisButton({
   compact = false,
   iconOnly = false,
   waitForAutomatic = false,
+  shareQuery = "",
 }: {
   batchId: string;
   attemptId?: string;
   compact?: boolean;
   iconOnly?: boolean;
   waitForAutomatic?: boolean;
+  shareQuery?: string;
 }) {
+  const readOnly = Boolean(shareQuery);
   const [open, setOpen] = useState(false);
   const requestEpoch = useRef(0);
   const pendingRequestKey = useRef<string | undefined>(undefined);
-  const [view, setView] = useState<AiAnalysisView | null>(null);
+  const [view, setView] = useState<AnalysisResultView | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [cursor, setCursor] = useState("");
@@ -70,17 +84,18 @@ export function AiAnalysisButton({
         ...(attemptId ? { attemptId } : {}),
         ...(cursor ? { after: cursor } : {}),
       });
+      for (const [key, value] of new URLSearchParams(shareQuery)) parameters.set(key, value);
       const response = await fetch(`/api/v1/ai-analysis?${parameters}`, {
         cache: "no-store",
         ...(signal ? { signal } : {}),
       });
       if (!response.ok)
         throw new Error((await readApiErrorMessage(response, "读取 AI 初析失败。"))!);
-      const next = (await response.json()) as AiAnalysisView | null;
+      const next = (await response.json()) as AnalysisResultView | null;
       if (epoch === requestEpoch.current) setView(next);
       return next;
     },
-    [batchId, attemptId, cursor],
+    [batchId, attemptId, cursor, shareQuery],
   );
   async function create() {
     requestEpoch.current += 1;
@@ -116,7 +131,7 @@ export function AiAnalysisButton({
     setPending(true);
     try {
       const existing = await read();
-      if (!existing && !waitForAutomatic) await create();
+      if (!existing && !waitForAutomatic && !readOnly) await create();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "读取失败。");
     } finally {
@@ -153,7 +168,7 @@ export function AiAnalysisButton({
     analysis: splitAiAnalysisConclusion(item.conclusion),
   }));
   async function cancel() {
-    if (!job) return;
+    if (readOnly || !job?.id) return;
     setPending(true);
     try {
       const response = await fetch("/api/v1/ai-analysis", {
@@ -215,7 +230,7 @@ export function AiAnalysisButton({
               <span />
             )}
             <Space wrap>
-              {job && ACTIVE.has(job.status) ? (
+              {readOnly ? null : job && ACTIVE.has(job.status) ? (
                 <Button onClick={() => void cancel()} loading={pending}>
                   取消分析
                 </Button>
