@@ -108,7 +108,7 @@ export const persistedPlatformConfigurationSchema = z
       authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
       // 用例执行超时（秒），由 adapter 自身看门狗管理；旧配置文件缺失时默认 600 秒。
       caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
-      // 产物收集全局开关；关闭后执行规格不下发产物规则，Agent 不扫描不上传产物。
+      caseLogSilenceTimeoutSeconds: z.number().int().min(0).max(86_400).default(0),
       // 兼容旧配置文件：两个 DDT 数量限制缺失时保持历史的 200。
       ddtImportFileLimit: z
         .number()
@@ -218,7 +218,12 @@ export function isPlatformConfigurationConflictError(
 export class PlatformConfigurationStore {
   readonly paths: PlatformConfigurationPaths;
   private schedulerSnapshot:
-    { fingerprint: string; scheduler: PersistedPlatformConfiguration["scheduler"] } | undefined;
+    | {
+        fingerprint: string;
+        scheduler: PersistedPlatformConfiguration["scheduler"];
+        caseLogSilenceTimeoutSeconds: number;
+      }
+    | undefined;
 
   constructor(dataDirectory: string) {
     const normalizedDataDirectory = resolve(dataDirectory);
@@ -261,13 +266,26 @@ export class PlatformConfigurationStore {
   }
 
   readScheduler(): PersistedPlatformConfiguration["scheduler"] {
+    return { ...this.readSchedulingSnapshot().scheduler };
+  }
+
+  readExecutionScheduling() {
+    const { scheduler, caseLogSilenceTimeoutSeconds } = this.readSchedulingSnapshot();
+    return { ...scheduler, logSilenceTimeoutMs: caseLogSilenceTimeoutSeconds * 1_000 };
+  }
+
+  private readSchedulingSnapshot() {
     const file = statSync(this.paths.configurationFile, { bigint: true });
     const fingerprint = `${file.dev}:${file.ino}:${file.mtimeNs}:${file.ctimeNs}:${file.size}:${file.mode}`;
     if (this.schedulerSnapshot?.fingerprint !== fingerprint) {
-      this.schedulerSnapshot = { fingerprint, scheduler: this.read().scheduler };
+      const { scheduler, limits } = this.read();
+      this.schedulerSnapshot = {
+        fingerprint,
+        scheduler,
+        caseLogSilenceTimeoutSeconds: limits.caseLogSilenceTimeoutSeconds,
+      };
     }
-    // File replacement is visible to every process; callers receive an isolated pass snapshot.
-    return { ...this.schedulerSnapshot.scheduler };
+    return this.schedulerSnapshot;
   }
 
   replace(
@@ -359,6 +377,7 @@ function defaultConfiguration(
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
+      caseLogSilenceTimeoutSeconds: 0,
       ddtImportFileLimit: DEFAULT_DDT_IMPORT_FILE_LIMIT,
       ddtImportZipSpreadsheetLimit: DEFAULT_DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
     },

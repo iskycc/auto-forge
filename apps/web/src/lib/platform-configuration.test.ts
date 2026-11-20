@@ -148,12 +148,19 @@ describe("platform configuration mapping", () => {
       limits: {
         ...current.limits,
         maxJarBytes: 67_108_864,
+        caseLogSilenceTimeoutSeconds: 120,
         ddtImportFileLimit: 350,
       },
     });
 
     expect(platformConfigurationActivation(current, saved)).toEqual({
-      appliedImmediatelyFields: ["外部访问地址", "内部访问地址", "平台时区", "DDT 导入数量限制"],
+      appliedImmediatelyFields: [
+        "外部访问地址",
+        "内部访问地址",
+        "平台时区",
+        "日志上报超时",
+        "DDT 导入数量限制",
+      ],
       restartRequiredFields: ["HTTP 端口", "容量与会话限制"],
     });
   });
@@ -208,11 +215,17 @@ describe("platform configuration mapping", () => {
     const current = configuration({
       limits: {
         ...configuration().limits,
+        caseLogSilenceTimeoutSeconds: 120,
         ddtImportFileLimit: 325,
         ddtImportZipSpreadsheetLimit: 640,
       },
     });
-    const { ddtImportFileLimit, ddtImportZipSpreadsheetLimit, ...legacyLimits } = current.limits;
+    const {
+      caseLogSilenceTimeoutSeconds,
+      ddtImportFileLimit,
+      ddtImportZipSpreadsheetLimit,
+      ...legacyLimits
+    } = current.limits;
 
     const merged = mergePlatformConfiguration(current, {
       revision: current.revision,
@@ -225,6 +238,7 @@ describe("platform configuration mapping", () => {
 
     expect(merged.limits.ddtImportFileLimit).toBe(ddtImportFileLimit);
     expect(merged.limits.ddtImportZipSpreadsheetLimit).toBe(ddtImportZipSpreadsheetLimit);
+    expect(merged.limits.caseLogSilenceTimeoutSeconds).toBe(caseLogSilenceTimeoutSeconds);
   });
 });
 
@@ -248,6 +262,7 @@ function configuration(
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
+      caseLogSilenceTimeoutSeconds: 0,
       ddtImportFileLimit: 200,
       ddtImportZipSpreadsheetLimit: 200,
     },

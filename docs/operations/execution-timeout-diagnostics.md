@@ -1,5 +1,13 @@
 # 执行超时与日志上传诊断
 
+## 日志上报超时
+
+有 `settings.manage` 权限时，在“平台设置 → 平台配置 → 容量、会话与调度阈值”设置“日志上报超时（秒）”。`0` 关闭保护，旧配置默认 `0`。设置 `120` 时，Runner 从 Java 启动或最近一次收到 stdout／stderr 起，连续 120 秒没有输出就强制终止该执行进程组，并以 `EXECUTION_LOG_SILENCE_TIMEOUT` 记录为超时。总执行期限先到或相同时，记录为原有的执行超时。对于正常用例长时间静默的环境，按实际静默周期设置阈值。
+
+监测依据为本地管道的实际输出，上传确认、日志限流、网络重传、Agent 诊断和日志字节上限均不改变这一计时。进程终止后仍按上传阶段的时限和日志确认水位收尾。提前到达的静默期限也可触发一次有界的超时前线程快照。
+
+保存后用于新派发的尝试，已派发的规格保持原值。Lite 和 Full 使用同一可选 Runner Protocol 字段，未更新的 Agent 会忽略该字段。Full 分布式部署通过各节点的配置文件管理 `limits.caseLogSilenceTimeoutSeconds`，按部署流程同步配置。没有数据库迁移。
+
 ## 两类提示分别表示什么
 
 `TestNG exceeded the configured execution timeout.` 是 Agent 的本地进程执行期限触发。`Execution exceeded its configured timeout.` 是平台依据该 attempt 的领取／开始时间和执行期限进行恢复。两者都不能单独证明 OOM、Java 死锁或者被测接口超时。

@@ -776,7 +776,7 @@ function schedulingService(): RunBatchSchedulingService {
       collaborators.projectStructures,
       collaborators.runnerGroups,
       configuration.caseExecutionTimeoutSeconds * 1_000,
-      () => platformConfigurationStore.readScheduler(),
+      () => platformConfigurationStore.readExecutionScheduling(),
       configuration.mode === "full" ? new PostgresLogWriteAdmission(postgresHandle()) : undefined,
     );
   }

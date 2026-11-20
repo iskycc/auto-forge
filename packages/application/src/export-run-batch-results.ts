@@ -268,6 +268,7 @@ function finalScopeRows(
 // 非正常结束（含 adapter 用例超时），cancelled 匹配取消类；最终结果的取消归为 failed。
 const TIMEOUT_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([
   "EXECUTION_TIMEOUT",
+  "EXECUTION_LOG_SILENCE_TIMEOUT",
   "ADAPTER_CASE_TIMEOUT",
 ]);
 const CANCELLED_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([

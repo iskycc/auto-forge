@@ -53,6 +53,9 @@ export function platformConfigurationActivation(
     changed(current.web.publicBaseUrl, saved.web.publicBaseUrl) ? "外部访问地址" : undefined,
     changed(current.web.runnerBaseUrl, saved.web.runnerBaseUrl) ? "内部访问地址" : undefined,
     changed(current.web.timeZone, saved.web.timeZone) ? "平台时区" : undefined,
+    changed(current.limits.caseLogSilenceTimeoutSeconds, saved.limits.caseLogSilenceTimeoutSeconds)
+      ? "日志上报超时"
+      : undefined,
     changed(current.limits.ddtImportFileLimit, saved.limits.ddtImportFileLimit) ||
     changed(current.limits.ddtImportZipSpreadsheetLimit, saved.limits.ddtImportZipSpreadsheetLimit)
       ? "DDT 导入数量限制"
@@ -105,6 +108,8 @@ export function mergePlatformConfiguration(
     limits: {
       ...current.limits,
       ...input.limits,
+      caseLogSilenceTimeoutSeconds:
+        input.limits.caseLogSilenceTimeoutSeconds ?? current.limits.caseLogSilenceTimeoutSeconds,
       ddtImportFileLimit: input.limits.ddtImportFileLimit ?? current.limits.ddtImportFileLimit,
       ddtImportZipSpreadsheetLimit:
         input.limits.ddtImportZipSpreadsheetLimit ?? current.limits.ddtImportZipSpreadsheetLimit,

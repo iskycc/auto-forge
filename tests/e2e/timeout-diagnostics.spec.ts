@@ -4,9 +4,57 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DEFAULT_PROJECT_ID, describeExecutionTimeout } from "@autoforge/domain";
 import { createAttemptLogStore } from "@autoforge/db/sqlite";
+import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+
+test("platform log silence timeout saves and reloads without a restart", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=configuration");
+  const field = page.getByRole("spinbutton", { name: /^日志上报超时（秒）/u });
+  await expect(field).toHaveValue("0");
+  const save = async (seconds: number) => {
+    await field.fill(String(seconds));
+    const saved = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/settings/platform" &&
+        response.request().method() === "PATCH",
+    );
+    await page.getByRole("button", { name: "保存平台配置", exact: true }).click();
+    const response = await saved;
+    expect(response.status()).toBe(200);
+    const settings = (await response.json()) as PlatformConfigurationView;
+    expect(settings.appliedImmediatelyFields).toContain("日志上报超时");
+    expect(settings.restartRequiredFields).toEqual([]);
+    expect(settings.limits.caseLogSilenceTimeoutSeconds).toBe(seconds);
+  };
+  await save(120);
+  await page.reload();
+  await expect(field).toHaveValue("120");
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  const origin = new URL(page.url()).origin;
+  for (const theme of ["light", "dark"] as const) {
+    await page.context().addCookies([{ name: "autoforge-color-mode", value: theme, url: origin }]);
+    await page.reload();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await field
+        .locator("xpath=ancestor::label")
+        .evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(screenshots, `log-silence-settings-${theme}-${width}.png`),
+      });
+    }
+  }
+  await save(0);
+  await page.reload();
+  await expect(field).toHaveValue("0");
+});
 
 test("timeout diagnostics show watchdog evidence and authenticated JVM logs without exposing them anonymously", async ({
   page,

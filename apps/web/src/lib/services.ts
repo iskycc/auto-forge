@@ -838,7 +838,7 @@ async function createPlatformServices() {
       projectStructuresRepository,
       runnerGroupsRepository,
       config.caseExecutionTimeoutSeconds * 1_000,
-      () => configurationStore.readScheduler(),
+      () => configurationStore.readExecutionScheduling(),
       logWriteAdmission,
     ),
     config.mode === "lite" ? dispatcher : undefined,

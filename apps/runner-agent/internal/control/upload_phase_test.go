@@ -17,6 +17,15 @@ import (
 )
 
 func TestFinishedJavaEntersUploadPhaseBeforeWaitingForLogFlush(t *testing.T) {
+	assertFinishedJavaEntersUploadPhase(t, "completed", "succeeded", "TESTNG_SUCCEEDED")
+}
+
+func TestLogSilenceTimeoutKeepsItsResultWhenEnteringUploadPhase(t *testing.T) {
+	assertFinishedJavaEntersUploadPhase(t, executor.LogSilenceTermination, "timed_out", "EXECUTION_LOG_SILENCE_TIMEOUT")
+}
+
+func assertFinishedJavaEntersUploadPhase(t *testing.T, termination, expectedStatus, expectedCode string) {
+	t.Helper()
 	var uploadPhase atomic.Bool
 	releasePersistence := make(chan struct{})
 	var releaseOnce sync.Once
@@ -77,10 +86,11 @@ func TestFinishedJavaEntersUploadPhaseBeforeWaitingForLogFlush(t *testing.T) {
 		if err := options.LogSink(executor.LogChunk{Stream: "stdout", Content: "business finished\n", RecordedAt: time.Now().UTC()}); err != nil {
 			t.Fatal(err)
 		}
-		return executor.Result{Termination: "completed", ExitCode: 0, WorkspacePath: workspace, DurationMs: 1}, nil
+		return executor.Result{Termination: termination, ExitCode: 0, WorkspacePath: workspace, DurationMs: 1}, nil
 	}
 	claimed := testClaimedAssignment(strings.Repeat("a", 64))
 	claimed.Assignment.ExecutionSpec.UploadTimeoutMs = 1000
+	claimed.Assignment.ExecutionSpec.LogSilenceTimeoutMs = 120_000
 	claimed.Assignment.ExecutionSpec.ArtifactRules = []ArtifactRule{{Pattern: "missing-retired-report/**", Required: true}}
 	completed := make(chan completionResult, 1)
 	go func() {
@@ -98,8 +108,11 @@ func TestFinishedJavaEntersUploadPhaseBeforeWaitingForLogFlush(t *testing.T) {
 			t.Fatal("finished attempt did not settle after local persistence was released")
 		}
 	}
-	if result.Status != "succeeded" {
+	if result.Status != expectedStatus || result.ResultCode != expectedCode {
 		t.Fatalf("a finished JVM was kept in execution while log flush was throttled: %+v", result)
+	}
+	if termination == executor.LogSilenceTermination && !strings.Contains(result.Summary, "连续 120 秒") {
+		t.Fatalf("missing log silence evidence: %s", result.Summary)
 	}
 	if !uploadPhase.Load() {
 		t.Fatal("upload phase was never declared")

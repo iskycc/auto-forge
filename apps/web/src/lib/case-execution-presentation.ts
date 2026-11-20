@@ -42,6 +42,7 @@ export function caseExecutionResultLabel(code: string | undefined): string {
       TESTNG_NO_TESTS: "未发现 TestNG 测试",
       ADAPTER_CASE_TIMEOUT: "Adapter 用例超时",
       EXECUTION_TIMEOUT: "执行超时",
+      EXECUTION_LOG_SILENCE_TIMEOUT: "日志上报超时",
       EXECUTION_CANCELLED: "执行已取消",
       CANCELLED_BY_CONTROL_PLANE: "由控制面取消",
       ASSIGNMENT_CLAIM_TIMEOUT: "执行机领取超时",

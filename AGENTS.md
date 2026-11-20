@@ -82,6 +82,7 @@ Runner Agent 也必须共享：同一个 Agent 通过控制面协议连接 Lite 
 - 单用例快捷执行可以携带一次性的显式配置，但不得借此恢复独立批跑规划页。
 - 任务不得恢复 500 等低容量硬上限，必须保持至少 100,000 个用例成员和同规模 `ExecutionRun` 的 Lite/Full 能力；请求、SQL、调度和 UI 渲染使用有界分批/窗口，不能一次生成巨型 SQL、加载全部 attempt 或渲染全部 DOM。
 - 任务不得配置第二份用例执行超时；进程执行期限只读取平台的 `caseExecutionTimeoutSeconds`。任务级排队、领取和上传时限分别服务于恢复阶段，不属于用例执行超时。
+- 平台级 `caseLogSilenceTimeoutSeconds` 可保护长期没有 stdout／stderr 的尝试，0 表示关闭；平台总执行期限优先于相同或更晚的静默截止时间。Runner 仅依据本地进程输出计时，日志传输、重试和 Agent 诊断不参与。
 - 不得重新加入产品级执行环境、内联环境变量或执行密文的页面、Route Handler、任务字段或 Agent 领取入口；如未来确需恢复，必须先用 ADR 说明威胁模型、迁移、Lite/Full 和 E2E 影响。
 
 ## 3. 技术基线

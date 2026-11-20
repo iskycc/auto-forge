@@ -29,6 +29,21 @@ func TestTimeoutDiagnosticsDistinguishesOutputFromUploadThrottling(t *testing.T)
 	}
 }
 
+func TestTimeoutDiagnosticsFollowsTheEarlierDeadline(t *testing.T) {
+	started := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	diagnostics := &attemptTimeoutDiagnostics{startedAt: started}
+	spec := ExecutionSpec{TimeoutMs: 600_000, LogSilenceTimeoutMs: 120_000}
+	at, _ := diagnostics.probeTime(started, spec)
+	if !at.Equal(started.Add(108 * time.Second)) {
+		t.Fatalf("expected a snapshot before the silence deadline, got %s", at)
+	}
+	diagnostics.observeOutput(executor.LogChunk{Stream: "stderr", Content: "output again", RecordedAt: started.Add(500 * time.Second)})
+	at, _ = diagnostics.probeTime(started, spec)
+	if !at.Equal(started.Add(585 * time.Second)) {
+		t.Fatalf("expected a snapshot before the earlier total deadline, got %s", at)
+	}
+}
+
 func TestThreadDumpSummaryPrefersTheBusinessThreadOverTheAdapterWaiter(t *testing.T) {
 	dump := `"main" #1
    java.lang.Thread.State: WAITING

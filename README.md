@@ -33,6 +33,7 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 - Full 日志上传使用 Redis 共享的每秒 1,000 次准入，MinIO 暂存正文、JetStream 独立日志消费者持久化；正文及连续水位提交后才确认，Web 与独立 Worker 自动协作，保留 Lite 原路径。资源边界与部署要求见[Full 日志上传](./docs/architecture/full-log-ingestion.md)。
 
 - 执行超时保留判定来源、配置期限、续租／心跳、日志静默时长及上传记录。Agent 在期限前限时采集 JVM 线程栈，上传的完整 JDK 可通过本身的 Java 诊断入口取栈。日志页及节点超时记录提供“查看超时诊断”，有项目日志权限时可核对本次环境 IP、Linux 进程状态、线程数及常驻内存，详见[执行超时与日志上传诊断](./docs/operations/execution-timeout-diagnostics.md)。
+- 平台设置中的“日志上报超时（秒）”默认关闭。启用后，新派发用例若连续达到设定时间未产生 stdout／stderr，Runner 会强制结束其进程组并记为超时。总执行期限先到或同时到达时仍按总超时。需更新执行节点 Agent。
 
 - Full 多任务调度使用与外键引用兼容的非键更新锁；等待项目额度时不持有批次锁，上一轮统计引用不会阻塞下一轮完成及取消。后台分析事实重建遇到已有发布者时直接退让，真正的数据库错误保留具体阶段；完成上报遇到临时锁冲突时有限退避，并通过持久回执避免重复写入。排查及验证边界见[PostgreSQL 执行锁竞争](./docs/architecture/postgresql-execution-locks.md)。
 

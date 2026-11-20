@@ -344,6 +344,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
       "MinIO",
       "PostgreSQL",
       "系统信息",
+      "日志上报超时",
       "LDAP",
       "模型",
       "提示词",
@@ -354,7 +355,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
       nodes: [
         { title: "填写配置", detail: "按组件分别设置" },
         { title: "连接检查", detail: "确认地址与凭据" },
-        { title: "保存生效", detail: "遵循字段生效提示" },
+        { title: "保存生效", detail: "核对日志与执行时限" },
         { title: "系统信息", detail: "按需查看运行指标" },
       ],
     },
@@ -373,6 +374,8 @@ export const platformGuides: readonly DocumentationArticle[] = [
         paragraphs: [
           "项目最大在途数、节点槽位和任务并发同时限制新调度；内存策略在平台调度设置维护。修改后观察调度诊断，已运行的进程不会因增加并发自动改变资源占用。",
           "平台“用例执行超时”决定用例进程的执行期限；排队、领取、租约和上传阶段另有恢复时限。先区分超时发生的阶段，再调整配置。",
+          "有平台设置管理权限时，在“平台设置 → 平台配置 → 容量、会话与调度阈值”填写“日志上报超时（秒）”。0 表示关闭。以 120 秒为例，从 Java 启动或最近一次 stdout／stderr 输出起，连续 120 秒没有输出，Runner 会终止该用例进程组并记录为超时。总执行期限先到或相同时，按总超时处理。",
+          "保存后用于新派发的用例，无需重启。执行节点需要更新 Agent。Full 分布式部署统一在平台配置文件的 limits.caseLogSilenceTimeoutSeconds 中设置并同步给各节点。",
         ],
       },
       {

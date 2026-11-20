@@ -67,6 +67,12 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "caseExecutionTimeoutSeconds",
   ),
   platformField(
+    "日志上报超时",
+    "用例 stdout／stderr 静默时限",
+    "log silence timeout 日志 静默",
+    "caseLogSilenceTimeoutSeconds",
+  ),
+  platformField(
     "DDT 单次上传文件上限",
     "单次导入可上传的 Excel、CSV、ODS 或 ZIP 文件数量",
     "ddt excel csv upload 表格 文件 数量",

@@ -127,14 +127,15 @@ func cotestAdapterExecutorSpec(
 		},
 		Environment: map[string]string{},
 		Limits: executor.Limits{
-			TimeoutMs:          specification.TimeoutMs,
-			MaxLogBytes:        min(specification.ResourceLimits.LogBytes, 64<<20),
-			TerminationGraceMs: 2_000,
-			CPUMillicores:      specification.ResourceLimits.CPUMillicores,
-			MemoryBytes:        specification.ResourceLimits.MemoryBytes,
-			DiskBytes:          specification.ResourceLimits.DiskBytes,
-			ProcessCount:       specification.ResourceLimits.ProcessCount,
-			FileCount:          specification.ResourceLimits.FileCount,
+			TimeoutMs:           specification.TimeoutMs,
+			LogSilenceTimeoutMs: specification.LogSilenceTimeoutMs,
+			MaxLogBytes:         min(specification.ResourceLimits.LogBytes, 64<<20),
+			TerminationGraceMs:  2_000,
+			CPUMillicores:       specification.ResourceLimits.CPUMillicores,
+			MemoryBytes:         specification.ResourceLimits.MemoryBytes,
+			DiskBytes:           specification.ResourceLimits.DiskBytes,
+			ProcessCount:        specification.ResourceLimits.ProcessCount,
+			FileCount:           specification.ResourceLimits.FileCount,
 		},
 	}, inputs, nil
 }

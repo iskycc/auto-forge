@@ -50,14 +50,15 @@ type Command struct {
 }
 
 type Limits struct {
-	TimeoutMs          int64 `json:"timeoutMs"`
-	MaxLogBytes        int64 `json:"maxLogBytes"`
-	TerminationGraceMs int64 `json:"terminationGraceMs,omitempty"`
-	CPUMillicores      int64 `json:"cpuMillicores,omitempty"`
-	MemoryBytes        int64 `json:"memoryBytes,omitempty"`
-	DiskBytes          int64 `json:"diskBytes,omitempty"`
-	ProcessCount       int64 `json:"processCount,omitempty"`
-	FileCount          int64 `json:"fileCount,omitempty"`
+	TimeoutMs           int64 `json:"timeoutMs"`
+	LogSilenceTimeoutMs int64 `json:"logSilenceTimeoutMs,omitempty"`
+	MaxLogBytes         int64 `json:"maxLogBytes"`
+	TerminationGraceMs  int64 `json:"terminationGraceMs,omitempty"`
+	CPUMillicores       int64 `json:"cpuMillicores,omitempty"`
+	MemoryBytes         int64 `json:"memoryBytes,omitempty"`
+	DiskBytes           int64 `json:"diskBytes,omitempty"`
+	ProcessCount        int64 `json:"processCount,omitempty"`
+	FileCount           int64 `json:"fileCount,omitempty"`
 }
 
 type Policy struct {
@@ -180,6 +181,9 @@ func validateLimits(limits Limits) error {
 	timeout := time.Duration(limits.TimeoutMs) * time.Millisecond
 	if timeout < minimumTimeout || timeout > maximumTimeout {
 		return fmt.Errorf("limits.timeoutMs must be between %d and %d", minimumTimeout.Milliseconds(), maximumTimeout.Milliseconds())
+	}
+	if limits.LogSilenceTimeoutMs != 0 && (limits.LogSilenceTimeoutMs < 1_000 || limits.LogSilenceTimeoutMs > maximumTimeout.Milliseconds()) {
+		return errors.New("limits.logSilenceTimeoutMs must be zero or between 1000 and 86400000")
 	}
 	if limits.MaxLogBytes < 1 || limits.MaxLogBytes > maximumLogBytes {
 		return fmt.Errorf("limits.maxLogBytes must be between 1 and %d", maximumLogBytes)

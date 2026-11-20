@@ -545,8 +545,10 @@ func (supervisor *attemptSupervisor) runTestNG(
 		},
 	})
 	timeoutDiagnostics.close()
+	logSilenceTimedOut := runErr == nil && result.Termination == executor.LogSilenceTermination
 	var phaseErr error
-	if runErr == nil && result.Termination == "completed" && result.ExitCode != adapterCaseTimeoutExitCode && ctx.Err() == nil {
+	if runErr == nil && ctx.Err() == nil &&
+		(logSilenceTimedOut || (result.Termination == "completed" && result.ExitCode != adapterCaseTimeoutExitCode)) {
 		// Java has stopped. Log flush and report handling must use the upload
 		// deadline rather than the JVM deadline.
 		phaseContext, cancelPhase := context.WithTimeout(ctx, 3*time.Second)
@@ -560,10 +562,23 @@ func (supervisor *attemptSupervisor) runTestNG(
 			fmt.Fprintf(supervisor.diagnostics, "persist upload-phase diagnostic for %s: %v\n", claimed.Assignment.AttemptID, errors.Join(phaseErr, diagnosticErr))
 		}
 	}
+	mapped := mapExecutionResult(result)
+	if logSilenceTimedOut {
+		mapped.Summary = fmt.Sprintf("日志上报超时：连续 %d 秒没有新的 stdout/stderr，Runner 已强制终止该用例进程组。\n%s",
+			executionSpec.LogSilenceTimeoutMs/1_000, timeoutDiagnostics.describe(executionSpec.TimeoutMs, time.Now()))
+		if err := persistProgress(mapped); err != nil {
+			return platformFailure("RESULT_SPOOL_WRITE_FAILED", err)
+		}
+	}
 	if closeErr := errors.Join(
 		processLogErr,
 		collector.Close(time.Now().UTC().Format(time.RFC3339Nano)),
 	); closeErr != nil {
+		if logSilenceTimedOut {
+			fmt.Fprintf(supervisor.diagnostics, "persist logs after log silence timeout for %s: %v\n", claimed.Assignment.AttemptID, closeErr)
+			mapped.Summary = boundedSummary(mapped.Summary + "\n日志暂存失败，可能缺少部分日志。")
+			return mapped
+		}
 		if errors.Is(closeErr, errLogSpoolQuotaExceeded) {
 			return platformFailure("LOG_SPOOL_QUOTA_EXCEEDED", closeErr)
 		}
@@ -580,7 +595,12 @@ func (supervisor *attemptSupervisor) runTestNG(
 			fmt.Fprintf(supervisor.diagnostics, "clean attempt workspace %s: %v\n", claimed.Assignment.AttemptID, removeErr)
 		}
 	}()
-	reportSummary, reportFound, reportErr := executor.ReadTestNGReport(result.WorkspacePath)
+	var reportSummary executor.TestNGReportSummary
+	var reportFound bool
+	var reportErr error
+	if !logSilenceTimedOut {
+		reportSummary, reportFound, reportErr = executor.ReadTestNGReport(result.WorkspacePath)
+	}
 	// 保持实时上传协程运行到结构化结果解析结束，利用本地 I/O 时间
 	// 提前排空日志；最终仍执行一次权威 flush，完成契约与断线重传语义不变。
 	stopLiveLogs()
@@ -591,11 +611,17 @@ func (supervisor *attemptSupervisor) runTestNG(
 		timeoutDiagnostics.observeUpload,
 	)
 	if uploadErr != nil {
+		if logSilenceTimedOut {
+			fmt.Fprintf(supervisor.diagnostics, "upload logs after log silence timeout for %s: %v\n", claimed.Assignment.AttemptID, uploadErr)
+			mapped.Summary = boundedSummary(mapped.Summary + "\n上传阶段已结束，仍有日志未获确认。")
+			confirmed := mergeLogWatermarks(streamedWatermarks, watermarks)
+			mapped.LogWatermarks = &confirmed
+			return mapped
+		}
 		return platformFailure("LOG_UPLOAD_FAILED", uploadErr)
 	}
 	watermarks = mergeLogWatermarks(streamedWatermarks, watermarks)
-	mapped := mapExecutionResult(result)
-	if mapped.Status == "timed_out" {
+	if mapped.Status == "timed_out" && !logSilenceTimedOut {
 		mapped.Summary = boundedSummary(mapped.Summary + "\n" + timeoutDiagnostics.describe(executionSpec.TimeoutMs, time.Now()))
 	}
 	if reportErr != nil {
@@ -1049,6 +1075,9 @@ func validateClaimedAssignment(
 	if !executorSupported || specification.ClassName == "" || len(specification.ClassName) > 1_024 || specification.TimeoutMs < 1_000 || specification.TimeoutMs > 86_400_000 {
 		return errors.New("assignment execution specification is invalid")
 	}
+	if specification.LogSilenceTimeoutMs != 0 && (specification.LogSilenceTimeoutMs < 1_000 || specification.LogSilenceTimeoutMs > 86_400_000) {
+		return errors.New("assignment log silence timeout must be between 1000 and 86400000 milliseconds")
+	}
 	if specification.ResourceLimits.CPUMillicores <= 0 || specification.ResourceLimits.MemoryBytes <= 0 || specification.ResourceLimits.DiskBytes <= 0 || specification.ResourceLimits.ProcessCount <= 0 || specification.ResourceLimits.FileCount <= 0 {
 		return errors.New("assignment resource limits are invalid")
 	}
@@ -1167,6 +1196,10 @@ func mapExecutionResult(result executor.Result) completionResult {
 		mapped.Status = "timed_out"
 		mapped.ResultCode = "EXECUTION_TIMEOUT"
 		mapped.Summary = "TestNG exceeded the configured execution timeout."
+	case result.Termination == executor.LogSilenceTermination:
+		mapped.Status = "timed_out"
+		mapped.ResultCode = "EXECUTION_LOG_SILENCE_TIMEOUT"
+		mapped.Summary = "The Runner terminated the process after the configured execution log silence interval."
 	case result.Termination == "cancelled":
 		mapped.Status = "cancelled"
 		mapped.ResultCode = "EXECUTION_CANCELLED"

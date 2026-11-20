@@ -21,6 +21,7 @@ import type {
 } from "@autoforge/application";
 import { RunBatchSchedulingService, RunBatchExportService } from "@autoforge/application";
 import { PlatformConfigurationStore } from "@autoforge/platform-config";
+import { REQUIRED_EXECUTION_CAPABILITIES, REQUIRED_EXECUTION_LABELS } from "@autoforge/domain";
 import {
   createPostgresDatabase,
   createSqliteDatabase,
@@ -2184,11 +2185,13 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     const configure = (
       memoryAdmissionMode: "reserved" | "threshold" | "disabled",
       projectMaximumConcurrency: number,
+      caseLogSilenceTimeoutSeconds = 0,
     ) => {
       const current = writer.read();
       writer.replace(
         {
           ...current,
+          limits: { ...current.limits, caseLogSilenceTimeoutSeconds },
           scheduler: { ...current.scheduler, memoryAdmissionMode, projectMaximumConcurrency },
         },
         current.revision,
@@ -2234,14 +2237,14 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         undefined,
         undefined,
         undefined,
-        () => reader.readScheduler(),
+        () => reader.readExecutionScheduling(),
       );
       const reserved = async () =>
         (await harness.batches.getSchedulingSnapshot(harness.batchQueuedId, now))?.candidates[0]
           ?.reservedSlots;
       await service.schedule(harness.batchQueuedId);
       expect(await reserved()).toBe(4);
-      configure("threshold", 6);
+      configure("threshold", 6, 120);
       await service.schedule(harness.batchQueuedId);
       expect(await reserved()).toBe(6);
       configure("reserved", 1);
@@ -2257,6 +2260,32 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       const batch = await harness.batches.get(harness.batchQueuedId);
       expect(batch?.attempts).toHaveLength(8);
       expect(batch?.attempts.every((attempt) => attempt.status === "assigned")).toBe(true);
+      const claimed = await harness.executions.claim({
+        runnerId: harness.runnerId,
+        requestId: randomUUID(),
+        availableSlots: 8,
+        labels: [...REQUIRED_EXECUTION_LABELS],
+        capabilities: [...REQUIRED_EXECUTION_CAPABILITIES],
+        now,
+        leaseExpiresAt: new Date(Date.parse(now) + 45_000).toISOString(),
+        leaseSeeds: Array.from({ length: 8 }, () => ({
+          id: randomUUID(),
+          eventId: randomUUID(),
+          tokenHash: randomUUID(),
+          tokenEncrypted: "refill",
+        })),
+      });
+      expect(claimed).toHaveLength(8);
+      expect(
+        claimed.filter(
+          ({ assignment }) => assignment.executionSpec.logSilenceTimeoutMs === 120_000,
+        ),
+      ).toHaveLength(2);
+      expect(
+        claimed.filter(
+          ({ assignment }) => assignment.executionSpec.logSilenceTimeoutMs === undefined,
+        ),
+      ).toHaveLength(6);
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();

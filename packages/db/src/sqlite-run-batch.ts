@@ -1890,6 +1890,9 @@ export class SqliteRunBatchRepository
                     environment,
                     secretBindings: secretBindingsList,
                     executionTimeoutMs: batchScope.executionTimeoutMs,
+                    ...(input.logSilenceTimeoutMs
+                      ? { logSilenceTimeoutMs: input.logSilenceTimeoutMs }
+                      : {}),
                     uploadTimeoutMs: batchScope.uploadTimeoutMs,
                     caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
                     ...(policy ? { policy } : {}),
@@ -2459,6 +2462,7 @@ function executionSpec(input: {
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
   executionTimeoutMs: number;
+  logSilenceTimeoutMs?: number;
   uploadTimeoutMs: number;
   caseTimeoutSeconds: number;
   policy?: RunBatchExecutionPolicy;
@@ -2534,6 +2538,7 @@ function executionSpec(input: {
     ],
     artifactRules: [],
     timeoutMs: input.executionTimeoutMs,
+    ...(input.logSilenceTimeoutMs ? { logSilenceTimeoutMs: input.logSilenceTimeoutMs } : {}),
     uploadTimeoutMs: input.uploadTimeoutMs,
     resourceLimits: executionResourceLimitsForInputs(
       executionInputs.map((executionInput) => executionInput.sizeBytes),

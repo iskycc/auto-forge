@@ -1,6 +1,7 @@
 const reasonLabels: Readonly<Record<string, string>> = {
   QUEUE_TIMEOUT: "排队超时",
   EXECUTION_TIMEOUT: "执行超时",
+  EXECUTION_LOG_SILENCE_TIMEOUT: "日志上报超时",
   ASSIGNMENT_CLAIM_TIMEOUT: "领取超时",
   UPLOAD_TIMEOUT: "上传超时",
   LEASE_EXPIRED: "租约过期",

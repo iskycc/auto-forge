@@ -31,12 +31,18 @@ describe("platform configuration store", () => {
     const first = reader.readScheduler();
     first.memoryAdmissionMode = "disabled";
     expect(reader.readScheduler().memoryAdmissionMode).toBe("reserved");
+    expect(reader.readExecutionScheduling().logSilenceTimeoutMs).toBe(0);
     expect(read).toHaveBeenCalledTimes(1);
     writer.replace(
-      { ...initial, scheduler: { ...initial.scheduler, memoryAdmissionMode: "threshold" } },
+      {
+        ...initial,
+        limits: { ...initial.limits, caseLogSilenceTimeoutSeconds: 120 },
+        scheduler: { ...initial.scheduler, memoryAdmissionMode: "threshold" },
+      },
       initial.revision,
     );
     expect(reader.readScheduler().memoryAdmissionMode).toBe("threshold");
+    expect(reader.readExecutionScheduling().logSilenceTimeoutMs).toBe(120_000);
     expect(read).toHaveBeenCalledTimes(2);
     writeFileSync(writer.paths.configurationFile, "{invalid", { mode: 0o600 });
     expect(() => reader.readScheduler()).toThrow();

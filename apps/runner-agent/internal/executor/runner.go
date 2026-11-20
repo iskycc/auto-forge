@@ -135,6 +135,12 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 	budget := newLogBudget(spec.Limits.MaxLogBytes)
 	stdout := newStreamBuffer("stdout", budget, options.LogSink)
 	stderr := newStreamBuffer("stderr", budget, options.LogSink)
+	var logSilence *logSilenceWatch
+	if spec.Limits.LogSilenceTimeoutMs > 0 && spec.Limits.LogSilenceTimeoutMs < spec.Limits.TimeoutMs {
+		logSilence = &logSilenceWatch{interval: time.Duration(spec.Limits.LogSilenceTimeoutMs) * time.Millisecond}
+		stdout.observeWrite = logSilence.observeOutput
+		stderr.observeWrite = logSilence.observeOutput
+	}
 	command.Stdout = stdout
 	command.Stderr = stderr
 
@@ -169,7 +175,8 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 		return Result{}, errors.Join(err, stdout.Close(), stderr.Close())
 	}
 
-	executionContext, cancel := context.WithTimeout(ctx, time.Duration(spec.Limits.TimeoutMs)*time.Millisecond)
+	executionStarted := time.Now()
+	executionContext, cancel := context.WithDeadline(ctx, executionStarted.Add(time.Duration(spec.Limits.TimeoutMs)*time.Millisecond))
 	defer cancel()
 	processContext, resourceCancel := context.WithCancel(executionContext)
 	monitorContext, stopMonitor := context.WithCancel(context.Background())
@@ -184,7 +191,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 			}
 		}()
 	}
-	waitErr, termination := waitForProcess(processContext, command, terminationGracePeriod(spec.Limits), resourceScope)
+	waitErr, termination := waitForProcess(processContext, command, terminationGracePeriod(spec.Limits), resourceScope, logSilence, executionStarted)
 	stopMonitor()
 	resourceCancel()
 	finishedAt := time.Now().UTC()
@@ -261,20 +268,17 @@ func commandEnvironment(overrides map[string]string) []string {
 	return result
 }
 
-func waitForProcess(ctx context.Context, command *exec.Cmd, gracePeriod time.Duration, resourceScope *resourceScope) (error, string) {
+func waitForProcess(ctx context.Context, command *exec.Cmd, gracePeriod time.Duration, resourceScope *resourceScope, logSilence *logSilenceWatch, executionStarted time.Time) (error, string) {
 	wait := make(chan error, 1)
 	go func() {
 		wait <- command.Wait()
 	}()
 
-	select {
-	case err := <-wait:
-		return err, "completed"
-	case <-ctx.Done():
-		termination := "cancelled"
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			termination = "timeout"
-		}
+	err, termination := awaitProcessStop(ctx, wait, logSilence, executionStarted)
+	if termination == "completed" {
+		return err, termination
+	}
+	if termination != LogSilenceTermination {
 		terminateProcessGroup(command.Process.Pid)
 		timer := time.NewTimer(gracePeriod)
 		defer timer.Stop()
@@ -282,11 +286,11 @@ func waitForProcess(ctx context.Context, command *exec.Cmd, gracePeriod time.Dur
 		case err := <-wait:
 			return err, termination
 		case <-timer.C:
-			killProcessGroup(command.Process.Pid)
-			resourceScope.forceKill()
-			return <-wait, termination
 		}
 	}
+	killProcessGroup(command.Process.Pid)
+	resourceScope.forceKill()
+	return <-wait, termination
 }
 
 func exitCode(command *exec.Cmd, waitErr error) int {

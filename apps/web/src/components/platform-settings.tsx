@@ -94,6 +94,7 @@ export function PlatformSettings({
             sessionTtlHours: numberValue(form, "sessionTtlHours"),
             authLoginAttemptsPerWindow: numberValue(form, "authLoginAttemptsPerWindow"),
             caseExecutionTimeoutSeconds: numberValue(form, "caseExecutionTimeoutSeconds"),
+            caseLogSilenceTimeoutSeconds: numberValue(form, "caseLogSilenceTimeoutSeconds"),
             ddtImportFileLimit: numberValue(form, "ddtImportFileLimit"),
             ddtImportZipSpreadsheetLimit: numberValue(form, "ddtImportZipSpreadsheetLimit"),
           },
@@ -389,6 +390,14 @@ export function PlatformSettings({
               label="用例执行超时（秒）"
               name="caseExecutionTimeoutSeconds"
               value={initial.limits.caseExecutionTimeoutSeconds}
+            />
+            <NumberInput
+              description="0 表示关闭。无 stdout／stderr 达到此时长时终止用例；总执行期限先到时按总超时处理。保存后对新调度生效。"
+              label="日志上报超时（秒）"
+              max={86_400}
+              min={0}
+              name="caseLogSilenceTimeoutSeconds"
+              value={initial.limits.caseLogSilenceTimeoutSeconds}
             />
             <NumberInput
               description="单次请求可上传的 Excel、CSV、ODS 或 ZIP 文件总数；保存后立即生效。"

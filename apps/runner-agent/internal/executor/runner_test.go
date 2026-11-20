@@ -113,12 +113,16 @@ func TestRunTreatsShellMetacharactersAsLiteralArguments(t *testing.T) {
 func TestRunTerminatesDescendantProcessTreeOnTimeout(t *testing.T) {
 	for _, mode := range []string{"tree", "delayed-tree"} {
 		t.Run(mode, func(t *testing.T) {
-			testDescendantProcessTreeTimeout(t, mode)
+			testDescendantProcessTreeTimeout(t, mode, "timeout")
 		})
 	}
 }
 
-func testDescendantProcessTreeTimeout(t *testing.T, mode string) {
+func TestRunForceKillsSilentProcessGroup(t *testing.T) {
+	testDescendantProcessTreeTimeout(t, "tree", LogSilenceTermination)
+}
+
+func testDescendantProcessTreeTimeout(t *testing.T, mode string, expectedTermination string) {
 	t.Helper()
 	executable := testExecutable(t)
 	pidPath := filepath.Join(t.TempDir(), "descendant.pid")
@@ -126,6 +130,10 @@ func testDescendantProcessTreeTimeout(t *testing.T, mode string) {
 	spec.Command.Args = append(spec.Command.Args, pidPath)
 	spec.Limits.TimeoutMs = 100
 	spec.Limits.TerminationGraceMs = 10
+	if expectedTermination == LogSilenceTermination {
+		spec.Limits.TimeoutMs = 5_000
+		spec.Limits.LogSilenceTimeoutMs = 1_000
+	}
 	var pid int
 
 	result, err := Run(context.Background(), spec, RunOptions{
@@ -142,8 +150,11 @@ func testDescendantProcessTreeTimeout(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Termination != "timeout" {
-		t.Fatalf("termination = %q, want timeout", result.Termination)
+	if result.Termination != expectedTermination {
+		t.Fatalf("termination = %q, want %q", result.Termination, expectedTermination)
+	}
+	if expectedTermination == LogSilenceTermination && result.Signal != "SIGKILL" {
+		t.Fatalf("silent process was not force killed: %+v", result)
 	}
 	deadline := time.Now().Add(time.Second)
 	for processExists(pid) && time.Now().Before(deadline) {
@@ -151,6 +162,21 @@ func testDescendantProcessTreeTimeout(t *testing.T, mode string) {
 	}
 	if processExists(pid) {
 		t.Fatalf("descendant process %d survived timeout cleanup", pid)
+	}
+}
+
+func TestContinuedStderrPreventsSilenceEvenWhenLogsReachTheByteLimit(t *testing.T) {
+	executable := testExecutable(t)
+	spec := helperSpec(executable, "periodic-stderr")
+	spec.Limits.LogSilenceTimeoutMs = 1_000
+	spec.Limits.MaxLogBytes = 1
+	// The nested race runtime otherwise sleeps for a full second at exit.
+	spec.Environment["GORACE"] = "atexit_sleep_ms=0"
+	result, err := Run(context.Background(), spec, RunOptions{
+		DataDirectory: t.TempDir(), Policy: Policy{AllowedExecutables: []string{executable}},
+	})
+	if err != nil || result.Termination != "completed" || !result.LogsTruncated {
+		t.Fatalf("raw stderr should keep the process active: %+v, %v", result, err)
 	}
 }
 
@@ -234,6 +260,11 @@ func TestHelperProcess(t *testing.T) {
 	case "output":
 		fmt.Fprint(os.Stdout, "stdout-data")
 		fmt.Fprint(os.Stderr, "stderr-data")
+	case "periodic-stderr":
+		for range 12 {
+			fmt.Fprintln(os.Stderr, "still running")
+			time.Sleep(120 * time.Millisecond)
+		}
 	case "sigterm":
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 		time.Sleep(time.Second)

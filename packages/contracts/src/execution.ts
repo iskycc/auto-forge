@@ -195,6 +195,7 @@ export const executionSpecSchema = z
       // Protocol v1 compatibility: retired rules never reactivate collection.
       .transform((): z.infer<typeof retiredExecutionArtifactRuleSchema>[] => []),
     timeoutMs: z.number().int().min(1_000).max(86_400_000),
+    logSilenceTimeoutMs: z.number().int().min(1_000).max(86_400_000).optional(),
     uploadTimeoutMs: z.number().int().min(1_000).max(3_600_000),
     resourceLimits: z.object({
       cpuMillicores: z.number().int().min(1).max(1_000_000),

@@ -1905,6 +1905,7 @@ export type ReserveSchedulingAssignmentsInput = {
   offlineBefore: string;
   metricsFreshAfter: string;
   scheduledAt: string;
+  logSilenceTimeoutMs?: number;
   /** 仅来自已认证 Runner claim；仓储事务会再次与权威预留数取较保守值。 */
   runnerLiveCapacities?: readonly RunnerLiveCapacity[];
 };

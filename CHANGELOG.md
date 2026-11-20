@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.23.3 - 2026-11-20
+
+### Added
+
+- 平台设置增加“日志上报超时”，默认关闭。启用后 Runner 强制终止长时间无 stdout／stderr 的用例并记录为超时；总时限先到时仍按总超时。需更新执行节点 Agent。
+
+### Compatibility
+
+- `limits.caseLogSilenceTimeoutSeconds` 默认为 `0`，保存后用于新派发的用例。Full 分布式部署通过各节点配置文件同步该值。Runner Protocol v1 新增可选字段，旧 Agent 沿用总执行时限。Lite 和 Full 无需数据库迁移。
+
+### Verification
+
+- Runner 全包测试、`go vet`、定向竞态检查和双架构静态构建通过。真实 JVM 阻塞读取场景验证静默超时发送 `SIGKILL` 后对端收到连接关闭，并验证总执行期限优先。
+- 96 项定向测试、6 项 SQLite／PostgreSQL 调度回归、Lite 两项和 Full 一项 Playwright 验收通过。已查看 1024×768 和 1536×960 的配置页及说明截图。Web 和 Worker 生产构建、类型检查、变更格式和 ESLint 通过。
+- 本次按最快路径仅运行 Release，完整源码检查和发布后验收矩阵未运行。Release 保留双架构构建、镜像启动、SBOM、签名和资产完整性检查。
+
 ## 1.23.2 - 2026-11-19
 
 ### Fixed

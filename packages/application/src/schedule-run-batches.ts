@@ -161,6 +161,7 @@ export type LiveSchedulingConfiguration = SchedulingThresholds & {
   metricsMaximumAgeSeconds: number;
   projectMaximumConcurrency: number;
   priorityAgingIntervalMinutes: number;
+  logSilenceTimeoutMs?: number;
 };
 
 export class RunBatchSchedulingService {
@@ -203,18 +204,21 @@ export class RunBatchSchedulingService {
       metricsMaximumAgeSeconds,
       projectMaximumConcurrency,
       priorityAgingIntervalMinutes,
+      logSilenceTimeoutMs,
       ...thresholds
     } = this.readSchedulingConfiguration?.() ?? {
       ...this.thresholds,
       metricsMaximumAgeSeconds: this.metricsMaximumAgeSeconds,
       projectMaximumConcurrency: this.projectMaximumConcurrency,
       priorityAgingIntervalMinutes: this.priorityAgingIntervalMinutes,
+      logSilenceTimeoutMs: 0,
     };
     return {
       thresholds,
       metricsMaximumAgeSeconds,
       projectMaximumConcurrency,
       priorityAgingIntervalMinutes,
+      logSilenceTimeoutMs,
     };
   }
 
@@ -1363,6 +1367,9 @@ export class RunBatchSchedulingService {
               configuration.metricsMaximumAgeSeconds,
             ),
             scheduledAt: reservationTime.toISOString(),
+            ...(configuration.logSilenceTimeoutMs
+              ? { logSilenceTimeoutMs: configuration.logSilenceTimeoutMs }
+              : {}),
             ...(liveCapacities.length > 0 ? { runnerLiveCapacities: liveCapacities } : {}),
           });
           reserved += reservation.reserved;

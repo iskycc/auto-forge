@@ -82,6 +82,7 @@ type ExecutionSpec struct {
 	RequiredCapabilities []string            `json:"requiredCapabilities"`
 	ArtifactRules        []ArtifactRule      `json:"artifactRules"`
 	TimeoutMs            int64               `json:"timeoutMs"`
+	LogSilenceTimeoutMs  int64               `json:"logSilenceTimeoutMs,omitempty"`
 	UploadTimeoutMs      int64               `json:"uploadTimeoutMs"`
 	ResourceLimits       ResourceLimits      `json:"resourceLimits"`
 }

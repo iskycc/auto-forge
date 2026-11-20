@@ -48,6 +48,7 @@ type streamBuffer struct {
 	budget        *logBudget
 	stream        string
 	sink          func(LogChunk) error
+	observeWrite  func()
 	retainContent bool
 	pending       []byte
 	sequence      int64
@@ -64,6 +65,9 @@ func newStreamBuffer(stream string, budget *logBudget, sink func(LogChunk) error
 }
 
 func (buffer *streamBuffer) Write(content []byte) (int, error) {
+	if buffer.observeWrite != nil && len(content) > 0 {
+		buffer.observeWrite()
+	}
 	if buffer.err != nil {
 		return 0, buffer.err
 	}

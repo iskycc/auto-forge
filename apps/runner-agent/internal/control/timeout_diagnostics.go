@@ -79,17 +79,24 @@ func (supervisor *attemptSupervisor) startTimeoutDiagnostics(
 	ctx, stop := context.WithCancel(context.Background())
 	diagnostics.stop = stop
 	diagnostics.done = make(chan struct{})
-	timeout := time.Duration(claimed.Assignment.ExecutionSpec.TimeoutMs) * time.Millisecond
-	lead := min(15*time.Second, max(100*time.Millisecond, timeout/10))
-	at := startupStartedAt.Add(timeout - lead)
 	go func() {
 		defer close(diagnostics.done)
+		specification := claimed.Assignment.ExecutionSpec
+		at, lead := diagnostics.probeTime(startupStartedAt, specification)
 		timer := time.NewTimer(max(0, time.Until(at)))
 		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			at, lead = diagnostics.probeTime(startupStartedAt, specification)
+			if remaining := time.Until(at); remaining > 0 {
+				timer.Reset(remaining)
+				continue
+			}
+			break
 		}
 		processSummary := describeTimeoutProcess(identity)
 		threadSummary := "未采集线程栈：节点正在采集其他用例的诊断。"
@@ -126,6 +133,25 @@ func (supervisor *attemptSupervisor) startTimeoutDiagnostics(
 			fmt.Fprintf(supervisor.diagnostics, "persist timeout diagnostics for %s: %v\n", claimed.Assignment.AttemptID, err)
 		}
 	}()
+}
+
+func (diagnostics *attemptTimeoutDiagnostics) probeTime(startupStartedAt time.Time, specification ExecutionSpec) (time.Time, time.Duration) {
+	timeout := time.Duration(specification.TimeoutMs) * time.Millisecond
+	deadline := startupStartedAt.Add(timeout)
+	if specification.LogSilenceTimeoutMs > 0 && specification.LogSilenceTimeoutMs < specification.TimeoutMs {
+		silence := time.Duration(specification.LogSilenceTimeoutMs) * time.Millisecond
+		diagnostics.mutex.Lock()
+		lastOutputAt := diagnostics.lastOutputAt
+		diagnostics.mutex.Unlock()
+		if lastOutputAt.Before(diagnostics.startedAt) {
+			lastOutputAt = diagnostics.startedAt
+		}
+		if silenceDeadline := lastOutputAt.Add(silence); silenceDeadline.Before(deadline) {
+			deadline, timeout = silenceDeadline, silence
+		}
+	}
+	lead := min(15*time.Second, max(100*time.Millisecond, timeout/10))
+	return deadline.Add(-lead), lead
 }
 
 func waitForThreadDiagnosticSlot(ctx context.Context, slot chan struct{}, maximumWait time.Duration) bool {
