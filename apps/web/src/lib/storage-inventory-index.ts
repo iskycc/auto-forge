@@ -31,11 +31,19 @@ export class StorageInventoryIndex {
   }
   status() {
     const row = this.database
-      .prepare("SELECT generation,refresh_after,failed FROM inventory_state_v2 WHERE id=1")
-      .get() as { generation: string | null; refresh_after: number; failed: number };
+      .prepare(
+        "SELECT generation,refresh_after,lease_until,failed FROM inventory_state_v2 WHERE id=1",
+      )
+      .get() as {
+      generation: string | null;
+      refresh_after: number;
+      lease_until: number;
+      failed: number;
+    };
     return {
       generation: row.generation,
       refreshAfter: row.refresh_after,
+      leaseUntil: row.lease_until,
       failed: row.failed !== 0,
     };
   }
@@ -83,16 +91,7 @@ export class StorageInventoryIndex {
           token,
           start + offset,
           item.category,
-          [
-            item.name,
-            item.logicalPath,
-            item.storagePath,
-            item.runBatchId,
-            item.projectId,
-            item.detail,
-          ]
-            .join("\n")
-            .toLocaleLowerCase("zh-CN"),
+          storageInventorySearchText(item),
           JSON.stringify(item),
         ),
       );
@@ -148,7 +147,13 @@ export class StorageInventoryIndex {
   }
   page(
     generation: string,
-    input: { after: number; limit: number; category?: string; query?: string },
+    input: {
+      after: number;
+      limit: number;
+      category?: string;
+      query?: string;
+      excludeObjects?: boolean;
+    },
   ) {
     const row = this.database
       .prepare("SELECT summary FROM inventory_generations_v1 WHERE id=? AND summary IS NOT NULL")
@@ -160,6 +165,7 @@ export class StorageInventoryIndex {
       );
     const where = ["generation=?", "ordinal>?"];
     const parameters: Array<string | number> = [generation, input.after];
+    if (input.excludeObjects) where.push("json_extract(payload,'$.location')<>'object-store'");
     if (input.category) {
       where.push("category=?");
       parameters.push(input.category);
@@ -183,4 +189,17 @@ export class StorageInventoryIndex {
   close() {
     this.database.close();
   }
+}
+
+export function storageInventorySearchText(item: StorageInventoryItem): string {
+  return [
+    item.name,
+    item.logicalPath,
+    item.storagePath,
+    item.runBatchId,
+    item.projectId,
+    item.detail,
+  ]
+    .join("\n")
+    .toLocaleLowerCase("zh-CN");
 }

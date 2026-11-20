@@ -708,6 +708,14 @@ export type ObjectWriteResult = {
   created: boolean;
 };
 
+export interface ObjectDirectoryReader {
+  listDirectory(input: { prefix: string; cursor?: string; limit: number }): Promise<{
+    prefixes: string[];
+    items: ObjectEntry[];
+    nextCursor?: string;
+  }>;
+}
+
 export interface JarObjectStorePort {
   putJar(projectId: string, sha256: string, content: Uint8Array): Promise<ObjectWriteResult>;
   putObject(input: {

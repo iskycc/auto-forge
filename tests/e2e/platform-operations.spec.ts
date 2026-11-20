@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, resolve } from "node:path";
@@ -14,6 +15,7 @@ import {
   waitForUiTransitions,
 } from "./support/ui-guard";
 import { infrastructureUsageSchema, systemDiagnosticSchema } from "@autoforge/contracts";
+import { openE2eObjectStore } from "./support/platform-object-store";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
 const SQLITE_FIXTURE_BATCH_ID = "00000000-0000-7000-8000-000000918273";
@@ -941,6 +943,93 @@ test("storage snapshot expiry stops automatic retries and permits explicit recov
   await expect(inventory).toHaveAttribute("aria-busy", "false");
   await expect(inventory.getByRole("alert")).toHaveCount(0);
   expect(requests).toBe(7);
+});
+
+test("MinIO storage browsing only requests opened levels and loads another page on demand", async ({
+  page,
+}, testInfo) => {
+  test.skip(!process.env.AUTOFORGE_E2E_PLATFORM_CONFIG_DIR, "Requires the Full object store.");
+  const objects = await openE2eObjectStore();
+  test.skip(objects.storageKind !== "minio", "Requires MinIO.");
+  const path = `storage-ui-${randomUUID()}`;
+  const nestedPath = `${path}/子目录`;
+  const keys = [`${path}/readme.txt`, `${nestedPath}/用例.txt`, `${nestedPath}/深层/leaf.txt`];
+  const content = Buffer.from("storage browser fixture");
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  try {
+    for (const objectKey of keys) {
+      await objects.putObject({
+        objectKey,
+        sha256,
+        sizeBytes: content.length,
+        mediaType: "text/plain",
+        content: (async function* () {
+          yield content;
+        })(),
+      });
+    }
+    await ensureAdministrator(page);
+    const requests: Array<{ prefix: string; continuation: boolean }> = [];
+    await page.route(
+      (url) => url.pathname === "/api/v1/settings/storage/objects",
+      async (route) => {
+        const url = new URL(route.request().url());
+        const prefix = url.searchParams.get("prefix") ?? "";
+        requests.push({ prefix, continuation: url.searchParams.has("cursor") });
+        if (prefix === `${path}/`) url.searchParams.set("limit", "1");
+        await route.continue({ url: url.toString() });
+      },
+    );
+    await page.goto("/objects?section=storage");
+    const tree = page.getByRole("tree", { name: "存储文件目录" });
+    const branch = (id: string) =>
+      tree.locator(`[data-tree-node-id="storage-location:object-store${id}"]`);
+    const header = (id: string) =>
+      branch(id).locator(":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header");
+    await expect(branch("")).toHaveAttribute("data-open", "false");
+    expect(requests).toEqual([]);
+    await header("").click();
+    await expect(header(`:${path}`)).toBeVisible();
+    expect(requests).toEqual([{ prefix: "", continuation: false }]);
+    await waitForUiTransitions(page);
+    await header(`:${path}`).click();
+    const next = branch(`:${path}`).getByRole("button", { name: "加载更多本层条目" });
+    await expect(next).toBeVisible();
+    expect(requests).toEqual([
+      { prefix: "", continuation: false },
+      { prefix: `${path}/`, continuation: false },
+    ]);
+    await next.click();
+    await expect(tree.getByText("readme.txt", { exact: true })).toBeVisible();
+    await expect(header(`:${nestedPath}`)).toBeVisible();
+    await expect(tree.getByText("用例.txt", { exact: true })).toHaveCount(0);
+    await waitForUiTransitions(page);
+    await header(`:${nestedPath}`).click();
+    const file = tree.getByText("用例.txt", { exact: true });
+    await expect(file).toBeVisible();
+    await expect(tree.getByText("leaf.txt", { exact: true })).toHaveCount(0);
+    expect(requests.slice(2)).toEqual([
+      { prefix: `${path}/`, continuation: true },
+      { prefix: `${nestedPath}/`, continuation: false },
+    ]);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await file.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: testInfo.outputPath(`storage-minio-level-${viewport.width}.png`),
+      });
+      await captureUi(page, `storage-minio-level-${viewport.width}`);
+    }
+    await header(`:${nestedPath}`).click();
+    await expect(file).toHaveCount(0);
+    expect(requests).toHaveLength(4);
+  } finally {
+    for (const key of keys) await objects.delete(key);
+  }
 });
 
 test("nested storage file rows retain independent columns, disclosure state and bounded long paths", async ({

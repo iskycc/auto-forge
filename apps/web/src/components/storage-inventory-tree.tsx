@@ -5,10 +5,12 @@ import { Disclosure } from "@/components/ui/disclosure";
 
 import { cn } from "@/lib/utils";
 
-import type {
-  StorageInventoryCategory,
-  StorageInventoryItem,
-  StorageInventoryLocation,
+import {
+  storageObjectDirectoryPageSchema,
+  type StorageObjectDirectoryPage,
+  type StorageInventoryCategory,
+  type StorageInventoryItem,
+  type StorageInventoryLocation,
 } from "@autoforge/contracts";
 import {
   ChevronRight,
@@ -22,15 +24,19 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button, Input } from "@/components/ui";
+import { Notice } from "@/components/ui/notice";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+import { readApiErrorMessage } from "@/lib/client-api";
 import { RuntimeAssetUsage } from "./runtime-asset-usage";
 
-import type {
-  StorageDirectoryNode,
-  StorageFileNode,
-  StorageLocationNode,
+import {
+  singleFileNode,
+  type StorageDirectoryNode,
+  type StorageFileNode,
+  type StorageLocationNode,
 } from "./storage-inventory-tree-model";
 
 const TREE_RENDER_BATCH_SIZE = 250;
@@ -42,6 +48,14 @@ type RuntimeAssetDeletionControls = {
   selectedRuntimeAssetIds: ReadonlySet<string>;
   onDelete: (item: StorageInventoryItem) => void;
   onSelectionChange: (runtimeAssetId: string, selected: boolean) => void;
+};
+
+type StorageObjectBrowser = {
+  category?: StorageInventoryCategory;
+  query: string;
+  refreshSequence: number;
+  removedRuntimeAssetIds: ReadonlySet<string>;
+  onItems: (items: readonly StorageInventoryItem[]) => void;
 };
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
@@ -63,11 +77,13 @@ export function StorageInventoryTree({
   forceOpen,
   timeZone,
   deletion,
+  objectBrowser,
 }: {
   roots: readonly StorageLocationNode[];
   forceOpen: boolean;
   timeZone: string;
   deletion: RuntimeAssetDeletionControls;
+  objectBrowser?: StorageObjectBrowser;
 }) {
   return (
     <div
@@ -77,11 +93,12 @@ export function StorageInventoryTree({
     >
       {roots.map((root) => (
         <StorageLocationBranch
-          forceOpen={forceOpen}
+          forceOpen={forceOpen && (root.location !== "object-store" || !objectBrowser)}
           key={root.id}
           root={root}
           timeZone={timeZone}
           deletion={deletion}
+          objectBrowser={root.location === "object-store" ? objectBrowser : undefined}
         />
       ))}
     </div>
@@ -93,11 +110,13 @@ function StorageLocationBranch({
   forceOpen,
   timeZone,
   deletion,
+  objectBrowser,
 }: {
   root: StorageLocationNode;
   forceOpen: boolean;
   timeZone: string;
   deletion: RuntimeAssetDeletionControls;
+  objectBrowser?: StorageObjectBrowser | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const renderedOpen = forceOpen || open;
@@ -122,7 +141,7 @@ function StorageLocationBranch({
             <strong>{root.name}</strong>
             <code title={root.storagePath}>{root.storagePath}</code>
           </span>
-          <DirectoryMetrics directory={root} />
+          {objectBrowser ? null : <DirectoryMetrics directory={root} />}
         </>
       }
       className={cn("storage-tree-location", storageInventoryTreeStyles["storage-tree-location"])}
@@ -134,11 +153,12 @@ function StorageLocationBranch({
       role="treeitem"
     >
       {renderedOpen ? (
-        <StorageDirectoryChildren
+        <StorageBranchContents
           deletion={deletion}
           directory={root}
           forceOpen={forceOpen}
           timeZone={timeZone}
+          objectBrowser={objectBrowser}
         />
       ) : null}
     </Disclosure>
@@ -150,11 +170,13 @@ function StorageDirectoryBranch({
   forceOpen,
   timeZone,
   deletion,
+  objectBrowser,
 }: {
   directory: StorageDirectoryNode;
   forceOpen: boolean;
   timeZone: string;
   deletion: RuntimeAssetDeletionControls;
+  objectBrowser?: StorageObjectBrowser | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const renderedOpen = forceOpen || open;
@@ -179,7 +201,7 @@ function StorageDirectoryBranch({
             <strong>{directory.name}</strong>
             <code>{directory.logicalPath}</code>
           </span>
-          <DirectoryMetrics directory={directory} />
+          {objectBrowser ? null : <DirectoryMetrics directory={directory} />}
         </>
       }
       headerTitle={directory.logicalPath}
@@ -192,14 +214,144 @@ function StorageDirectoryBranch({
       role="treeitem"
     >
       {renderedOpen ? (
-        <StorageDirectoryChildren
+        <StorageBranchContents
           deletion={deletion}
           directory={directory}
           forceOpen={forceOpen}
           timeZone={timeZone}
+          objectBrowser={objectBrowser}
         />
       ) : null}
     </Disclosure>
+  );
+}
+
+type DirectoryChildrenProps = {
+  directory: StorageDirectoryNode;
+  forceOpen: boolean;
+  timeZone: string;
+  deletion: RuntimeAssetDeletionControls;
+  objectBrowser?: StorageObjectBrowser | undefined;
+};
+
+function StorageBranchContents(props: DirectoryChildrenProps) {
+  const { objectBrowser, ...branch } = props;
+  return objectBrowser ? (
+    <StorageObjectDirectoryChildren
+      {...branch}
+      key={objectBrowser.refreshSequence}
+      objectBrowser={objectBrowser}
+    />
+  ) : (
+    <StorageDirectoryChildren {...branch} />
+  );
+}
+
+function StorageObjectDirectoryChildren({
+  directory,
+  objectBrowser,
+  ...branch
+}: Omit<DirectoryChildrenProps, "objectBrowser"> & { objectBrowser: StorageObjectBrowser }) {
+  const [page, setPage] = useState<StorageObjectDirectoryPage>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [request, setRequest] = useState<{ cursor: string | undefined }>({ cursor: undefined });
+  const prefix = directory.logicalPath ? `${directory.logicalPath}/` : "";
+  const { category, query, onItems, removedRuntimeAssetIds } = objectBrowser;
+  useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    const { cursor } = request;
+    void (async () => {
+      const parameters = new URLSearchParams({ prefix });
+      if (category) parameters.set("category", category);
+      if (query) parameters.set("query", query);
+      if (cursor) parameters.set("cursor", cursor);
+      const response = await fetch(`/api/v1/settings/storage/objects?${parameters}`, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+        cache: "no-store",
+      });
+      const message = await readApiErrorMessage(response, "对象目录读取失败。");
+      if (message) throw new Error(message);
+      const next = storageObjectDirectoryPageSchema.parse(await response.json());
+      if (cursor && next.nextCursor === cursor) throw new Error("对象目录返回了重复游标。");
+      if (signal.aborted) return;
+      setPage((previous) => ({
+        ...next,
+        prefixes: [...new Set([...(previous?.prefixes ?? []), ...next.prefixes])],
+        items: [
+          ...new Map(
+            [...(previous?.items ?? []), ...next.items].map((item) => [item.id, item]),
+          ).values(),
+        ],
+      }));
+      onItems(next.items);
+    })()
+      .catch((cause: unknown) => {
+        if (!signal.aborted)
+          setError(cause instanceof Error ? cause.message : "对象目录读取失败。");
+      })
+      .finally(() => {
+        if (!signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [prefix, category, query, onItems, request]);
+
+  const directories = (page?.prefixes ?? []).map((child): StorageDirectoryNode => {
+    const path = child.slice(0, -1);
+    return {
+      ...directory,
+      id: `storage-location:object-store:${path}`,
+      name: path.slice(prefix.length),
+      logicalPath: path,
+      depth: directory.depth + 1,
+    };
+  });
+  const files = (page?.items ?? [])
+    .filter((item) => !item.runtimeAssetId || !removedRuntimeAssetIds.has(item.runtimeAssetId))
+    .map(singleFileNode);
+  return (
+    <StorageDirectoryChildren
+      {...branch}
+      directory={{ ...directory, directories, files }}
+      objectBrowser={objectBrowser}
+      footer={
+        loading ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 px-2 py-2 text-sm text-muted-foreground"
+          >
+            <LoadingIcon aria-hidden="true" size={15} /> 正在加载本层目录…
+          </div>
+        ) : (
+          <>
+            {error ? (
+              <Notice tone="error" className="my-2">
+                {error}
+              </Notice>
+            ) : null}
+            {error || page?.nextCursor ? (
+              <Button
+                className="justify-self-start"
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setLoading(true);
+                  setError("");
+                  setRequest({ cursor: page?.nextCursor });
+                }}
+              >
+                {error ? "重试本层目录" : "加载更多本层条目"}
+              </Button>
+            ) : directories.length === 0 && files.length === 0 ? (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                本层没有符合条件的文件或目录。
+              </p>
+            ) : null}
+          </>
+        )
+      }
+    />
   );
 }
 
@@ -208,12 +360,9 @@ function StorageDirectoryChildren({
   forceOpen,
   timeZone,
   deletion,
-}: {
-  directory: StorageDirectoryNode;
-  forceOpen: boolean;
-  timeZone: string;
-  deletion: RuntimeAssetDeletionControls;
-}) {
+  objectBrowser,
+  footer,
+}: DirectoryChildrenProps & { footer?: ReactNode }) {
   const [visibleDirectoryCount, setVisibleDirectoryCount] = useState(TREE_RENDER_BATCH_SIZE);
   const [visibleFileCount, setVisibleFileCount] = useState(TREE_RENDER_BATCH_SIZE);
   return (
@@ -227,16 +376,20 @@ function StorageDirectoryChildren({
       )}
       role="group"
     >
-      {directory.directories.slice(0, visibleDirectoryCount).map((child) => (
+      {(objectBrowser
+        ? directory.directories
+        : directory.directories.slice(0, visibleDirectoryCount)
+      ).map((child) => (
         <StorageDirectoryBranch
           directory={child}
           deletion={deletion}
           forceOpen={forceOpen}
           key={child.id}
           timeZone={timeZone}
+          objectBrowser={objectBrowser}
         />
       ))}
-      {directory.directories.length > visibleDirectoryCount ? (
+      {!objectBrowser && directory.directories.length > visibleDirectoryCount ? (
         <Button
           onClick={() => setVisibleDirectoryCount((count) => count + TREE_RENDER_BATCH_SIZE)}
           type="button"
@@ -245,10 +398,12 @@ function StorageDirectoryChildren({
           加载更多目录（剩余 {directory.directories.length - visibleDirectoryCount}）
         </Button>
       ) : null}
-      {directory.files.slice(0, visibleFileCount).map((file) => (
-        <StorageFileBranch deletion={deletion} file={file} key={file.id} timeZone={timeZone} />
-      ))}
-      {directory.files.length > visibleFileCount ? (
+      {(objectBrowser ? directory.files : directory.files.slice(0, visibleFileCount)).map(
+        (file) => (
+          <StorageFileBranch deletion={deletion} file={file} key={file.id} timeZone={timeZone} />
+        ),
+      )}
+      {!objectBrowser && directory.files.length > visibleFileCount ? (
         <Button
           onClick={() => setVisibleFileCount((count) => count + TREE_RENDER_BATCH_SIZE)}
           type="button"
@@ -257,6 +412,7 @@ function StorageDirectoryChildren({
           加载更多文件（剩余 {directory.files.length - visibleFileCount}）
         </Button>
       ) : null}
+      {footer}
     </div>
   );
 }

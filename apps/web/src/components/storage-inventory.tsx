@@ -30,7 +30,15 @@ import type {
 } from "@autoforge/contracts";
 import { Database, HardDrive, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { useConfirm, useToast } from "@/components/ui-feedback";
@@ -74,6 +82,7 @@ export function StorageInventory({
   const confirmAction = useConfirm();
   const toast = useToast();
   const [items, setItems] = useState<StorageInventoryItem[]>([]);
+  const [objectRuntimeAssets, setObjectRuntimeAssets] = useState<StorageInventoryItem[]>([]);
   const [summary, setSummary] = useState<StorageInventorySummary>();
   const [draftCategory, setDraftCategory] = useState(initialCategory ?? "");
   const [draftQuery, setDraftQuery] = useState(initialQuery);
@@ -90,8 +99,12 @@ export function StorageInventory({
   );
   const handledRefreshSequence = useRef(0);
   const removedRuntimeAssets = useRef(new Set<string>());
+  const [removedObjectAssetIds, setRemovedObjectAssetIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const inventoryAbort = useRef<AbortController | undefined>(undefined);
   const deletionScrollPosition = useRef<number | undefined>(undefined);
+  const browseObjectStore = summary?.objectStore === "minio";
 
   useLayoutEffect(() => {
     const scrollTop = deletionScrollPosition.current;
@@ -146,14 +159,15 @@ export function StorageInventory({
         ? buildStorageInventoryTree(items, {
             dataDirectory: summary.dataDirectory,
             objectStoreRoot: summary.objectStoreRoot,
+            browseObjectStore,
           })
         : [],
-    [items, summary],
+    [items, summary, browseObjectStore],
   );
   const selectableRuntimeAssets = useMemo(() => {
     const uniqueAssets = new Map<string, StorageInventoryItem>();
     if (!canManage) return [];
-    for (const item of items) {
+    for (const item of [...items, ...objectRuntimeAssets]) {
       if (
         item.runtimeAssetId &&
         (item.category === "jdk" || item.category === "dependency") &&
@@ -163,7 +177,7 @@ export function StorageInventory({
       }
     }
     return [...uniqueAssets.values()];
-  }, [canManage, items]);
+  }, [canManage, items, objectRuntimeAssets]);
   const allRuntimeAssetsSelected =
     selectableRuntimeAssets.length > 0 &&
     selectableRuntimeAssets.every((item) => selectedRuntimeAssetIds.has(item.runtimeAssetId!));
@@ -178,6 +192,7 @@ export function StorageInventory({
 
   function refreshInventory(): void {
     setSelectedRuntimeAssetIds(new Set());
+    setObjectRuntimeAssets([]);
     clearBrowserSnapshots();
     setLoading(true);
     setError("");
@@ -310,6 +325,7 @@ export function StorageInventory({
     inventoryAbort.current?.abort();
     if (runtimeAssetIds.size === 0 || !summary) return;
     for (const id of runtimeAssetIds) removedRuntimeAssets.current.add(id);
+    setRemovedObjectAssetIds(new Set(removedRuntimeAssets.current));
     // Removing an expanded file can shorten the document before the browser restores focus,
     // which previously made the whole settings page jump to the top. Keep the viewport and let
     // keyed tree branches retain their own expanded state while applying the local patch.
@@ -317,12 +333,29 @@ export function StorageInventory({
     const patched = removeRuntimeAssetsFromInventory(items, summary, runtimeAssetIds);
     setItems(patched.items);
     setSummary(patched.summary);
+    setObjectRuntimeAssets((current) =>
+      current.filter((item) => item.runtimeAssetId && !runtimeAssetIds.has(item.runtimeAssetId)),
+    );
     setSelectedRuntimeAssetIds((current) => {
       const next = new Set(current);
       for (const runtimeAssetId of runtimeAssetIds) next.delete(runtimeAssetId);
       return next;
     });
   }
+
+  const registerObjectRuntimeAssets = useCallback(
+    (loaded: readonly StorageInventoryItem[]) => {
+      if (!canManage) return;
+      const assets = loaded.filter(
+        (item) => item.runtimeAssetId && !removedRuntimeAssets.current.has(item.runtimeAssetId),
+      );
+      if (assets.length === 0) return;
+      setObjectRuntimeAssets((current) => [
+        ...new Map([...current, ...assets].map((item) => [item.id, item])).values(),
+      ]);
+    },
+    [canManage],
+  );
 
   function updateRuntimeAssetSelection(runtimeAssetId: string, selected: boolean): void {
     setSelectedRuntimeAssetIds((current) => {
@@ -380,6 +413,11 @@ export function StorageInventory({
         </p>
         {summary ? (
           <>
+            {browseObjectStore && summary.objectFileCount === undefined ? (
+              <p className="text-sm text-muted-foreground">
+                当前概览为数据目录和外部引用的统计。点击「重新扫描」可统计 MinIO 的整体占用。
+              </p>
+            ) : null}
             <div
               className={cn("storage-summary-grid", storageInventoryStyles["storage-summary-grid"])}
             >
@@ -542,7 +580,7 @@ export function StorageInventory({
               <span>选择当前结果中的全部可删除资源</span>
             </label>
             <span>
-              当前有 {selectableRuntimeAssets.length.toLocaleString()} 项 JDK 包或依赖包可管理
+              已加载 {selectableRuntimeAssets.length.toLocaleString()} 项 JDK 包或依赖包可管理
             </span>
           </div>
         ) : null}
@@ -562,6 +600,17 @@ export function StorageInventory({
             }
             roots={tree}
             timeZone={timeZone}
+            {...(browseObjectStore
+              ? {
+                  objectBrowser: {
+                    refreshSequence,
+                    ...(initialCategory ? { category: initialCategory } : {}),
+                    query: initialQuery,
+                    removedRuntimeAssetIds: removedObjectAssetIds,
+                    onItems: registerObjectRuntimeAssets,
+                  },
+                }
+              : {})}
             deletion={{
               canManage,
               disabled: loading || pendingRuntimeAssetIds.size > 0,
@@ -667,7 +716,7 @@ async function loadCompleteInventory({
   onBatch: (items: StorageInventoryItem[], summary: StorageInventorySummary) => void;
   onState: (state: StorageInventoryPage["snapshotState"]) => void;
 }): Promise<void> {
-  const scopeKey = `storage-inventory:v1:${initialCategory ?? ""}:${initialQuery}`;
+  const scopeKey = `storage-inventory:v2:${initialCategory ?? ""}:${initialQuery}`;
   const epoch = browserCacheEpoch();
   const cached = readBrowserSnapshot(scopeKey) as
     | { items: StorageInventoryItem[]; summary: StorageInventorySummary; generation?: string }
@@ -679,7 +728,10 @@ async function loadCompleteInventory({
   let snapshotRestarts = 0;
   for (;;) {
     signal.throwIfAborted();
-    const parameters = new URLSearchParams({ limit: String(INVENTORY_READ_BATCH_SIZE) });
+    const parameters = new URLSearchParams({
+      limit: String(INVENTORY_READ_BATCH_SIZE),
+      browse: "1",
+    });
     if (nodeId) parameters.set("nodeId", nodeId);
     if (initialCategory) parameters.set("category", initialCategory);
     if (initialQuery) parameters.set("query", initialQuery);
@@ -690,6 +742,8 @@ async function loadCompleteInventory({
       nodeId = first.nodeId;
       if (nodeId) parameters.set("nodeId", nodeId);
       onState(first.snapshotState);
+      if (!first.generation && !displayedGeneration && first.summary.objectStore === "minio")
+        onBatch([], first.summary);
       if (first.snapshotState === "failed")
         throw new Error("后台扫描失败，请重新扫描；已加载的清单仍可查看。");
       if (first.generation && first.generation !== displayedGeneration) {

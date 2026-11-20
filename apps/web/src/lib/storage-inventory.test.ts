@@ -19,6 +19,67 @@ afterEach(async () => {
 });
 
 describe("storage inventory", () => {
+  it("browses one MinIO level without starting or enumerating the full inventory", async () => {
+    const dataDirectory = await temporaryDataDirectory();
+    await writeDataFile(dataDirectory, "local.txt", "saved");
+    const object = {
+      objectKey: "projects/example/依赖.jar",
+      sizeBytes: 4,
+      lastModified: "2026-09-01T00:00:00.000Z",
+    };
+    const list = vi.fn(async () => ({ items: [object] }));
+    const listDirectory = vi.fn(async () => ({
+      prefixes: ["projects/example/jars/"],
+      items: [object],
+      nextCursor: "page-token",
+    }));
+    const inventory = new StorageInventoryService({
+      dataDirectory,
+      objectStore: { ...objectStore("minio", []), list },
+      objectDirectory: { listDirectory },
+      projectStructures: runtimeCatalog([]),
+      runBatchDisplayIdentities: batchDisplayIdentities({}),
+      objectStoreRoot: "minio://test",
+    });
+    inventories.push(inventory);
+
+    const query = { limit: 10, browse: true };
+    await inventory.list(query);
+    await vi.waitFor(async () =>
+      expect(await inventory.list(query)).toMatchObject({
+        snapshotState: "ready",
+        items: [{ name: "local.txt" }],
+      }),
+    );
+    expect(list).not.toHaveBeenCalled();
+    expect(listDirectory).not.toHaveBeenCalled();
+
+    await expect(
+      inventory.listObjectDirectory({ prefix: "projects/example/", limit: 10, query: "依赖" }),
+    ).resolves.toMatchObject({
+      prefixes: ["projects/example/jars/"],
+      items: [{ logicalPath: object.objectKey }],
+      nextCursor: "page-token",
+    });
+    expect(listDirectory).toHaveBeenCalledExactlyOnceWith({
+      prefix: "projects/example/",
+      limit: 10,
+    });
+    expect(list).not.toHaveBeenCalled();
+
+    await inventory.list({ ...query, refresh: true });
+    await vi.waitFor(async () =>
+      expect(await inventory.list(query)).toMatchObject({
+        snapshotState: "ready",
+        items: [{ name: "local.txt" }],
+        summary: { fileCount: 2, objectFileCount: 1 },
+      }),
+    );
+    inventory.invalidateSummary();
+    await inventory.list(query);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a cold page before a slow scan finishes, reuses the durable index and fences invalidated scans", async () => {
     const dataDirectory = await temporaryDataDirectory();
     await writeDataFile(dataDirectory, "file.txt", "saved");
@@ -52,7 +113,7 @@ describe("storage inventory", () => {
       return { items: [] };
     });
     try {
-      const cold = await inventory.list({ limit: 1 });
+      const cold = await inventory.list({ limit: 1, refresh: true });
       expect(cold).toMatchObject({ snapshotState: "pending", items: [] });
       await vi.waitFor(() => expect(listing).toHaveBeenCalledTimes(1));
       // A second HTTP read does not await, duplicate or restart the in-flight scan.
@@ -60,7 +121,7 @@ describe("storage inventory", () => {
       inventory.invalidateSummary();
       release();
       await inventory.refresh();
-      expect(await inventory.list({ limit: 1 })).toMatchObject({ snapshotState: "pending" });
+      expect(inventory.peekSummary()).toBeUndefined();
       await inventory.refresh();
       const published = await inventory.list({ limit: 1 });
       expect(published).toMatchObject({ snapshotState: "ready", summary: { fileCount: 2 } });

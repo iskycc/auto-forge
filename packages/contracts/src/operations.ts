@@ -517,6 +517,37 @@ export const storageInventoryItemSchema = z.object({
   detail: z.string().max(500).optional(),
 });
 
+const storageObjectPrefixSchema = z
+  .string()
+  .max(1024)
+  .refine(
+    (prefix) =>
+      prefix === "" ||
+      (prefix.endsWith("/") &&
+        !prefix.includes("..") &&
+        !prefix.includes("\\") &&
+        !prefix.startsWith("/") &&
+        !prefix.includes("//")),
+    "对象目录前缀无效。",
+  );
+
+export const storageObjectDirectoryQuerySchema = z.object({
+  prefix: storageObjectPrefixSchema.default(""),
+  cursor: z.string().min(1).max(4096).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  category: storageInventoryCategorySchema.optional(),
+  query: z.string().trim().max(240).optional(),
+});
+
+export const storageObjectDirectoryPageSchema = z.object({
+  prefixes: z.array(storageObjectPrefixSchema.min(1)).max(100),
+  items: z.array(storageInventoryItemSchema).max(100),
+  nextCursor: z.string().min(1).max(4096).optional(),
+});
+
+export type StorageObjectDirectoryQuery = z.infer<typeof storageObjectDirectoryQuerySchema>;
+export type StorageObjectDirectoryPage = z.infer<typeof storageObjectDirectoryPageSchema>;
+
 export const deleteStorageRuntimeAssetInputSchema = z.object({
   runtimeAssetId: z.string().min(1).max(128),
 });

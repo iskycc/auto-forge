@@ -35,6 +35,7 @@ export function createStorageInventoryReader(dependencies: {
     if (query.category) url.searchParams.set("category", query.category);
     if (query.query) url.searchParams.set("query", query.query);
     if (query.refresh) url.searchParams.set("refresh", "1");
+    if (query.browse) url.searchParams.set("browse", "1");
     // These are registered platform peers sharing the identity store. Re-authorize at the owner;
     // do not forward credentials to redirects or addresses supplied directly by the browser.
     const forwarded = new Headers({ "x-autoforge-storage-hop": "1" });

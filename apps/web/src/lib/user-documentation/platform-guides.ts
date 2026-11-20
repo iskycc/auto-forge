@@ -91,7 +91,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
         { title: "上传文件", detail: "保存并校验内容" },
         { title: "绑定版本", detail: "选择 JDK 与依赖" },
         { title: "执行快照", detail: "使用确定的运行包" },
-        { title: "检查引用", detail: "确认后清理存储" },
+        { title: "逐层展开", detail: "查看当前目录与文件引用" },
       ],
     },
     sections: [
@@ -114,8 +114,15 @@ export const platformGuides: readonly DocumentationArticle[] = [
       {
         id: "usage",
         title: "查看存储引用",
+        paragraphs: [
+          "具备平台设置查看权限即可查看存储空间。Full 的对象存储按目录逐层读取，文件类型和关键词筛选只作用于已展开层的文件，目录入口继续保留。选择“重新扫描”可更新全桶容量统计。",
+        ],
         steps: [
-          { title: "进入存储空间", detail: "在文件管理中查看对象及占用。" },
+          {
+            title: "展开对象存储",
+            detail:
+              "进入文件管理的存储空间，逐层展开目录。本层条目较多时，点击“加载更多本层条目”。",
+          },
           {
             title: "核对使用范围",
             detail: "展开 JDK 或依赖压缩包的项目、版本引用，注意一个包可能有多个使用方。",

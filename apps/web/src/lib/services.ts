@@ -110,6 +110,7 @@ import {
   type DashboardSnapshotRepository,
   type FailureAnalysisRepository,
   type JarObjectStorePort,
+  type ObjectDirectoryReader,
   type IdentityAccessRepository,
   type ExecutionControlRepository,
   type CachePort,
@@ -244,6 +245,7 @@ async function createPlatformServices() {
   let publicSuiteExecutionRepository: PublicSuiteExecutionRepository;
   let analysisPublicationRepository: FailureAnalysisPublicationRepository;
   let objectStore: JarObjectStorePort;
+  let objectDirectory: ObjectDirectoryReader | undefined;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
   let operationsRepository: PlatformOperationsRepository;
@@ -438,6 +440,7 @@ async function createPlatformServices() {
     logWriteAdmission = new PostgresLogWriteAdmission(database);
     const minioStore = new MinioObjectStore(config.minio);
     objectStore = minioStore;
+    objectDirectory = minioStore;
     objectStoreUsage = () => minioStore.readUsage();
     databaseReady = async () => {
       await database.pool.query("SELECT 1");
@@ -793,6 +796,7 @@ async function createPlatformServices() {
   const storageInventory = new StorageInventoryService({
     dataDirectory: config.dataDirectory,
     objectStore,
+    ...(objectDirectory ? { objectDirectory } : {}),
     projectStructures,
     runBatchDisplayIdentities: batches,
     objectStoreRoot:

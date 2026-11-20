@@ -11,6 +11,52 @@ const accessKey = process.env.AUTOFORGE_TEST_MINIO_ACCESS_KEY;
 const secretKey = process.env.AUTOFORGE_TEST_MINIO_SECRET_KEY;
 
 describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () => {
+  it("lists immediate objects and prefixes using the continuation token for the same level", async () => {
+    const url = new URL(endpoint!);
+    const bucket = `autoforge-${randomUUID()}`;
+    const options = {
+      endPoint: url.hostname,
+      port: Number(url.port),
+      useSSL: url.protocol === "https:",
+      accessKey: accessKey!,
+      secretKey: secretKey!,
+      bucket,
+    };
+    const client = new Client(options);
+    await client.makeBucket(bucket);
+    const store = new MinioObjectStore(options);
+    const objects = [
+      "a/",
+      "a/top.txt",
+      "a/用例/deeper.txt",
+      "a/用例/more/leaf.txt",
+      "b/side.txt",
+      "readme.txt",
+    ];
+    try {
+      for (const key of objects.slice(1)) await client.putObject(bucket, key, "fixture");
+      const root = await store.listDirectory({ prefix: "", limit: 2 });
+      expect(root).toMatchObject({
+        prefixes: ["a/", "b/"],
+        items: [],
+        nextCursor: expect.any(String),
+      });
+      const rest = await store.listDirectory({ prefix: "", limit: 2, cursor: root.nextCursor! });
+      expect(rest.prefixes).toEqual([]);
+      expect(rest.items.map((entry) => entry.objectKey)).toEqual(["readme.txt"]);
+      await client.putObject(bucket, "a/", Buffer.alloc(0));
+      const level = await store.listDirectory({ prefix: "a/", limit: 10 });
+      expect(level.prefixes).toEqual(["a/用例/"]);
+      expect(level.items.map((entry) => entry.objectKey)).toEqual(["a/top.txt"]);
+      const next = await store.listDirectory({ prefix: "a/用例/", limit: 10 });
+      expect(next.prefixes).toEqual(["a/用例/more/"]);
+      expect(next.items.map((entry) => entry.objectKey)).toEqual(["a/用例/deeper.txt"]);
+    } finally {
+      await client.removeObjects(bucket, objects);
+      await client.removeBucket(bucket);
+    }
+  });
+
   it("writes, lists, reads and deletes an immutable JAR", async () => {
     const url = new URL(endpoint!);
     const bucket = `autoforge-${randomUUID()}`;

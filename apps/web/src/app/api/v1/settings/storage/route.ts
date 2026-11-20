@@ -25,6 +25,7 @@ const querySchema = z.object({
   category: storageInventoryCategorySchema.optional(),
   query: z.string().trim().max(240).optional(),
   refresh: z.enum(["0", "1"]).default("0"),
+  browse: z.enum(["0", "1"]).default("0"),
 });
 
 const deleteRequestSchema = z.union([
@@ -44,6 +45,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       category: url.searchParams.get("category") || undefined,
       query: url.searchParams.get("query") || undefined,
       refresh: url.searchParams.get("refresh") ?? undefined,
+      browse: url.searchParams.get("browse") ?? undefined,
     });
     const services = await getPlatformServices();
     return NextResponse.json(
@@ -56,6 +58,7 @@ export async function GET(request: Request): Promise<NextResponse> {
             ...(input.category ? { category: input.category } : {}),
             ...(input.query ? { query: input.query } : {}),
             refresh: input.refresh === "1",
+            browse: input.browse === "1",
           },
           request.headers,
         ),

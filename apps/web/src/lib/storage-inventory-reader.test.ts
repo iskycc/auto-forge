@@ -62,7 +62,7 @@ it("pins pagination to a registered owner and forwards only authentication heade
   const cursor = `${test.page.generation}:49`;
   expect(
     await test.read(
-      { nodeId: test.ownerId, cursor, limit: 50 },
+      { nodeId: test.ownerId, cursor, limit: 50, browse: true },
       new Headers({ cookie: "fixture-session", host: "untrusted.invalid" }),
     ),
   ).toEqual(test.page);
@@ -70,6 +70,7 @@ it("pins pagination to a registered owner and forwards only authentication heade
   const [url, options] = test.request.mock.calls[0]!;
   expect(new URL(String(url)).origin).toBe("http://192.0.2.10:3000");
   expect(new URL(String(url)).searchParams.get("cursor")).toBe(cursor);
+  expect(new URL(String(url)).searchParams.get("browse")).toBe("1");
   expect(options?.redirect).toBe("error");
   expect(new Headers(options?.headers).get("host")).toBeNull();
   expect(new Headers(options?.headers).get("cookie")).toBe("fixture-session");

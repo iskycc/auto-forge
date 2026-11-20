@@ -47,6 +47,7 @@ export function buildStorageInventoryTree(
   roots: {
     dataDirectory: string;
     objectStoreRoot: string;
+    browseObjectStore?: boolean;
   },
 ): StorageLocationNode[] {
   const locationRoots = new Map<StorageInventoryLocation, MutableDirectoryNode>();
@@ -68,6 +69,13 @@ export function buildStorageInventoryTree(
       current = child;
     }
     current.files.push(item);
+  }
+
+  if (roots.browseObjectStore && !locationRoots.has("object-store")) {
+    locationRoots.set(
+      "object-store",
+      createDirectory("storage-location:object-store", locationLabel("object-store"), "", 0),
+    );
   }
 
   return LOCATION_ORDER.flatMap((location) => {
@@ -162,7 +170,7 @@ function groupSqliteFiles(items: readonly StorageInventoryItem[]): StorageFileNo
   return nodes;
 }
 
-function singleFileNode(item: StorageInventoryItem): StorageFileNode {
+export function singleFileNode(item: StorageInventoryItem): StorageFileNode {
   return {
     id: item.id,
     kind: "file",

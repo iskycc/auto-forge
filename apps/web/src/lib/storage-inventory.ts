@@ -1,11 +1,12 @@
 import { setImmediate as yieldToRequests } from "node:timers/promises";
-import { StorageInventoryIndex } from "./storage-inventory-index";
+import { StorageInventoryIndex, storageInventorySearchText } from "./storage-inventory-index";
 import { DomainError } from "@autoforge/domain";
 import { opendir, stat } from "node:fs/promises";
 import { basename, relative, resolve, sep } from "node:path";
 
 import type {
   JarObjectStorePort,
+  ObjectDirectoryReader,
   ProjectStructureService,
   RunBatchDisplayIdentityLookupPort,
 } from "@autoforge/application";
@@ -14,15 +15,13 @@ import type {
   StorageInventoryItem,
   StorageInventoryPage,
   StorageInventorySummary,
+  StorageObjectDirectoryPage,
+  StorageObjectDirectoryQuery,
+  ObjectEntry,
 } from "@autoforge/contracts";
 import type { ProjectRuntimeAsset } from "@autoforge/domain";
 
-const SOURCE_ORDER = ["local", "object", "external"] as const;
 const INVENTORY_BATCH_SIZE = 200;
-
-type InventorySource = (typeof SOURCE_ORDER)[number];
-type InventoryCursor = { source: InventorySource; key: string };
-type InventoryEntry = { cursor: InventoryCursor; item: StorageInventoryItem };
 
 export type StorageInventoryQuery = {
   cursor?: string;
@@ -30,17 +29,20 @@ export type StorageInventoryQuery = {
   category?: StorageInventoryCategory;
   query?: string;
   refresh?: boolean;
+  browse?: boolean;
 };
 
 export class StorageInventoryService {
   private readonly index: StorageInventoryIndex;
   private refreshInFlight: Promise<void> | undefined;
+  private rescanRequested = false;
   private closed = false;
 
   constructor(
     private readonly options: {
       dataDirectory: string;
       objectStore: JarObjectStorePort;
+      objectDirectory?: ObjectDirectoryReader;
       projectStructures: Pick<
         ProjectStructureService,
         "listRuntimeAssetsPage" | "findRuntimeAssetsByObjectKeys"
@@ -57,9 +59,14 @@ export class StorageInventoryService {
 
   async list(input: StorageInventoryQuery): Promise<StorageInventoryPage> {
     assertQuery(input);
-    if (input.refresh) this.invalidateSummary();
-    this.scheduleRefresh();
+    const usesMinio = this.options.objectStore.storageKind === "minio";
+    if (input.refresh) {
+      this.invalidateSummary();
+      if (this.refreshInFlight) this.rescanRequested = true;
+      this.scheduleRefresh(usesMinio);
+    }
     const status = this.index.status();
+    if (!input.refresh && (!usesMinio || !status.generation)) this.scheduleRefresh(false);
     let generation = status.generation;
     let after = -1;
     if (input.cursor) {
@@ -69,17 +76,21 @@ export class StorageInventoryService {
       generation = parsed[1]!;
       after = Number(parsed[2]);
     }
+    const now = Date.now();
+    const refreshing =
+      input.refresh || status.leaseUntil > now || (!usesMinio && status.refreshAfter <= now);
     const snapshotState = status.failed
       ? "failed"
       : !status.generation
         ? "pending"
-        : status.refreshAfter <= Date.now()
+        : refreshing
           ? "stale"
           : "ready";
     if (!generation) return { items: [], summary: this.emptySummary(), snapshotState };
     const page = this.index.page(generation, {
       after,
       limit: input.limit,
+      excludeObjects: input.browse === true,
       ...(input.category ? { category: input.category } : {}),
       ...(input.query ? { query: input.query } : {}),
     });
@@ -94,12 +105,36 @@ export class StorageInventoryService {
     };
   }
 
+  async listObjectDirectory(
+    input: StorageObjectDirectoryQuery,
+  ): Promise<StorageObjectDirectoryPage> {
+    if (!this.options.objectDirectory) return { prefixes: [], items: [] };
+    const page = await this.options.objectDirectory
+      .listDirectory({
+        prefix: input.prefix,
+        limit: input.limit,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      })
+      .catch((cause: unknown) => {
+        throw new DomainError("READ_MODEL_NODE_UNAVAILABLE", "对象目录暂不可用，请稍后重试。", {
+          cause,
+        });
+      });
+    const search = input.query?.toLocaleLowerCase("zh-CN");
+    const items = (await this.mapObjects(page.items)).filter(
+      (item) =>
+        (!input.category || item.category === input.category) &&
+        (!search || storageInventorySearchText(item).includes(search)),
+    );
+    return { ...page, items };
+  }
+
   /** Diagnostics can inspect the last completed snapshot without starting filesystem/S3 scans. */
   peekSummary(): StorageInventorySummary | undefined {
     return this.index.summary();
   }
 
-  private scheduleRefresh(): void {
+  private scheduleRefresh(includeMinio: boolean): void {
     if (this.refreshInFlight || this.closed) return;
     this.refreshInFlight = yieldToRequests()
       .then(async () => {
@@ -107,7 +142,7 @@ export class StorageInventoryService {
         const token = this.index.claim(Date.now());
         if (!token) return;
         try {
-          await this.buildSummary(token);
+          await this.buildSummary(token, includeMinio);
         } catch (error) {
           this.index.fail(token, Date.now());
           process.stderr.write(
@@ -117,6 +152,10 @@ export class StorageInventoryService {
       })
       .finally(() => {
         this.refreshInFlight = undefined;
+        if (this.rescanRequested) {
+          this.rescanRequested = false;
+          this.scheduleRefresh(this.options.objectStore.storageKind === "minio");
+        }
       });
   }
 
@@ -128,8 +167,8 @@ export class StorageInventoryService {
 
   /** Explicit worker/test entrypoint; HTTP readers never await this operation. */
   async refresh(): Promise<void> {
-    this.scheduleRefresh();
-    await this.refreshInFlight;
+    this.scheduleRefresh(this.options.objectStore.storageKind === "minio");
+    while (this.refreshInFlight) await this.refreshInFlight;
   }
 
   private emptySummary(): StorageInventorySummary {
@@ -166,7 +205,7 @@ export class StorageInventoryService {
     this.index.invalidate();
   }
 
-  private async buildSummary(token: string): Promise<void> {
+  private async buildSummary(token: string, includeMinio: boolean): Promise<void> {
     let pending: StorageInventoryItem[] = [];
     let ordinal = 0;
     const flush = async () => {
@@ -187,7 +226,7 @@ export class StorageInventoryService {
     let allocatedBytes = 0;
     let externalReferenceCount = 0;
     let externalReferenceBytes = 0;
-    for await (const { item } of this.entries()) {
+    for await (const item of this.entries(includeMinio)) {
       if (this.closed) {
         this.index.fail(token, Date.now());
         return;
@@ -229,8 +268,9 @@ export class StorageInventoryService {
         objectStore: this.options.objectStore.storageKind,
         objectStoreRoot: this.options.objectStoreRoot,
         fileCount,
-        objectFileCount,
-        objectLogicalBytes,
+        ...(includeMinio || this.options.objectStore.storageKind === "local"
+          ? { objectFileCount, objectLogicalBytes }
+          : {}),
         logicalBytes,
         allocatedBytes,
         externalReferenceCount,
@@ -247,22 +287,16 @@ export class StorageInventoryService {
     );
   }
 
-  private async *entries(after?: InventoryCursor): AsyncGenerator<InventoryEntry> {
-    if (sourceCanFollow(after, "local")) {
-      yield* this.localEntries(after?.source === "local" ? after.key : undefined);
-    }
-    if (this.options.objectStore.storageKind === "minio" && sourceCanFollow(after, "object")) {
-      yield* this.objectEntries(after?.source === "object" ? after.key : undefined);
-    }
-    if (sourceCanFollow(after, "external")) {
-      yield* this.externalEntries(after?.source === "external" ? after.key : undefined);
-    }
+  private async *entries(includeMinio: boolean): AsyncGenerator<StorageInventoryItem> {
+    yield* this.localEntries();
+    if (includeMinio) yield* this.objectEntries();
+    yield* this.externalEntries();
   }
 
-  private async *localEntries(afterPath?: string): AsyncGenerator<InventoryEntry> {
+  private async *localEntries(): AsyncGenerator<StorageInventoryItem> {
     let pending: LocalFile[] = [];
     const root = resolve(this.options.dataDirectory);
-    for await (const file of walkFiles(root, root, afterPath?.split("/"))) {
+    for await (const file of walkFiles(root)) {
       if (file.logicalPath.startsWith(".cache/storage-inventory-v1.sqlite")) continue;
       pending.push(file);
       if (pending.length < INVENTORY_BATCH_SIZE) continue;
@@ -272,7 +306,7 @@ export class StorageInventoryService {
     if (pending.length > 0) yield* this.mapLocalBatch(pending);
   }
 
-  private async *mapLocalBatch(files: readonly LocalFile[]): AsyncGenerator<InventoryEntry> {
+  private async *mapLocalBatch(files: readonly LocalFile[]): AsyncGenerator<StorageInventoryItem> {
     const objectKeys = files.flatMap((file) => {
       const key = localObjectKey(file.logicalPath);
       return key ? [key] : [];
@@ -284,55 +318,43 @@ export class StorageInventoryService {
     for (const file of files) {
       const objectKey = localObjectKey(file.logicalPath);
       const asset = objectKey ? assetByObjectKey.get(objectKey) : undefined;
-      yield {
-        cursor: { source: "local", key: file.logicalPath },
-        item: localInventoryItem(file, objectKey, asset),
-      };
+      yield localInventoryItem(file, objectKey, asset);
     }
   }
 
-  private async *objectEntries(afterKey?: string): AsyncGenerator<InventoryEntry> {
-    let cursor = afterKey;
+  private async *objectEntries(): AsyncGenerator<StorageInventoryItem> {
+    let cursor: string | undefined;
     for (;;) {
       const page = await this.options.objectStore.list({
         limit: INVENTORY_BATCH_SIZE,
         ...(cursor ? { cursor } : {}),
       });
-      const assets = await this.options.projectStructures.findRuntimeAssetsByObjectKeys(
-        page.items.map((item) => item.objectKey),
-      );
-      const assetByObjectKey = new Map(
-        assets.flatMap((asset) => (asset.objectKey ? [[asset.objectKey, asset] as const] : [])),
-      );
-      for (const object of page.items) {
-        yield {
-          cursor: { source: "object", key: object.objectKey },
-          item: objectInventoryItem(
-            object,
-            this.options.objectStoreRoot,
-            assetByObjectKey.get(object.objectKey),
-          ),
-        };
-      }
+      yield* await this.mapObjects(page.items);
       if (!page.nextCursor) break;
       cursor = page.nextCursor;
     }
   }
 
-  private async *externalEntries(afterId?: string): AsyncGenerator<InventoryEntry> {
-    let cursor = afterId;
+  private async mapObjects(objects: readonly ObjectEntry[]): Promise<StorageInventoryItem[]> {
+    if (objects.length === 0) return [];
+    const assets = await this.options.projectStructures.findRuntimeAssetsByObjectKeys(
+      objects.map((object) => object.objectKey),
+    );
+    const byKey = new Map(assets.map((asset) => [asset.objectKey, asset]));
+    return objects.map((object) =>
+      objectInventoryItem(object, this.options.objectStoreRoot, byKey.get(object.objectKey)),
+    );
+  }
+
+  private async *externalEntries(): AsyncGenerator<StorageInventoryItem> {
+    let cursor: string | undefined;
     for (;;) {
       const page = await this.options.projectStructures.listRuntimeAssetsPage({
         sourceType: "url",
         limit: INVENTORY_BATCH_SIZE,
         ...(cursor ? { afterId: cursor } : {}),
       });
-      for (const asset of page.items) {
-        yield {
-          cursor: { source: "external", key: asset.id },
-          item: externalInventoryItem(asset),
-        };
-      }
+      for (const asset of page.items) yield externalInventoryItem(asset);
       if (!page.nextCursor) break;
       cursor = page.nextCursor;
     }
@@ -348,11 +370,7 @@ type LocalFile = {
   modifiedAt: string;
 };
 
-async function* walkFiles(
-  root: string,
-  directory = root,
-  afterSegments?: readonly string[],
-): AsyncGenerator<LocalFile> {
+async function* walkFiles(root: string, directory = root): AsyncGenerator<LocalFile> {
   let handle;
   try {
     handle = await opendir(directory);
@@ -366,22 +384,12 @@ async function* walkFiles(
   for (const entry of entries) {
     const absolutePath = resolve(directory, entry.name);
     const logicalPath = relative(root, absolutePath).split(sep).join("/");
-    const cursorSegment = afterSegments?.[0];
-    const cursorComparison = cursorSegment ? comparePaths(entry.name, cursorSegment) : 1;
-    if (afterSegments && cursorComparison < 0) continue;
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      if (afterSegments && cursorComparison === 0) {
-        if (afterSegments.length > 1) {
-          yield* walkFiles(root, absolutePath, afterSegments.slice(1));
-        }
-        continue;
-      }
       yield* walkFiles(root, absolutePath);
       continue;
     }
     if (!entry.isFile()) continue;
-    if (afterSegments && cursorComparison === 0) continue;
     const metadata = await stat(absolutePath);
     yield {
       absolutePath,
@@ -521,11 +529,6 @@ function safeExternalPath(value: string | undefined): string {
   } catch {
     return "外部地址格式无效（地址已隐藏）";
   }
-}
-
-function sourceCanFollow(after: InventoryCursor | undefined, source: InventorySource): boolean {
-  if (!after) return true;
-  return SOURCE_ORDER.indexOf(source) >= SOURCE_ORDER.indexOf(after.source);
 }
 
 function assertQuery(input: StorageInventoryQuery): void {

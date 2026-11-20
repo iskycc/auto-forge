@@ -1,4 +1,8 @@
-import type { JarObjectStorePort, ObjectWriteResult } from "@autoforge/application";
+import type {
+  JarObjectStorePort,
+  ObjectDirectoryReader,
+  ObjectWriteResult,
+} from "@autoforge/application";
 import type { ObjectEntry } from "@autoforge/contracts";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -8,7 +12,7 @@ export type MinioObjectStoreOptions = ClientOptions & {
   bucket: string;
 };
 
-export class MinioObjectStore implements JarObjectStorePort {
+export class MinioObjectStore implements JarObjectStorePort, ObjectDirectoryReader {
   readonly storageKind = "minio" as const;
   private readonly client: Client;
   private readonly bucket: string;
@@ -106,13 +110,9 @@ export class MinioObjectStore implements JarObjectStorePort {
     );
     const items: ObjectEntry[] = [];
     for await (const item of stream as unknown as AsyncIterable<BucketItem>) {
-      if (!("name" in item) || !item.name || !item.lastModified) continue;
-      items.push({
-        objectKey: item.name,
-        sizeBytes: item.size,
-        lastModified: item.lastModified.toISOString(),
-        ...(item.etag ? { etag: item.etag } : {}),
-      });
+      const object = toObjectEntry(item);
+      if (!object) continue;
+      items.push(object);
       if (items.length > input.limit) break;
     }
     const pageItems = items.slice(0, input.limit);
@@ -120,6 +120,37 @@ export class MinioObjectStore implements JarObjectStorePort {
     const lastItem = pageItems.at(-1);
     if (items.length > input.limit && lastItem) result.nextCursor = lastItem.objectKey;
     return result;
+  }
+
+  async listDirectory(input: { prefix: string; cursor?: string; limit: number }) {
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100)
+      throw new Error("Directory list limit must be between 1 and 100.");
+    if (input.prefix) validateObjectKey(input.prefix);
+    const page = await this.client.listObjectsV2Query(
+      this.bucket,
+      input.prefix,
+      input.cursor ?? "",
+      "/",
+      input.limit,
+      "",
+    );
+    const prefixes: string[] = [];
+    const items: ObjectEntry[] = [];
+    for (const entry of page.objects) {
+      if (entry.prefix) prefixes.push(entry.prefix);
+      else {
+        const object = toObjectEntry(entry);
+        // Some S3 clients create a zero-byte key for the directory itself.
+        if (object && object.objectKey !== input.prefix) items.push(object);
+      }
+    }
+    return {
+      prefixes,
+      items,
+      ...(page.isTruncated && page.nextContinuationToken
+        ? { nextCursor: page.nextContinuationToken }
+        : {}),
+    };
   }
 
   async openRead(objectKey: string) {
@@ -217,6 +248,16 @@ function validateObjectKey(objectKey: string): void {
   ) {
     throw new Error("Object key is invalid.");
   }
+}
+
+function toObjectEntry(item: BucketItem): ObjectEntry | undefined {
+  if (!("name" in item) || !item.name || !item.lastModified) return;
+  return {
+    objectKey: item.name,
+    sizeBytes: item.size,
+    lastModified: item.lastModified.toISOString(),
+    ...(item.etag ? { etag: item.etag } : {}),
+  };
 }
 
 function validateObjectMetadata(sha256: string, sizeBytes: number): void {
