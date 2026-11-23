@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { AnalyticsFactRefresh } from "./analytics-fact-refresh";
 
 describe("analytics fact refresh scheduling", () => {
+  it("keeps processing bounded historical pages even when a page produces no new fact", async () => {
+    let now = 0;
+    const rebuild = vi.fn<() => Promise<AnalyticsFactRefreshResult>>();
+    rebuild.mockResolvedValueOnce({ status: "updated", count: 0 });
+    rebuild.mockResolvedValue({ status: "updated", count: 0, moreWork: true });
+    const refresh = new AnalyticsFactRefresh(rebuild, vi.fn(), () => now);
+    await refresh.refreshIfDue();
+    now = 1_000;
+    await refresh.refreshIfDue();
+    now = 2_000;
+    await refresh.refreshIfDue();
+    expect(rebuild).toHaveBeenCalledTimes(3);
+  });
+
   it("backs off empty history scans to 30 seconds and drains new facts at the active interval", async () => {
     let now = 0;
     const rebuild = vi.fn(async () => ({ status: "updated" as const, count: 0 }));

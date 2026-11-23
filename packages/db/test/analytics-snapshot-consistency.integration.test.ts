@@ -137,6 +137,76 @@ describe.skipIf(!postgresUrl)("PostgreSQL analytics fact publication", () => {
     await fixture?.close();
   });
 
+  it("discovers completions created after the historical cursor, including late older IDs", async () => {
+    await expect(fixture.repository.tryRebuildAnalyticsFacts(100)).resolves.toEqual({
+      status: "updated",
+      count: 0,
+    });
+    await fixture.writer.query(`INSERT INTO run_attempts
+      (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at)
+      VALUES ('000-older-assignment','analytics-snapshot-run','analytics-snapshot-runner',2,
+              'assigned',1,'2026-09-21T00:00:00.000Z')`);
+    await expect(fixture.repository.tryRebuildAnalyticsFacts(100)).resolves.toEqual({
+      status: "updated",
+      count: 0,
+    });
+    await fixture.writer.query(`UPDATE run_attempts SET
+      status='failed',outcome='failed',finished_at='2026-09-21T00:05:00.000Z'
+      WHERE id='000-older-assignment'`);
+    // Replaying a terminal touch does not add a second publication.
+    await fixture.writer.query(`UPDATE run_attempts SET finished_at=finished_at
+      WHERE id='000-older-assignment'`);
+    await expect(fixture.publisher.rebuildAnalyticsFacts(100)).resolves.toBe(1);
+    await expect(fixture.repository.tryRebuildAnalyticsFacts(100)).resolves.toEqual({
+      status: "updated",
+      count: 0,
+    });
+    expect(await fixture.factCount()).toBe(2);
+  });
+
+  it("advances historical discovery while the completion queue fills the page", async () => {
+    await fixture.seedMixedOutcomes();
+    await expect(fixture.repository.tryRebuildAnalyticsFacts(2)).resolves.toEqual({
+      status: "updated",
+      count: 1,
+      moreWork: true,
+    });
+    expect(
+      (await fixture.writer.query("SELECT after_attempt_id FROM analytics_fact_backfill")).rows,
+    ).toEqual([{ after_attempt_id: "mixed-attempt-0" }]);
+  });
+
+  it("keeps a newer request when an existing fact is removed while a pending page is in flight", async () => {
+    await fixture.repository.tryRebuildAnalyticsFacts(100);
+    await fixture.writer.query(`INSERT INTO analytics_fact_pending (attempt_id,completed_at)
+      VALUES ('analytics-snapshot-attempt','2026-09-22T00:00:00.000Z')`);
+    let removed = false;
+    const restore = fixture.afterCandidatesRead(async () => {
+      await fixture.writer.query("DELETE FROM analytics_facts");
+      removed = true;
+    });
+    try {
+      await expect(fixture.repository.tryRebuildAnalyticsFacts(100)).resolves.toMatchObject({
+        status: "updated",
+        count: 0,
+      });
+      expect(removed).toBe(true);
+      expect(await fixture.factCount()).toBe(0);
+    } finally {
+      restore();
+    }
+    await expect(fixture.publisher.tryRebuildAnalyticsFacts(100)).resolves.toMatchObject({
+      status: "updated",
+      count: 1,
+    });
+    // Retention of the source cascades to its facts without enqueueing another refresh.
+    await fixture.writer.query("DELETE FROM run_batches WHERE id='analytics-snapshot-batch'");
+    expect(await fixture.factCount()).toBe(0);
+    expect(
+      (await fixture.writer.query("SELECT attempt_id FROM analytics_fact_pending")).rows,
+    ).toEqual([]);
+  });
+
   it("publishes once when independent builders select the same completed attempts", async () => {
     await fixture.seedMixedOutcomes();
     await fixture.writer.query("DELETE FROM analytics_facts");

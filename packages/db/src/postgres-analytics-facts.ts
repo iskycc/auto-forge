@@ -10,6 +10,37 @@ import {
 
 const ANALYTICS_FACT_LOCK_EXPRESSION =
   "hashtextextended('autoforge:analytics-facts:v4:' || 'analytics_facts'::regclass::oid::text,0)";
+const BACKFILL_SCAN_LIMIT = 2_000;
+
+type BackfillProgress = {
+  after_attempt_id: string | null;
+  through_attempt_id: string | null;
+  finished: boolean;
+};
+
+type PendingFact = { attempt_id: string; revision: string };
+
+type Completion = {
+  attempt_id: string;
+  project_id: string;
+  batch_id: string;
+  run_id: string;
+  suite_id: string;
+  case_definition_id: string;
+  case_version: number;
+  runner_id: string;
+  environment_version_id: string | null;
+  outcome: string;
+  result_code: string | null;
+  result_summary: string | null;
+  duration_ms: number | null;
+  testng_result_json: string | null;
+  finished_at: string;
+};
+
+const COMPLETION_COLUMNS = `a.id AS attempt_id,b.project_id,b.id AS batch_id,r.id AS run_id,b.suite_id,
+  r.case_definition_id,r.case_version,a.runner_id,b.environment_version_id,
+  a.outcome,a.result_code,a.result_summary,a.duration_ms,a.testng_result_json,a.finished_at`;
 
 /** Accurate readers retain the existing bounded wait and never treat a busy owner as an empty scan. */
 export async function rebuildPostgresAnalyticsFacts(
@@ -21,7 +52,14 @@ export async function rebuildPostgresAnalyticsFacts(
     await duringFactPublication("wait-owner", () =>
       client.query(`SELECT pg_advisory_xact_lock(${ANALYTICS_FACT_LOCK_EXPRESSION})`),
     );
-    return publishFactPage(client, limit);
+    const progress = await readBackfillProgress(client);
+    if (!progress?.finished) {
+      // During an upgrade an explicit summary or export may need older facts that
+      // the background cursor has yet to visit. Keep its existing completeness.
+      return publishFacts(client, await readLegacyCompletions(client, limit));
+    }
+    const pending = await readPendingFacts(client, limit);
+    return publishPendingFacts(client, pending);
   });
 }
 
@@ -40,33 +78,156 @@ export async function tryRebuildPostgresAnalyticsFacts(
     const row = ownership.rows[0];
     if (!row) throw new Error("Analytics fact ownership probe returned no row.");
     if (!row.acquired) return { status: "deferred" };
-    return { status: "updated", count: await publishFactPage(client, limit) };
+    if (limit === 0) return { status: "updated", count: 0 };
+    return refreshFactPages(client, limit);
   });
 }
 
-async function publishFactPage(client: PoolClient, limit: number): Promise<number> {
+async function refreshFactPages(
+  client: PoolClient,
+  limit: number,
+): Promise<AnalyticsFactRefreshResult> {
+  const progress = (await readBackfillProgress(client)) ?? (await initializeBackfill(client));
+  const queued = await readPendingFacts(client, limit);
+  const queueFull = queued.length === limit;
+  // A continuously busy queue must still let the upgrade cursor make progress.
+  const pending = queueFull && !progress.finished && limit > 1 ? queued.slice(0, -1) : queued;
+  const count = await publishPendingFacts(client, pending);
+  if (progress.finished || pending.length === limit) {
+    return { status: "updated", count, ...(queueFull ? { moreWork: true } : {}) };
+  }
+
+  const historical = await backfillFactPage(client, progress, limit - pending.length);
+  return {
+    status: "updated",
+    count: count + historical.count,
+    ...(!historical.finished || queueFull ? { moreWork: true } : {}),
+  };
+}
+
+async function readBackfillProgress(client: PoolClient): Promise<BackfillProgress | undefined> {
+  const result = await duringFactPublication("read-completions", () =>
+    client.query<BackfillProgress>(
+      `SELECT after_attempt_id, through_attempt_id, finished FROM analytics_fact_backfill
+       WHERE schema_version=$1`,
+      [ANALYTICS_FACT_SCHEMA_VERSION],
+    ),
+  );
+  return result.rows[0];
+}
+
+async function initializeBackfill(client: PoolClient): Promise<BackfillProgress> {
+  const result = await duringFactPublication("read-completions", () =>
+    client.query<BackfillProgress>(
+      `INSERT INTO analytics_fact_backfill (schema_version,through_attempt_id,finished)
+       SELECT $1, last_id, last_id IS NULL
+       FROM (SELECT (SELECT id FROM run_attempts ORDER BY id DESC LIMIT 1) AS last_id) boundary
+       RETURNING after_attempt_id, through_attempt_id, finished`,
+      [ANALYTICS_FACT_SCHEMA_VERSION],
+    ),
+  );
+  return result.rows[0]!;
+}
+
+async function readPendingFacts(client: PoolClient, limit: number): Promise<PendingFact[]> {
+  const result = await duringFactPublication("read-completions", () =>
+    client.query<PendingFact>(
+      `SELECT attempt_id,revision FROM analytics_fact_pending ORDER BY completed_at,attempt_id LIMIT $1`,
+      [limit],
+    ),
+  );
+  return result.rows;
+}
+
+async function publishPendingFacts(
+  client: PoolClient,
+  pending: readonly PendingFact[],
+): Promise<number> {
+  if (pending.length === 0) return 0;
+  const ids = pending.map((entry) => entry.attempt_id);
+  const count = await publishFacts(client, await readSelectedCompletions(client, ids));
+  // Fact deletion can enqueue an attempt again while we read it. Acknowledge
+  // only the revision we saw so that this later request isn't lost.
+  await duringFactPublication("write-facts", () =>
+    client.query(
+      `DELETE FROM analytics_fact_pending pending
+       USING unnest($1::text[], $2::bigint[]) AS read_page(attempt_id, revision)
+       WHERE pending.attempt_id=read_page.attempt_id AND pending.revision=read_page.revision`,
+      [ids, pending.map((entry) => entry.revision)],
+    ),
+  );
+  return count;
+}
+
+async function backfillFactPage(client: PoolClient, progress: BackfillProgress, limit: number) {
+  // Materialize a fixed primary-key range before checking whether facts exist.
+  // Even a completely indexed history needs at most this many probes per tick.
+  const result = await duringFactPublication("read-completions", () =>
+    client.query<{ last_id: string | null; candidate_ids: string[]; scanned: number }>(
+      `WITH history_window AS MATERIALIZED (
+         SELECT id,outcome,finished_at FROM run_attempts
+         WHERE ($1::text IS NULL OR id > $1) AND id <= $2
+         ORDER BY id LIMIT $3
+       )
+       SELECT (SELECT id FROM history_window ORDER BY id DESC LIMIT 1) AS last_id,
+         (SELECT count(*)::integer FROM history_window) AS scanned,
+         ARRAY(SELECT w.id FROM history_window w
+           WHERE w.finished_at IS NOT NULL AND w.outcome IS NOT NULL
+             AND COALESCE((SELECT f.schema_version FROM analytics_facts f WHERE f.attempt_id=w.id),0)<$4
+           ORDER BY w.id LIMIT $5) AS candidate_ids`,
+      [
+        progress.after_attempt_id,
+        progress.through_attempt_id,
+        BACKFILL_SCAN_LIMIT,
+        ANALYTICS_FACT_SCHEMA_VERSION,
+        limit,
+      ],
+    ),
+  );
+  const { last_id: lastId, scanned, candidate_ids: ids } = result.rows[0]!;
+  const after = ids.length === limit ? ids[ids.length - 1] : lastId;
+  const finished =
+    !after ||
+    after === progress.through_attempt_id ||
+    (scanned < BACKFILL_SCAN_LIMIT && ids.length < limit);
+  const count = await publishFacts(client, await readSelectedCompletions(client, ids));
+  await duringFactPublication("write-facts", () =>
+    client.query(
+      `UPDATE analytics_fact_backfill SET after_attempt_id=$2,finished=$3 WHERE schema_version=$1`,
+      [ANALYTICS_FACT_SCHEMA_VERSION, after ?? progress.after_attempt_id, finished],
+    ),
+  );
+  return { count, finished };
+}
+
+async function readSelectedCompletions(
+  client: PoolClient,
+  ids: readonly string[],
+): Promise<Completion[]> {
+  if (ids.length === 0) return [];
+  const result = await duringFactPublication("read-completions", () =>
+    client.query<Completion>(
+      `SELECT ${COMPLETION_COLUMNS}
+       FROM unnest($1::text[]) AS selected(id)
+       JOIN run_attempts a ON a.id=selected.id
+       JOIN execution_runs r ON r.id=a.execution_run_id
+       JOIN run_batches b ON b.id=r.batch_id
+       WHERE a.finished_at IS NOT NULL AND a.outcome IS NOT NULL AND b.batch_kind <> 'case_log_rerun'
+         AND COALESCE((SELECT f.schema_version FROM analytics_facts f WHERE f.attempt_id=a.id),0)<$2
+       ORDER BY a.id FOR KEY SHARE OF a`,
+      [ids, ANALYTICS_FACT_SCHEMA_VERSION],
+    ),
+  );
+  return result.rows;
+}
+
+async function readLegacyCompletions(client: PoolClient, limit: number): Promise<Completion[]> {
   // Choose compact keys before reading reports. Protect selected completions against
   // concurrent retention; KEY SHARE remains compatible with non-key maintenance locks.
   // An anti-join preserves estimates for missing facts; a nullable join with OR can
   // underestimate them as one row and turn the remaining history into nested lookups.
   const result = await duringFactPublication("read-completions", () =>
-    client.query<{
-      attempt_id: string;
-      project_id: string;
-      batch_id: string;
-      run_id: string;
-      suite_id: string;
-      case_definition_id: string;
-      case_version: number;
-      runner_id: string;
-      environment_version_id: string | null;
-      outcome: string;
-      result_code: string | null;
-      result_summary: string | null;
-      duration_ms: number | null;
-      testng_result_json: string | null;
-      finished_at: string;
-    }>(
+    client.query<Completion>(
       `WITH pending_attempts AS MATERIALIZED (
        SELECT a.id FROM run_attempts a
        JOIN execution_runs r ON r.id=a.execution_run_id
@@ -79,9 +240,7 @@ async function publishFactPage(client: PoolClient, limit: number): Promise<numbe
          AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
        ORDER BY a.finished_at,a.id LIMIT $2
      )
-     SELECT a.id AS attempt_id,b.project_id,b.id AS batch_id,r.id AS run_id,b.suite_id,
-            r.case_definition_id,r.case_version,a.runner_id,b.environment_version_id,
-            a.outcome,a.result_code,a.result_summary,a.duration_ms,a.testng_result_json,a.finished_at
+     SELECT ${COMPLETION_COLUMNS}
      FROM pending_attempts pending JOIN run_attempts a ON a.id=pending.id
      JOIN execution_runs r ON r.id=a.execution_run_id
      JOIN run_batches b ON b.id=r.batch_id
@@ -89,8 +248,15 @@ async function publishFactPage(client: PoolClient, limit: number): Promise<numbe
       [ANALYTICS_FACT_SCHEMA_VERSION, limit],
     ),
   );
-  if (result.rows.length === 0) return 0;
-  const facts = result.rows.map((row) => {
+  return result.rows;
+}
+
+async function publishFacts(
+  client: PoolClient,
+  completions: readonly Completion[],
+): Promise<number> {
+  if (completions.length === 0) return 0;
+  const facts = completions.map((row) => {
     const counts = resultCounts(row.testng_result_json);
     return {
       attempt_id: row.attempt_id,

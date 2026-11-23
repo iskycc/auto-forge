@@ -16,19 +16,19 @@ export class AnalyticsFactRefresh {
 
   async refreshIfDue(): Promise<void> {
     if (this.now() < this.nextRefreshAt) return;
-    let producedFacts = false;
+    let active = false;
     try {
       const result = await this.rebuild();
       // Another generator owns this page. It is neither an empty scan nor a
       // database incident; its committed facts remain available to readers.
-      producedFacts = result.status === "updated" && result.count > 0;
+      active = result.status === "updated" && (result.count > 0 || result.moreWork === true);
     } catch (error) {
       // A failed fact scan must not prevent an independent cold page from being built.
       this.reportError(error);
     }
-    const intervalMs = producedFacts ? ACTIVE_INTERVAL_MS : this.idleIntervalMs;
+    const intervalMs = active ? ACTIVE_INTERVAL_MS : this.idleIntervalMs;
     this.nextRefreshAt = this.now() + intervalMs;
-    this.idleIntervalMs = producedFacts
+    this.idleIntervalMs = active
       ? ACTIVE_INTERVAL_MS
       : Math.min(MAXIMUM_IDLE_INTERVAL_MS, intervalMs * 2);
   }

@@ -2559,7 +2559,7 @@ export type ApiTokenAuthentication = {
 };
 
 export type AnalyticsFactRefreshResult =
-  { status: "updated"; count: number } | { status: "deferred" };
+  { status: "updated"; count: number; moreWork?: true } | { status: "deferred" };
 
 export interface PlatformOperationsRepository {
   readOperationalMetrics(): Promise<{

@@ -408,6 +408,7 @@ export const platformGuides: readonly DocumentationArticle[] = [
         title: "查看系统信息",
         paragraphs: [
           "系统信息独立提供运行和组件概况。点击 PostgreSQL、Redis、NATS、MinIO 等组件卡片按需查看使用详情；持续业务状态仍以平台记录为准。",
+          "Full 升级后，质量洞察会保留已有统计，并在后台分批补齐历史结果。若部分统计暂未更新，可按页面的更新时间核对。日志中的 analytics.facts.read-completions／57014 表示后台读取统计数据超时。",
           "低负载时较低的内存使用率本身不是故障。排查时综合连接池、队列积压、缓存与磁盘指标，不要通过无意义预占内存判断中间件是否充分利用。",
         ],
       },
