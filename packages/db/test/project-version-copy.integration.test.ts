@@ -467,6 +467,68 @@ for (const dialect of ["sqlite", "postgres"] as const)
           await f.close();
         }
       }, 60000);
+      it("skips archived task configuration and retains its executed history", async () => {
+        const f = await fixture(dialect);
+        try {
+          await f.rows("UPDATE case_suites SET status='archived' WHERE id='suite'");
+          await f.rows(
+            "INSERT INTO case_suites(id,project_id,name,version,status,enabled,policy_json,created_at,updated_at) VALUES ('active-suite','source','活跃任务',1,'active',FALSE,?,?,?)",
+            [JSON.stringify({ projectVersionId: "version" }), now, now],
+          );
+          await f.rows(
+            "INSERT INTO case_suite_versions(id,suite_id,version,snapshot_json,change_reason,created_at) SELECT 'unused-suite-version',suite_id,2,snapshot_json,change_reason,created_at FROM case_suite_versions WHERE id='suite-version'",
+          );
+
+          const job = await f.requests.create(input, "operator");
+          await f.service.execute(job.id, new AbortController().signal);
+          const state = (await f.repository.get(job.id))!;
+          const mapped = (id: string) => versionCopyId(state, id);
+
+          expect(state.status).toBe("completed");
+          expect(
+            await f.rows("SELECT id,status FROM case_suites WHERE project_id='target'"),
+          ).toEqual([{ id: mapped("active-suite"), status: "active" }]);
+          expect(await f.rows("SELECT status FROM case_suites WHERE id='suite'")).toEqual([
+            { status: "archived" },
+          ]);
+          for (const table of [
+            "case_suite_items",
+            "case_suite_ddt_items",
+            "case_suite_schedules",
+            "case_suite_round_recovery_credentials",
+          ]) {
+            expect(
+              await f.rows(`SELECT suite_id FROM ${table} WHERE suite_id=?`, [mapped("suite")]),
+            ).toEqual([]);
+          }
+          expect(
+            await f.rows("SELECT id FROM case_suite_versions WHERE suite_id=?", [mapped("suite")]),
+          ).toEqual([{ id: mapped("suite-version") }]);
+          expect(
+            await f.rows("SELECT suite_id,suite_name,status FROM run_batches WHERE id=?", [
+              mapped(batchId),
+            ]),
+          ).toEqual([{ suite_id: mapped("suite"), suite_name: "混合任务", status: "failed" }]);
+          expect(
+            await f.rows("SELECT remark FROM failure_analysis_claims WHERE batch_id=?", [
+              mapped(batchId),
+            ]),
+          ).toEqual([{ remark: "保留分析结论" }]);
+          expect(
+            (
+              await f.logs.listChunks({
+                batchId: mapped(batchId),
+                attemptId: mapped(attemptId),
+                stream: "stdout",
+                afterSequence: -1,
+                limit: 1,
+              })
+            ).items[0]?.content,
+          ).toBe("首条中文日志");
+        } finally {
+          await f.close();
+        }
+      }, 60000);
       it("copies independent cases, DDT history, tasks, credentials, execution logs, attachments and analysis without publishing partial data", async () => {
         const f = await fixture(dialect);
         try {

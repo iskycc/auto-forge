@@ -42,6 +42,19 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
     return result.rows[0] ? readModelSnapshotFromRow(result.rows[0]) : null;
   }
 
+  async requestExpiredRefresh(id: string, now: string) {
+    const result = await this.handle.pool.query<ReadModelSnapshotRow>(
+      `UPDATE read_model_snapshots SET requested_revision=requested_revision+1
+       WHERE id=(SELECT id FROM read_model_snapshots
+         WHERE id=$1 AND generated_at IS NOT NULL AND requested_revision=generated_revision
+           AND refresh_after<=$2 AND failed<5 AND (lease_expires_at IS NULL OR lease_expires_at<=$2)
+         FOR UPDATE SKIP LOCKED)
+       RETURNING *`,
+      [id, now],
+    );
+    return result.rows[0] ? readModelSnapshotFromRow(result.rows[0]) : null;
+  }
+
   async claim(now: string, expiresAt: string, token: string, options?: { onlyPageBlocking: true }) {
     await this.handle.ready;
     const candidateSql = `SELECT candidate.id,candidate.query_json FROM read_model_snapshots candidate

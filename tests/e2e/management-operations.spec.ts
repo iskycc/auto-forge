@@ -340,10 +340,25 @@ for (const targetMode of ["new", "existing"] as const)
       [{ id: source.suiteId, name: source.suiteName, passedRuns: 0 }],
       process.env.AUTOFORGE_E2E_POSTGRES_URL,
     );
+    const archiveSource = targetMode === "existing" && !scale;
+    if (archiveSource) {
+      const suiteEndpoint = `/api/v1/case-suites/${source.suiteId}`;
+      const current = await browserJson<{ revision: number }>(
+        page,
+        `${suiteEndpoint}?view=summary`,
+      );
+      expect(current.status).toBe(200);
+      const archived = await browserJson(page, suiteEndpoint, {
+        method: "PATCH",
+        body: { archived: true, expectedRevision: current.body.revision },
+      });
+      expect(archived.status).toBe(200);
+    }
     await selectProjectContext(page, source.projectId, source.projectVersionId, source.testStageId);
     await page.goto("/settings/projects");
     await page.getByRole("button", { name: "复制整个版本", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "复制整个版本", exact: true });
+    await expect(dialog.getByText(/归档任务仅保留执行历史/u)).toBeVisible();
     await expect(dialog.getByRole("button", { name: "开始复制", exact: true })).toBeEnabled();
     const targetName = uniqueName("完整副本");
     let existingVersionId: string | undefined;
@@ -454,11 +469,15 @@ for (const targetMode of ["new", "existing"] as const)
     ).toBeVisible();
     await expectUiIntegrity(page);
     await page.goto("/case-suites");
-    await expect(
-      page
-        .getByRole("region", { name: "用例任务列表", exact: true })
-        .getByText(source.suiteName, { exact: true }),
-    ).toBeVisible();
+    const task = page.getByRole("article", { name: `任务 ${source.suiteName}`, exact: true });
+    if (archiveSource) {
+      await expect(task).toHaveCount(0);
+      await page.getByRole("link", { name: "已归档任务", exact: true }).click();
+      await expect(page).toHaveURL(/status=archived/u);
+      await expect(task).toHaveCount(0);
+    } else {
+      await expect(task).toBeVisible();
+    }
   });
 
 test("version initialization allows every step to be skipped and can be reopened", async ({

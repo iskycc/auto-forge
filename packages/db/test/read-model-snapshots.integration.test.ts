@@ -84,6 +84,72 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         }
       });
 
+      it("refreshes viewed live execution results while regular background work is deferred", async () => {
+        const harness = await database(dialect);
+        const batchId = randomUUID();
+        const overview = { kind: "execution_overview", projectId, batchId } as const;
+        const cases = {
+          kind: "execution_case_page",
+          projectId,
+          batchId,
+          filter: { scope: "summary", sort: "none", direction: "asc", offset: 0, limit: 50 },
+        } as const;
+        const unattended = { ...overview, batchId: randomUUID() };
+        let currentTime = now;
+        const clock = { now: () => new Date(currentTime) };
+        const service = new ReadModelSnapshotService(harness.repository, clock);
+        let passed = 0;
+        let regularBudget = true;
+        let pageBudget = true;
+        const worker = new ReadModelSnapshotWorker(
+          harness.repository,
+          async () => ({ passed }),
+          clock,
+          { next: randomUUID },
+          (error) => {
+            throw error;
+          },
+          () => regularBudget,
+          () => pageBudget,
+        );
+        try {
+          for (const query of [overview, cases, unattended]) {
+            await service.read(query);
+            expect(await worker.refreshOne()).toBe(true);
+          }
+          regularBudget = false;
+          pageBudget = false;
+          currentTime = later;
+          passed = 2;
+          const readers = await Promise.all([service.read(overview), service.read(overview)]);
+          for (const result of readers) {
+            expect(result).toMatchObject({ state: "stale", payload: { passed: 0 } });
+          }
+          expect(readers.some((result) => !result.synchronized)).toBe(true);
+          expect((await harness.repository.get(readModelKey(overview)))?.requestedRevision).toBe(1);
+          expect(await service.read(cases)).toMatchObject({ state: "stale", synchronized: false });
+          expect(await worker.refreshOne()).toBe(false);
+
+          pageBudget = true;
+          expect(await worker.refreshOne()).toBe(true);
+          expect(await worker.refreshOne()).toBe(true);
+          expect(await worker.refreshOne()).toBe(false);
+          for (const query of [overview, cases]) {
+            expect(await service.read(query)).toMatchObject({
+              state: "ready",
+              synchronized: true,
+              payload: { passed: 2 },
+            });
+          }
+          expect(await harness.repository.get(readModelKey(unattended))).toMatchObject({
+            requestedRevision: 0,
+            payload: { passed: 0 },
+          });
+        } finally {
+          await harness.close();
+        }
+      });
+
       it("admits explicitly invalidated JSON readers under pressure while periodic statistics remain deferred", async () => {
         const harness = await database(dialect);
         try {

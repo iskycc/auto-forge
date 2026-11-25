@@ -354,7 +354,7 @@ export class SqlProjectVersionCopyRepository implements ProjectVersionCopyReposi
         ).length
       )
         throw new DomainError("VERSION_COPY_SCOPE_INVALID", "来源版本在生成快照前已被删除。");
-      const scope = versionCopyScopeSql(this.sql.dialect);
+      const scope = versionCopyScopeSql(this.sql.dialect, "active");
       const values = [state.sourceProjectId, state.sourceVersionId];
       const active = await query.rows(
         `${scope} SELECT id FROM run_batches WHERE id IN (SELECT id FROM selected_batches) AND status NOT IN ('succeeded','failed','cancelled') LIMIT 1`,
@@ -497,13 +497,15 @@ export class SqlProjectVersionCopyRepository implements ProjectVersionCopyReposi
     manifest: Parameters<ProjectVersionCopyRepository["finish"]>[1],
     token: string,
   ): Promise<void> {
-    // Verify one indexed collection at a time; publication is the only final transaction.
+    // Compare all target rows to the captured manifest, including snapshots made before
+    // archived tasks were excluded from capture.
+    const targetScope = versionCopyScopeSql(this.sql.dialect, "all");
     for (const collection of manifest.collections) {
       const definition = table(collection.name);
       const count = Number(
         (
           await this.sql.rows(
-            `${versionCopyScopeSql(this.sql.dialect)} SELECT COUNT(*) AS count FROM "${definition.name}" c WHERE ${definition.predicate}`,
+            `${targetScope} SELECT COUNT(*) AS count FROM "${definition.name}" c WHERE ${definition.predicate}`,
             [state.targetProjectId, state.targetVersionId],
           )
         )[0]!.count,

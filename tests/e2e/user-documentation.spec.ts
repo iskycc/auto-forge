@@ -140,6 +140,11 @@ test("anonymous user documentation covers every guide, search history, diagrams 
       await expect(page.locator(`section#${section.id}`)).toHaveCount(1);
     await expectUiIntegrity(page);
   }
+  await page.goto("/docs/project-versions#copy-version");
+  const copyVersion = page.locator("section#copy-version");
+  await expect(copyVersion).toBeInViewport();
+  await expect(copyVersion).toContainText("归档任务的历史执行、结果和日志");
+  await captureDesktopThemes(page, testInfo, "documentation-version-copy");
   await page.goto("/docs/case-logs#rerun-ip");
   await expect(page.locator("#rerun-ip")).toBeInViewport();
   await page.reload();

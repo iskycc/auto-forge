@@ -42,6 +42,29 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
     return row ? readModelSnapshotFromRow(row) : null;
   }
 
+  async requestExpiredRefresh(id: string, now: string) {
+    const eligible = `id=? AND generated_at IS NOT NULL AND requested_revision=generated_revision
+      AND refresh_after<=? AND failed<5 AND (lease_expires_at IS NULL OR lease_expires_at<=?)`;
+    const parameters = [id, now, now];
+    // A page waiting on an existing builder must not contend for SQLite's writer.
+    if (
+      !this.handle.client
+        .prepare(`SELECT 1 FROM read_model_snapshots WHERE ${eligible}`)
+        .get(...parameters)
+    )
+      return null;
+    const row = await retrySqliteLockContention(
+      () =>
+        this.handle.client
+          .prepare(
+            `UPDATE read_model_snapshots SET requested_revision=requested_revision+1
+             WHERE ${eligible} RETURNING *`,
+          )
+          .get(...parameters) as ReadModelSnapshotRow | undefined,
+    );
+    return row ? readModelSnapshotFromRow(row) : null;
+  }
+
   async claim(now: string, expiresAt: string, token: string, options?: { onlyPageBlocking: true }) {
     const candidateSql = `SELECT candidate.id FROM read_model_snapshots candidate
       WHERE candidate.refresh_after<=? AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at<=?)

@@ -115,6 +115,7 @@ export function ExecutionBatchDetails({
         throw new Error((await readApiErrorMessage(response, "刷新执行详情失败。"))!);
       }
       const latest = (await response.json()) as ExecutionBatchView;
+      if (signal?.aborted) return;
       const next = {
         ...latest,
         ...(accessToken ? { accessToken } : {}),
@@ -151,7 +152,10 @@ export function ExecutionBatchDetails({
           timer = window.setTimeout(() => void poll(), statisticsPending ? 1_000 : 5_000);
       }
     };
-    timer = window.setTimeout(() => void poll(), statisticsPending ? 1_000 : 5_000);
+    timer = window.setTimeout(
+      () => void poll(),
+      statisticsPending || statisticsState === "stale" ? 1_000 : 5_000,
+    );
     return () => {
       controller.abort();
       if (timer !== undefined) window.clearTimeout(timer);

@@ -284,17 +284,21 @@ export const VERSION_COPY_TABLES: readonly VersionCopyTable[] = [
   },
 ];
 
-export function versionCopyScopeSql(dialect: VersionCopySqlDialect): string {
+export function versionCopyScopeSql(
+  dialect: VersionCopySqlDialect,
+  suiteScope: "active" | "all",
+): string {
   const json = (column: string) =>
     dialect === "sqlite"
       ? `json_extract(${column}, '$.projectVersionId')`
       : `(${column}::jsonb ->> 'projectVersionId')`;
+  const suiteStatus = suiteScope === "active" ? " AND s.status='active'" : "";
   return `WITH scope(project_id,version_id) AS (VALUES (?,?)),
     base_batches AS (SELECT b.id FROM run_batches b,scope WHERE b.project_id=scope.project_id AND ${json("b.policy_json")}=scope.version_id),
     selected_batches AS (SELECT id FROM base_batches UNION SELECT r.batch_id FROM failure_analysis_claims a JOIN run_attempts p ON p.id=a.rerun_proof_attempt_id JOIN execution_runs r ON r.id=p.execution_run_id JOIN run_batches b ON b.id=r.batch_id WHERE a.batch_id IN (SELECT id FROM base_batches) AND b.project_id=(SELECT project_id FROM scope)),
     selected_runs AS (SELECT id FROM execution_runs WHERE batch_id IN (SELECT id FROM selected_batches)),
     selected_attempts AS (SELECT id FROM run_attempts WHERE execution_run_id IN (SELECT id FROM selected_runs)),
-    selected_suites AS (SELECT s.id FROM case_suites s,scope WHERE s.project_id=scope.project_id AND ${json("s.policy_json")}=scope.version_id),
+    selected_suites AS (SELECT s.id FROM case_suites s,scope WHERE s.project_id=scope.project_id AND ${json("s.policy_json")}=scope.version_id${suiteStatus}),
     selected_imports AS (SELECT id FROM ddt_import_jobs WHERE project_version_id=(SELECT version_id FROM scope) AND debug_owner_id IS NULL),
     selected_cases AS (SELECT id FROM case_definitions WHERE project_version_id=(SELECT version_id FROM scope) UNION SELECT d.id FROM case_definitions d JOIN execution_runs r ON r.case_definition_id=d.id OR r.execution_case_definition_id=d.id WHERE r.id IN (SELECT id FROM selected_runs)),
     base_sources AS (SELECT id FROM case_sources WHERE project_version_id=(SELECT version_id FROM scope) UNION SELECT source_id FROM case_definitions WHERE id IN (SELECT id FROM selected_cases) UNION SELECT source_id FROM case_versions WHERE case_definition_id IN (SELECT id FROM selected_cases)),

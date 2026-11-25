@@ -6,6 +6,22 @@ and known limitations.
 
 ## Unreleased
 
+## 1.23.11 - 2026-11-25
+
+### Fixed
+
+- 执行详情的总结和用例明细在批跑期间按需刷新，避免 Full 在持续负载下长期显示旧结果。
+- 复制整个版本时跳过已归档的任务配置，保留这些任务的执行记录、结果、日志和关联快照。Lite 和 Full 均生效。
+
+### Compatibility
+
+- Lite 与 Full 均无新增数据库迁移、配置项或 Runner 协议变动。归档过滤在下次生成版本复制快照时生效。离线包提供 amd64、arm64 镜像和 Compose 部署文件。
+
+### Verification
+
+- 两项修复分别通过 44 项执行统计回归和 39 项版本复制回归，覆盖 SQLite、PostgreSQL 及 13,001 用例十轮的执行统计。Playwright 验证了 Full 与 Lite 的工作台及匿名执行详情，以及 Lite 的新建目标和已有空版本复制。
+- 按快速路径运行 Release，保留双架构构建、镜像启动、SBOM、签名和资产校验。本次未运行完整标准 CI、Release checks 和发布后验收。
+
 ## 1.23.10 - 2026-11-23
 
 ### Fixed

@@ -476,7 +476,7 @@ function VersionCopyDialog({
               type="info"
               showIcon
               title="复制范围"
-              description="包含测试阶段、普通与 DDT 用例、导入记录、任务与快照、历史执行及日志、附件和分析记录。执行机和用户仍引用本站原有记录，项目成员及平台设置不复制。"
+              description="包含测试阶段、普通与 DDT 用例、导入记录、未归档任务和全部历史执行数据。归档任务仅保留执行历史及关联快照、日志、附件和分析。执行机和用户仍引用本站原有记录，项目成员及平台设置不复制。"
             />
             <Alert
               type="warning"

@@ -19,6 +19,107 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("live summary and open case details follow a retry without reloading either viewer", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const fixture = await database();
+  const anonymous = await browser.newContext();
+  const batchId = randomUUID();
+  const runnerId = randomUUID();
+  const recordedAt = new Date().toISOString();
+  const retriedRun = `${batchId}-run-2`;
+  try {
+    await seedLargeExecutionOverview(fixture.execute, {
+      dialect: fixture.dialect,
+      batchId,
+      runnerId,
+      suiteId: randomUUID(),
+      projectId: DEFAULT_PROJECT_ID,
+      caseCount: 3,
+      roundCount: 2,
+      recordedAt,
+    });
+    await fixture.execute(`
+      UPDATE run_batches SET status='running' WHERE id='${batchId}';
+      DELETE FROM run_attempts WHERE id='${retriedRun}-2';
+      UPDATE execution_runs SET status='queued',terminal_outcome=NULL,attempt_count=1 WHERE id='${retriedRun}';
+      UPDATE run_attempts SET status='running',outcome=NULL,finished_at=NULL WHERE id='${batchId}-run-3-2';
+      UPDATE execution_runs SET status='running',terminal_outcome=NULL WHERE id='${batchId}-run-3';
+    `);
+    const share = await browserJson<{ shareUrl: string }>(
+      page,
+      `/api/v1/run-batches/${batchId}/share`,
+      { method: "POST" },
+    );
+    expect(share.status).toBe(200);
+    const visitor = await anonymous.newPage();
+    await page.goto(`/run-batches/${batchId}`);
+    await visitor.goto(share.body.shareUrl);
+    const summaryRow = (target: typeof page) =>
+      target.getByLabel("轮次列表", { exact: true }).getByRole("row", { name: /总结/u });
+    const retryRow = (target: typeof page) =>
+      target.locator(".execution-case-table tbody tr").filter({ hasText: "Case 2" });
+    for (const target of [page, visitor]) {
+      await target.bringToFront();
+      await expect(summaryRow(target).locator("td").nth(6)).toHaveText("1", { timeout: 30_000 });
+      await openExecutionCaseDetails(target);
+      await expect(retryRow(target).getByText("失败", { exact: true })).toBeVisible({
+        timeout: 30_000,
+      });
+    }
+
+    // The result changes while the batch status, version and updated_at remain the same.
+    await fixture.execute(`
+      INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,execution_round,status,outcome,scheduling_score,created_at,started_at,finished_at,duration_ms)
+      VALUES('${retriedRun}-2','${retriedRun}','${runnerId}',2,2,'succeeded','succeeded',1,'${recordedAt}','${recordedAt}','${recordedAt}',1);
+      UPDATE execution_runs SET status='succeeded',terminal_outcome='succeeded',attempt_count=2 WHERE id='${retriedRun}';
+    `);
+    for (const [target, name, width, height] of [
+      [page, "console", 1024, 768],
+      [visitor, "public", 1536, 960],
+    ] as const) {
+      await target.bringToFront();
+      await expect(retryRow(target).getByText("通过", { exact: true })).toBeVisible({
+        timeout: 30_000,
+      });
+      await target.setViewportSize({ width, height });
+      await expectUiIntegrity(target);
+      await target.screenshot({
+        path: testInfo.outputPath(`live-summary-cases-${name}-${width}.png`),
+      });
+      await closeExecutionCaseDetails(target);
+      await expect(summaryRow(target).locator("td").nth(6)).toHaveText("2");
+      await expectUiIntegrity(target);
+      await target.screenshot({ path: testInfo.outputPath(`live-summary-${name}-${width}.png`) });
+    }
+
+    await fixture.execute(`
+      UPDATE run_attempts SET status='succeeded',outcome='succeeded',finished_at='${recordedAt}' WHERE id='${batchId}-run-3-2';
+      UPDATE execution_runs SET status='succeeded',terminal_outcome='succeeded' WHERE id='${batchId}-run-3';
+      UPDATE run_batches SET status='succeeded',version=version+1 WHERE id='${batchId}';
+    `);
+    for (const target of [page, visitor]) {
+      await target.bringToFront();
+      await expect(summaryRow(target).locator("td").nth(6)).toHaveText("3", { timeout: 30_000 });
+      await expect(summaryRow(target).getByText("已完成", { exact: true })).toBeVisible();
+      await expect(summaryRow(target).locator("td").nth(4)).toHaveText("100%");
+    }
+  } finally {
+    await page.goto("about:blank");
+    await anonymous.close();
+    await fixture.execute(`
+      DELETE FROM read_model_snapshots WHERE query_json LIKE '%${batchId}%';
+      DELETE FROM run_attempts WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id='${batchId}');
+      DELETE FROM execution_runs WHERE batch_id='${batchId}';
+      DELETE FROM run_batches WHERE id='${batchId}';
+      DELETE FROM runners WHERE id='${runnerId}';
+    `);
+    await fixture.close();
+  }
+});
+
 test("completed 13001-case ten-round tasks recover failed and delayed statistics without rerunning cases", async ({
   page,
 }, testInfo) => {

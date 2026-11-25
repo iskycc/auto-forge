@@ -41,6 +41,8 @@ export type ReadModelLease = ReadModelSnapshot & { token: string };
 
 export interface ReadModelSnapshotRepository {
   request(id: string, query: ReadModelQuery, now: string): Promise<ReadModelSnapshot>;
+  /** Mark a due generation as requested by a reader, without fencing an active builder. */
+  requestExpiredRefresh(id: string, now: string): Promise<ReadModelSnapshot | null>;
   get(id: string): Promise<ReadModelSnapshot | null>;
   /** Single-batch projections share one active generation lease; unrelated batches remain independent. */
   claim(
@@ -72,7 +74,20 @@ export class ReadModelSnapshotService {
   async read(input: ReadModelQuery) {
     const query = readModelQuerySchema.parse(input);
     const id = readModelKey(query);
-    const snapshot = await this.repository.request(id, query, this.clock.now().toISOString());
+    const now = this.clock.now().toISOString();
+    let snapshot = await this.repository.request(id, query, now);
+    if (
+      isLiveExecutionReadModel(query) &&
+      snapshot.generation !== null &&
+      snapshot.refreshAfter <= now &&
+      snapshot.generatedRevision === snapshot.requestedRevision
+    ) {
+      // A visible execution reader can use the waiting-page budget once the old result expires.
+      snapshot =
+        (await this.repository.requestExpiredRefresh(id, now)) ??
+        (await this.repository.get(id)) ??
+        snapshot;
+    }
     const status = snapshotStatus(snapshot, this.clock.now());
     return {
       ...status,
@@ -96,6 +111,13 @@ export class ReadModelSnapshotService {
   async part(id: string, generation: string, ordinal: number) {
     return this.repository.getPart(id, generation, ordinal);
   }
+}
+
+export function isLiveExecutionReadModel(query: ReadModelQuery): boolean {
+  return (
+    (query.kind === "execution_overview" || query.kind === "execution_case_page") &&
+    query.terminalVersion === undefined
+  );
 }
 
 export type ReadModelBuilder = (
