@@ -7,7 +7,11 @@ export function insertFailureAnalysisFixture(
   dataDirectory: string,
   projectVersionId: string,
   suffix: string,
-  caseLabels: { caseNameSuffix?: string; classNamePrefix?: string } = {},
+  caseLabels: {
+    caseNameSuffix?: string;
+    classNamePrefix?: string;
+    failureSummaries?: readonly string[];
+  } = {},
 ) {
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
   const batchId = randomUUID();
@@ -16,11 +20,14 @@ export function insertFailureAnalysisFixture(
   const caseNameSuffix = caseLabels.caseNameSuffix ?? suffix;
   const failedClassName = (index: number) =>
     `${caseLabels.classNamePrefix ?? "e2e.analysis"}.Failed${index}Test`;
-  const failedNames: [string, string, string, string] = [
+  const failedNames: [string, string, string, string, ...string[]] = [
     `失败 Alpha ${caseNameSuffix}`,
     `失败 Beta ${caseNameSuffix}`,
     `失败 Gamma ${caseNameSuffix}`,
     `失败 Zeta ${caseNameSuffix}`,
+    ...(caseLabels.failureSummaries ?? [])
+      .slice(4)
+      .map((_, index) => `失败用例 ${index + 4} ${caseNameSuffix}`),
   ];
   const passedName = `通过用例 ${suffix}`;
   const recordedAt = new Date().toISOString();
@@ -47,12 +54,13 @@ export function insertFailureAnalysisFixture(
         `INSERT INTO run_batches
       (id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,environment_json,
        total_runs,project_id,policy_json,created_at,updated_at)
-      VALUES (?,991,?,?,1,'succeeded',0,'[]',5,?,?,?,?)`,
+      VALUES (?,991,?,?,1,'succeeded',0,'[]',?,?,?,?,?)`,
       )
       .run(
         batchId,
         `suite-${suffix}`,
         suiteName,
+        failedNames.length + 1,
         DEFAULT_PROJECT_ID,
         JSON.stringify({ projectVersionId }),
         recordedAt,
@@ -144,7 +152,7 @@ export function insertFailureAnalysisFixture(
             `run-failed-${index}-${suffix}`,
             name,
             failedClassName(index),
-            `Assertion failure ${index}`,
+            caseLabels.failureSummaries?.[index] ?? `Assertion failure ${index}`,
             "failed",
           ] as const,
       ),

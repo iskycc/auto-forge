@@ -7,6 +7,7 @@ import {
   AiAnalysisService,
   resolveAutomaticAiAuthority,
   type AiAnalysisRepository,
+  type AiConfigurationRecord,
   type CachePort,
 } from "@autoforge/application";
 import { AesGcmSecretCipher } from "../src/lib/secret-cipher-core";
@@ -23,9 +24,14 @@ const report = (error: unknown) =>
     error: error instanceof Error ? error.message : "AI background operation failed.",
   });
 let wake: (() => void) | undefined;
+let nudged = false;
+function notify() {
+  nudged = true;
+  wake?.();
+}
 parentPort?.on("message", (message) => {
   if (message === "stop") shutdown.abort();
-  wake?.();
+  notify();
 });
 const resources = await initialize();
 const cipher = new AesGcmSecretCipher(configuration.masterKey);
@@ -33,6 +39,7 @@ const clock = { now: () => new Date() };
 const ids = { next: uuidV7 };
 const canWork = () => Atomics.load(priority, 0) === 0 && !shutdown.signal.aborted;
 const service = new AiAnalysisService(resources.repository, resources.batches, cipher, clock, ids);
+let modelBackoffUntil = 0;
 const worker = new AiAnalysisWorker(
   resources.repository,
   new AiEvidenceStore(
@@ -52,56 +59,99 @@ const worker = new AiAnalysisWorker(
   report,
   resources.cache,
   resources.isBusy,
+  () => {
+    modelBackoffUntil = Date.now() + 1000;
+  },
 );
 let automaticAfter: string | null = null;
 let nextAutomaticAt = 0;
+let nextPreparationAt = 0;
+let nextInferenceAt = 0;
+let nextConfigurationAt = 0;
+let preparing = false;
+let scanningAutomatic = false;
+let inferenceInFlight = 0;
+let modelConfiguration: AiConfigurationRecord | undefined;
+const running = new Set<Promise<void>>();
+
+function background(action: () => Promise<void>) {
+  const task = Promise.resolve()
+    .then(action)
+    .catch((error: unknown) => {
+      if (!shutdown.signal.aborted && !resources.isBusy(error)) report(error);
+    })
+    .finally(() => {
+      running.delete(task);
+      notify();
+    });
+  running.add(task);
+}
+
+function launchPreparation(record: AiConfigurationRecord, now: number) {
+  preparing = true;
+  nextPreparationAt = now + 100;
+  background(async () => {
+    try {
+      if (await worker.tick(shutdown.signal, { stage: "prepare", record })) nextInferenceAt = 0;
+      else nextPreparationAt = Date.now() + 2000;
+    } finally {
+      preparing = false;
+    }
+  });
+}
+
+function launchInference(record: AiConfigurationRecord, now: number) {
+  inferenceInFlight++;
+  nextInferenceAt = now + 100;
+  background(async () => {
+    try {
+      if (!(await worker.tick(shutdown.signal, { stage: "infer", record })))
+        nextInferenceAt = Date.now() + 2000;
+    } finally {
+      inferenceInFlight--;
+    }
+  });
+}
+
 try {
   while (!shutdown.signal.aborted) {
-    let worked = false;
     try {
       if (canWork()) {
-        worked = await worker.tick(shutdown.signal);
-        if (
-          Date.now() >= nextAutomaticAt &&
-          (await resources.repository.configuration()).configuration?.enabled
-        ) {
-          nextAutomaticAt = Date.now() + 15000;
-          const candidates = await resources.repository.automaticCandidates(automaticAfter, 20);
-          for (const candidate of candidates) {
-            automaticAfter = candidate.batchId;
-            const authority = await resolveAutomaticAiAuthority(
-              resources.identities,
-              resources.batches,
-              candidate.batchId,
-              {
-                legacyInitiatorUsername: candidate.requestedByUsername,
-                serviceAccounts: resources.serviceAccounts,
-              },
-            );
-            if (!authority.actor) {
-              await recordSkipped(candidate, authority.unavailableReason);
-              continue;
-            }
-            try {
-              await service.createAutomatic(authority.actor, candidate.batchId);
-            } catch (error) {
-              if (isDomainError(error) && error.code === "AUTH_FORBIDDEN")
-                await recordSkipped(
-                  candidate,
-                  `自动初析未发起：${authority.actorLabel}缺少当前 AI 或证据权限。`,
-                );
-              else report(error);
-            }
+        const now = Date.now();
+        if (now >= nextConfigurationAt) {
+          nextConfigurationAt = now + 1000;
+          modelConfiguration = await resources.repository.configuration();
+        }
+        if (canWork() && modelConfiguration?.configuration?.enabled) {
+          if (!preparing && now >= nextPreparationAt) launchPreparation(modelConfiguration, now);
+          if (
+            inferenceInFlight < modelConfiguration.configuration.concurrency &&
+            now >= nextInferenceAt &&
+            now >= modelBackoffUntil
+          )
+            launchInference(modelConfiguration, now);
+          if (!scanningAutomatic && now >= nextAutomaticAt) {
+            nextAutomaticAt = now + 15000;
+            scanningAutomatic = true;
+            background(async () => {
+              try {
+                await scanAutomatic();
+              } finally {
+                scanningAutomatic = false;
+              }
+            });
           }
-          if (candidates.length < 20) automaticAfter = null;
         }
       }
     } catch (error) {
-      if (!shutdown.signal.aborted) report(error);
+      if (!shutdown.signal.aborted && !resources.isBusy(error)) report(error);
     }
-    if (!shutdown.signal.aborted)
+    if (!shutdown.signal.aborted && !nudged)
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(finish, worked ? 100 : 2000);
+        const timer = setTimeout(
+          finish,
+          canWork() && modelConfiguration?.configuration?.enabled ? 100 : 2000,
+        );
         function finish() {
           clearTimeout(timer);
           wake = undefined;
@@ -109,10 +159,44 @@ try {
         }
         wake = finish;
       });
+    nudged = false;
   }
 } finally {
+  await Promise.all(running);
   await resources.close();
   parentPort?.close();
+}
+
+async function scanAutomatic() {
+  const candidates = await resources.repository.automaticCandidates(automaticAfter, 20);
+  for (const candidate of candidates) {
+    if (!canWork()) return;
+    automaticAfter = candidate.batchId;
+    const authority = await resolveAutomaticAiAuthority(
+      resources.identities,
+      resources.batches,
+      candidate.batchId,
+      {
+        legacyInitiatorUsername: candidate.requestedByUsername,
+        serviceAccounts: resources.serviceAccounts,
+      },
+    );
+    if (!authority.actor) {
+      await recordSkipped(candidate, authority.unavailableReason);
+      continue;
+    }
+    try {
+      await service.createAutomatic(authority.actor, candidate.batchId);
+    } catch (error) {
+      if (isDomainError(error) && error.code === "AUTH_FORBIDDEN")
+        await recordSkipped(
+          candidate,
+          `自动初析未发起：${authority.actorLabel}缺少当前 AI 或证据权限。`,
+        );
+      else report(error);
+    }
+  }
+  if (candidates.length < 20) automaticAfter = null;
 }
 
 async function recordSkipped(candidate: { batchId: string; projectId: string }, reason: string) {

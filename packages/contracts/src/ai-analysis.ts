@@ -108,7 +108,24 @@ export const aiPreliminaryConclusionSchema = z
   .strict();
 export type AiPreliminaryConclusion = z.infer<typeof aiPreliminaryConclusionSchema>;
 export type AiConclusionDraft = AiConclusion | AiPreliminaryConclusion;
-export type AiAnalysisStrategy = "legacy" | "stack_groups_v2" | "single_full_v2";
+export const AI_BULK_ISSUE_MINIMUM = 5;
+export const AI_BATCH_CLASSIFICATION_STRATEGY = "stack_refinement_v3";
+export type AiAnalysisStrategy =
+  "legacy" | "stack_groups_v2" | "single_full_v2" | typeof AI_BATCH_CLASSIFICATION_STRATEGY;
+export type AiIssueCategory = { rank: number; summary: string };
+export const aiInitialStackVerdictSchema = z
+  .object({
+    categories: z.array(z.object({ stackId: z.string(), summary: z.string() }).strict()).max(50),
+  })
+  .strict();
+export const aiIssueVerdictSchema = z
+  .object({
+    categoryId: z.string().nullable(),
+    useExistingConclusion: z.boolean(),
+    summary: z.string(),
+    conclusion: z.unknown(),
+  })
+  .strict();
 export type AiAnalysisStatus =
   | "queued"
   | "preparing"
@@ -120,6 +137,7 @@ export type AiAnalysisStatus =
   | "cancelled";
 export type AiAnalysisJob = {
   acceptingFinalResults?: boolean;
+  classificationReviewed?: number;
   strategy?: AiAnalysisStrategy;
   id: string;
   batchId: string;

@@ -1,6 +1,7 @@
 import {
   updateAiModelConfigurationSchema,
   createAiAnalysisSchema,
+  AI_BATCH_CLASSIFICATION_STRATEGY,
   type AiAnalysisJob,
   type AiModelConfigurationView,
 } from "@autoforge/contracts";
@@ -190,7 +191,7 @@ export class AiAnalysisService {
         batchId: batch.id,
         projectId: batch.projectId,
         attemptId: parsed.attemptId ?? null,
-        strategy: parsed.attemptId ? "single_full_v2" : "stack_groups_v2",
+        strategy: parsed.attemptId ? "single_full_v2" : AI_BATCH_CLASSIFICATION_STRATEGY,
         requestedBy: identity.user.id,
         status: "queued",
         createdAt: now,

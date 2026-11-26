@@ -140,6 +140,12 @@ test("anonymous user documentation covers every guide, search history, diagrams 
       await expect(page.locator(`section#${section.id}`)).toHaveCount(1);
     await expectUiIntegrity(page);
   }
+  await page.goto("/docs/ai-analysis#batch-single");
+  const batchAnalysis = page.locator("section#batch-single");
+  await expect(batchAnalysis).toBeInViewport();
+  await expect(batchAnalysis).toContainText("共享结论");
+  await expect(page.locator("section#prompts-export")).toContainText("AI分析问题类别");
+  await captureDesktopThemes(page, testInfo, "documentation-ai-analysis");
   await page.goto("/docs/project-versions#copy-version");
   const copyVersion = page.locator("section#copy-version");
   await expect(copyVersion).toBeInViewport();

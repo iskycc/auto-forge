@@ -27,7 +27,7 @@ type AnalysisResultView = {
     AiAnalysisView["job"],
     "status" | "acceptingFinalResults" | "total" | "prepared" | "completed" | "failed"
   > &
-    Partial<Pick<AiAnalysisView["job"], "id" | "reason">>;
+    Partial<Pick<AiAnalysisView["job"], "id" | "reason" | "strategy" | "classificationReviewed">>;
   items: (Pick<AiAnalysisView["items"][number], "id" | "displayName" | "status" | "conclusion"> &
     Partial<Pick<AiAnalysisView["items"][number], "reason">>)[];
   nextCursor?: string;
@@ -264,7 +264,9 @@ export function AiAnalysisButton({
           <Typography.Text type="secondary">
             {attemptId
               ? "单例分析清理颜色后的 stdout 全文；超过 50,000 字符时取末尾 25,000 字符，并补齐首行。按上下文分片累计分析，给出分类、原因与依据。"
-              : "按堆栈归类，不足 10 例逐例分析 stdout 全文，达到 10 例共用堆栈。清理颜色后超过 50,000 字符时取末尾 25,000 字符，并补齐首行。"}
+              : job?.strategy === "stack_groups_v2"
+                ? "这份历史作业按原有堆栈组分析。重新分析可使用两阶段分类。"
+                : "相同堆栈达到 5 例时先初分，再逐例比对 stdout。确认同因且仍满 5 例的用例共享最终结论。"}
           </Typography.Text>
           {error ? <Alert type="error" title={error} showIcon /> : null}
           {job?.reason ? <Alert type="warning" title={job.reason} showIcon /> : null}
@@ -287,6 +289,9 @@ export function AiAnalysisButton({
                 <Typography.Text>
                   处理 {job.completed} / {job.total} · 已采集 {job.prepared} · 异常或证据不足{" "}
                   {job.failed}
+                  {job.classificationReviewed !== undefined
+                    ? ` · 组内已复核 ${job.classificationReviewed}`
+                    : null}
                 </Typography.Text>
               </Space>
               <Progress

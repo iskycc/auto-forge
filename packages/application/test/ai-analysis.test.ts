@@ -183,6 +183,7 @@ function groupWorker() {
     configuration: async () => ({ revision: 1, configuration, encryptedKey: null }),
     claimPlanning: async () => null,
     claimWork: async () => null,
+    issues: { claimBatch: async () => null },
     prepareGroups: async () => {},
     claimGroup: async () => work,
     groupMembers,
@@ -651,7 +652,7 @@ describe("automatic final-round intake", () => {
       service.create(identity, { batchId: "batch", requestKey: "manual" }),
     ).rejects.toMatchObject({ code: "AI_BATCH_ACTIVE" });
     await expect(service.createAutomatic(identity, "batch")).resolves.toMatchObject({
-      strategy: "stack_groups_v2",
+      strategy: "stack_refinement_v3",
       requestedBy: "actor",
     });
     expect(create).toHaveBeenCalledWith(

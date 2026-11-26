@@ -5,6 +5,8 @@ import type {
   AiModelConfiguration,
   AiConclusionDraft,
   AiAnalysisStrategy,
+  AiIssueCategory,
+  AiPreliminaryConclusion,
 } from "@autoforge/contracts";
 
 export type AiConfigurationRecord = {
@@ -31,6 +33,8 @@ export type AiEvidence = {
   limitations: string[];
   signature: string;
   stackParts?: AiEvidencePart[];
+  stackLine?: string;
+  stackLineShortened?: boolean;
 };
 export type AiWork = AiAnalysisItem & {
   strategy?: AiAnalysisStrategy;
@@ -58,7 +62,58 @@ export type AiGroupWork = {
   attempts: number;
   processed: number;
   memberCount: number;
+  initialSummary?: string;
+  refinement?: AiIssueRefinement;
 };
+export type AiIssueCandidate = {
+  id: string;
+  summary: string;
+  conclusion: AiPreliminaryConclusion;
+};
+export type AiIssueRefinement = {
+  previousPart?: AiPreliminaryConclusion;
+  afterCategory?: string;
+  preferred?: AiIssueCandidate;
+};
+export type AiIssueBatchWork = Pick<
+  AiGroupWork,
+  "jobId" | "batchId" | "projectId" | "requestedBy" | "leaseToken" | "attempts"
+> & {
+  phase: "plan" | "classify" | "refine" | "rank" | "publish";
+  cursor: string;
+};
+export type AiIssueStack = { id: string; memberCount: number; evidenceKey: string };
+export interface AiIssueClassificationRepository {
+  claimBatch(token: string, now: string, expiresAt: string): Promise<AiIssueBatchWork | null>;
+  advanceBatch(work: AiIssueBatchWork, now: string): Promise<void>;
+  stacks(work: AiIssueBatchWork, limit: number): Promise<AiIssueStack[]>;
+  saveInitialClassification(
+    work: AiIssueBatchWork,
+    labels: ReadonlyArray<{ id: string; summary: string }>,
+    now: string,
+  ): Promise<void>;
+  deferBatch(
+    work: AiIssueBatchWork,
+    reason: string,
+    retryAt: string,
+    failed: boolean,
+    consumeAttempt: boolean,
+    now: string,
+  ): Promise<void>;
+  categories(work: AiGroupWork, after: string, limit: number): Promise<AiIssueCandidate[]>;
+  saveRefinement(
+    work: AiGroupWork,
+    progress: { partCursor: number; state: AiIssueRefinement },
+    now: string,
+  ): Promise<void>;
+  assignCategory(
+    work: AiGroupWork,
+    memberId: string,
+    category: AiIssueCandidate,
+    now: string,
+  ): Promise<void>;
+  skipMember(work: AiGroupWork, memberId: string, now: string): Promise<void>;
+}
 export type AiGroupMember = {
   id: string;
   displayName: string;
@@ -67,6 +122,7 @@ export type AiGroupMember = {
   evidenceKey?: string | null;
 };
 export interface AiAnalysisRepository {
+  readonly issues: AiIssueClassificationRepository;
   configuration(): Promise<AiConfigurationRecord>;
   saveConfiguration(record: AiConfigurationRecord, expectedRevision: number): Promise<boolean>;
   create(
@@ -90,7 +146,12 @@ export interface AiAnalysisRepository {
     done: boolean,
     now: string,
   ): Promise<void>;
-  claimWork(token: string, now: string, expiresAt: string): Promise<AiWork | null>;
+  claimWork(
+    token: string,
+    now: string,
+    expiresAt: string,
+    stage?: "prepare" | "infer",
+  ): Promise<AiWork | null>;
   renew(work: AiWork, expiresAt: string, now: string): Promise<boolean>;
   saveEvidence(work: AiWork, evidenceKey: string, signature: string, now: string): Promise<void>;
   saveDraft(
@@ -149,7 +210,9 @@ export interface AiAnalysisRepository {
     batchId: string,
     attemptIds: string[],
     before: string,
-  ): Promise<Array<{ attemptId: string; conclusion: string }>>;
+    classificationJobId?: string,
+  ): Promise<Array<{ attemptId: string; conclusion: string; category?: AiIssueCategory }>>;
+  exportClassificationJob(batchId: string, before: string): Promise<string | null>;
   hasAnalysis(batchId: string, before: string): Promise<boolean>;
   source(attemptId: string): Promise<Record<string, unknown> | null>;
   evidenceReference(jobId: string, itemId: string): Promise<string | null>;

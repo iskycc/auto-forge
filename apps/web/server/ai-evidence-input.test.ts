@@ -48,7 +48,7 @@ function evidenceFixture(chunks: string[], source: Record<string, unknown> = {})
   return {
     store,
     listLogChunks,
-    collect: () =>
+    collect: (strategy: AiWork["strategy"] = "single_full_v2") =>
       store.collect(
         {
           id: "item",
@@ -56,7 +56,7 @@ function evidenceFixture(chunks: string[], source: Record<string, unknown> = {})
           projectId: "project",
           executionRunId: "run",
           attemptId: "attempt",
-          strategy: "single_full_v2",
+          strategy,
         } as AiWork,
         aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "fixture" }),
         new AbortController().signal,
@@ -71,6 +71,32 @@ function evidenceFixture(chunks: string[], source: Record<string, unknown> = {})
 }
 
 describe("AI evidence text preparation", () => {
+  it("uses the exported failure stack for initial grouping even when full exception chains differ", async () => {
+    const summary =
+      "java.lang.AssertionError: wallet response failed " +
+      "upstream request evidence ".repeat(40) +
+      "root-trace-marker";
+    const fixtures = ["CacheMissException", "RequestTimeoutException"].map((exception) =>
+      evidenceFixture(
+        [
+          `${summary}\n\tat example.Test.run(Test.java:10)\nCaused by: example.${exception}: detail\n\tat example.Gateway.read(Gateway.java:23)\n`,
+        ],
+        { result_summary: `\u001b[31m${summary}\u001b[0m` },
+      ),
+    );
+    const legacy = await Promise.all(fixtures.map((fixture) => fixture.collect("stack_groups_v2")));
+    expect(legacy[0]!.evidence.signature).not.toBe(legacy[1]!.evidence.signature);
+    const classified = await Promise.all(
+      fixtures.map((fixture) => fixture.collect("stack_refinement_v3")),
+    );
+    expect(classified[0]!.evidence.signature).toMatch(/^stack-line-v3:/u);
+    expect(classified[0]!.evidence.signature).toBe(classified[1]!.evidence.signature);
+    expect(classified.map(({ evidence }) => evidence.stackLine)).toEqual([summary, summary]);
+    expect(await fixtures[0]!.text(classified[0]!.evidence.parts)).toContain("CacheMissException");
+    expect(await fixtures[1]!.text(classified[1]!.evidence.parts)).toContain(
+      "RequestTimeoutException",
+    );
+  });
   it.each(["\n", "\r\n", "\r"])(
     "extends the tail back to the first line's start with %j line endings",
     (newline) => {

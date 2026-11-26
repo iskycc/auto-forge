@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.23.12 - 2026-11-26
+
+### Changed
+
+- 批次 AI 初析按失败堆栈去重计数，再逐例比对 stdout 确认实际问题。至少 5 个同因用例共享最终结论，按数量编号并随结果导出类别和简述。
+- 按初分、日志复核和独立分析使用不同提示词。标准执行结果和失败用例分析清单使用简短的 AI 建议名称，省略通用确认提示，保留原因与依据。
+- 在「平台设置 → 模型配置」可填写 1～32 个 AI 分析总并发。单 Worker 可同时发送多个请求，多个 Worker 共享总额度。同一堆栈组顺序复核。
+
+### Compatibility
+
+- Lite 与 Full 的 `0105_ai_issue_classification.sql` 增加分类进度和结果字段，保留历史作业和结论。Full 按同一版本更新 Web 与全部 Worker。离线资产包含 amd64、arm64 后端镜像和部署包。
+
+### Verification
+
+- 144 项定向测试、6 项真实 Full 中间件集成和 5 项 Playwright 验证通过。实测 Lite 单进程达到 3 个并行模型请求，Full 双 Worker 在线调额后达到 4 个。两份 XLSX 经 LibreOffice Calc 实际打开核对。
+- 快速发布保留双架构构建、镜像启动、SBOM、签名和资产校验。完整标准 CI、Release checks 和发布后验收未运行。
+
 ## 1.23.11 - 2026-11-25
 
 ### Fixed

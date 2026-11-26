@@ -9,9 +9,13 @@ import {
   type ExecutionControlRepository,
   type JarObjectStorePort,
 } from "@autoforge/application";
-import type { AiModelConfiguration } from "@autoforge/contracts";
+import {
+  AI_BATCH_CLASSIFICATION_STRATEGY,
+  EXECUTION_RESULT_SUMMARY_MAX_LENGTH,
+  type AiModelConfiguration,
+} from "@autoforge/contracts";
 import { isDomainError } from "@autoforge/domain";
-import { parseSafeAnsiStream, type AnsiParserState } from "../src/lib/safe-ansi";
+import { parseSafeAnsi, parseSafeAnsiStream, type AnsiParserState } from "../src/lib/safe-ansi";
 import {
   prepareAiText,
   shortenAiInput,
@@ -168,9 +172,20 @@ export class AiEvidenceStore {
       );
     await append(preparedStdout.text, "stdout");
     if (remaining === 0) evidence.stdoutComplete = false;
-    const stacks = [...new Set(extractCompleteStacks(stdout, evidence.stdoutComplete))].sort();
-    if (stacks.length && evidence.stdoutComplete)
-      evidence.signature = `exact-stack-bundle-v2:${createHmac("sha256", this.signatureKey).update(JSON.stringify(stacks)).digest("hex")}`;
+    const stacks = [...new Set(extractCompleteStacks(stdout, evidence.stdoutComplete))];
+    if (work.strategy === AI_BATCH_CLASSIFICATION_STRATEGY) {
+      const stackLine = caseStackLine(source?.result_summary, stacks, evidence.stdoutComplete);
+      if (stackLine) {
+        evidence.signature = `stack-line-v3:${createHmac("sha256", this.signatureKey).update(stackLine).digest("hex")}`;
+        // Preserve the entire protocol-sized summary. A header recovered from stdout can be larger.
+        evidence.stackLine = evidenceTextParts(
+          stackLine,
+          EXECUTION_RESULT_SUMMARY_MAX_LENGTH,
+        ).next().value;
+        if (evidence.stackLine?.length !== stackLine.length) evidence.stackLineShortened = true;
+      }
+    } else if (stacks.length && evidence.stdoutComplete)
+      evidence.signature = `exact-stack-bundle-v2:${createHmac("sha256", this.signatureKey).update(JSON.stringify(stacks.sort())).digest("hex")}`;
     else evidence.limitations.push("未取得可确认完整的堆栈集合；此项独立保留，不按摘要前缀合并。");
     if (work.strategy === "single_full_v2" && !evidence.stdoutComplete)
       throw new AiModelRequestError(
@@ -236,6 +251,24 @@ export class AiEvidenceStore {
   async part(part: AiEvidence["parts"][number]) {
     return Buffer.from(await this.objects.read(part.objectKey)).toString("utf8");
   }
+}
+
+function caseStackLine(
+  value: unknown,
+  stacks: string[],
+  stdoutComplete: boolean,
+): string | undefined {
+  const summary =
+    typeof value === "string"
+      ? removeTestNgExitSummaries(
+          parseSafeAnsi(value)
+            .map(({ text }) => text)
+            .join("")
+            .replace(/\r\n?/gu, "\n"),
+        ).trim()
+      : "";
+  if (summary && !/^TESTNG_[A-Z_0-9]+$/u.test(summary)) return summary;
+  return stdoutComplete ? stacks.at(-1)?.split("\n", 1)[0] : undefined;
 }
 /** UTF-16 slice boundaries must not replace half of a non-BMP log character during UTF-8 encoding. */
 function* evidenceTextParts(text: string, maximumCharacters: number): Generator<string> {

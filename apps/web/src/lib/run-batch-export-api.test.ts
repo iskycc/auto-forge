@@ -18,6 +18,7 @@ const {
   listClaims,
   isBatchPublic,
   hasAnalysis,
+  exportClassificationJob,
   exportConclusions,
   paths,
 } = vi.hoisted(() => ({
@@ -29,6 +30,7 @@ const {
   listClaims: vi.fn(),
   isBatchPublic: vi.fn(),
   hasAnalysis: vi.fn(),
+  exportClassificationJob: vi.fn(),
   exportConclusions: vi.fn(),
   paths: { dataDirectory: "" },
 }));
@@ -42,7 +44,7 @@ vi.mock("./services", () => ({
     publicExecutionAccess: { ensureLinksForAttemptsInBatch: ensureShares, isBatchPublic },
     configurationStore: { read: readConfiguration, paths },
     failureAnalysis: { listExportClaims: listClaims },
-    aiAnalysis: { repository: { hasAnalysis, exportConclusions } },
+    aiAnalysis: { repository: { hasAnalysis, exportClassificationJob, exportConclusions } },
   }),
 }));
 
@@ -84,6 +86,7 @@ beforeEach(async () => {
   listClaims.mockResolvedValue([]);
   isBatchPublic.mockResolvedValue(true);
   hasAnalysis.mockResolvedValue(false);
+  exportClassificationJob.mockResolvedValue(null);
   exportConclusions.mockResolvedValue([]);
   readConfiguration.mockReturnValue({
     web: { timeZone: "Asia/Shanghai", publicBaseUrl: "http://localhost" },
@@ -178,7 +181,7 @@ describe("validated Excel downloads", () => {
       const reasonColumn = headers.indexOf("AI 初步分析原因");
       expect(aiColumn).toBe(headers.indexOf("失败堆栈") + 1);
       expect(reasonColumn).toBe(aiColumn + 1);
-      expect(sheet.getCell(2, aiColumn).text).toBe("可能重跑通过");
+      expect(sheet.getCell(2, aiColumn).text).toBe("重跑通过");
       expect(sheet.getCell(2, reasonColumn).text).toBe("环境偶发抖动；依据：连接被重置。");
       expect(listClaims).toHaveBeenCalledWith({
         projectId: "project",

@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { openExecutionCaseDetails } from "./support/execution-details";
 import { createServer } from "node:http";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
@@ -15,6 +15,399 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+
+test("AI batch classification shares refined conclusions and exports ranked issues", async ({
+  page,
+}, testInfo) => {
+  const stack = {
+    wallet: "java.lang.AssertionError: wallet response failed",
+    gateway:
+      "java.lang.IllegalStateException: gateway response unavailable " +
+      "upstream request evidence ".repeat(40) +
+      "gateway-trace-marker",
+    small: "java.lang.AssertionError: payload differs",
+    fallback: "java.lang.IllegalStateException: duplicate response",
+  };
+  const cohorts = [
+    { stack: stack.wallet, cause: "钱包数据库连接池", count: 6, rank: "第二类问题" },
+    { stack: stack.wallet, cause: "钱包缓存过期", count: 5, rank: "第三类问题" },
+    { stack: stack.wallet, cause: "钱包断言写错", count: 1 },
+    { stack: stack.gateway, cause: "网关鉴权服务故障", count: 7, rank: "第一类问题" },
+    { stack: stack.small, cause: "请求参数错误", count: 4 },
+    { stack: stack.fallback, cause: "重复请求头", count: 3 },
+    { stack: stack.fallback, cause: "重复流水号", count: 2 },
+  ];
+  const cases = cohorts.flatMap((cohort) => Array.from({ length: cohort.count }, () => cohort));
+  const firstPass: Array<{ stackId: string; stack: string; count: number }> = [];
+  const comparisons = new Map<number, Array<{ summary: string; reason: string }>>();
+  const logFragments = new Map<number, string[]>();
+  const independent = new Set<number>();
+  const single = new Set<number>();
+  let initialRequests = 0;
+  let inFlightIndependent = 0;
+  let releaseIndependent: () => void = () => undefined;
+  const allowIndependent = new Promise<void>((release) => {
+    releaseIndependent = release;
+  });
+  const model = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const { messages, tools } = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const tool = tools[0].function.name;
+    const context = JSON.parse(
+      messages.find((message: { role: string }) => message.role === "user").content,
+    );
+    const evidence = JSON.parse(
+      messages.findLast((message: { role: string }) => message.role === "tool").content,
+    );
+    let verdict: unknown;
+    if (tool === "classify_ai_stacks") {
+      if (++initialRequests === 1) {
+        response.writeHead(429, { "retry-after": "1", "content-type": "application/json" });
+        response.end('{"error":{"code":"rate_limit_exceeded"}}');
+        return;
+      }
+      firstPass.push(...evidence.stacks);
+      verdict = {
+        categories: firstPass.slice(-evidence.stacks.length).map(({ stackId, stack }) => ({
+          stackId,
+          summary: `暂定 ${stack.split(": ")[1]}`,
+        })),
+      };
+    } else {
+      const run = /run-failed-(\d+)/u.exec(context.member ?? "")?.[1];
+      const index = run === undefined ? -1 : Number(run);
+      const text: string = evidence.text ?? "";
+      const cause = /实际原因=(.+)/u.exec(text)?.[1];
+      if (evidence.evidenceId.startsWith("stdout-"))
+        logFragments.set(index, [...(logFragments.get(index) ?? []), text]);
+      const conclusion = {
+        recommendation: "business_issue_likely",
+        reason: cause ? `根据业务日志确认：${cause}` : "已读取本片，继续等待实际原因。",
+        evidence: cause ? `观察到 ${cause} 错误。` : "已读取日志片。",
+        evidenceReferences: [evidence.evidenceId],
+      };
+      if (tool === "submit_ai_issue") {
+        const candidates = context.existingCategories as Array<{
+          categoryId: string;
+          summary: string;
+          reason: string;
+        }>;
+        comparisons.set(index, candidates);
+        const match = candidates.find(({ summary }) => summary === cause);
+        const improves = index === 1;
+        const useExistingConclusion = !!match && !improves;
+        verdict = {
+          categoryId: match?.categoryId ?? null,
+          useExistingConclusion,
+          summary: useExistingConclusion ? "逐例复核时的临时简述" : cause,
+          conclusion: {
+            ...conclusion,
+            reason: improves
+              ? `连接池指标进一步证实：${cause}`
+              : useExistingConclusion
+                ? `逐例复核时的临时结论：${index}`
+                : conclusion.reason,
+          },
+        };
+      } else if (context.stage === "read_issue_member") {
+        verdict = conclusion;
+      } else if (context.stage === "independent_issue_member") {
+        independent.add(index);
+        inFlightIndependent++;
+        try {
+          await allowIndependent;
+        } finally {
+          inFlightIndependent--;
+        }
+        verdict = conclusion;
+      } else {
+        single.add(index);
+        verdict = { ...conclusion, reason: "单例细查独有结论" };
+      }
+    }
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "fixture-verdict",
+                  type: "function",
+                  function: { name: tool, arguments: JSON.stringify(verdict) },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise<void>((listening) => model.listen(0, "127.0.0.1", listening));
+  try {
+    const address = model.address();
+    if (!address || typeof address === "string") throw new Error("Model fixture did not listen.");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await ensureAdministrator(page);
+    const version = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+      { method: "POST", body: { name: uniqueName("AI 分类验收版本") } },
+    );
+    await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+    const configuration = await browserJson<{ revision: number }>(
+      page,
+      "/api/v1/ai-analysis/configuration",
+    );
+    expect(
+      (
+        await browserJson(page, "/api/v1/ai-analysis/configuration", {
+          method: "PUT",
+          body: {
+            revision: configuration.body.revision,
+            configuration: {
+              enabled: true,
+              baseUrl: `http://127.0.0.1:${address.port}/v1`,
+              modelId: "classification-fixture",
+              concurrency: 1,
+              contextTokens: 32768,
+              requestsPerMinute: 600,
+              tokensPerMinute: 2_000_000,
+              timeoutSeconds: 45,
+            },
+          },
+        })
+      ).status,
+    ).toBe(200);
+    await page.goto("/settings/platform?section=ai");
+    await page.getByRole("spinbutton", { name: "AI 分析总并发" }).fill("3");
+    await page.getByRole("button", { name: "保存配置", exact: true }).click();
+    await expect(page.getByText("已保存；新分析请求立即使用此配置，无需重启。")).toBeVisible();
+    const suffix = uniqueName("ai-classification");
+    const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+    if (!dataDirectory) throw new Error("Missing E2E data directory.");
+    const fixture = insertFailureAnalysisFixture(dataDirectory, version.body.id, suffix, {
+      failureSummaries: cases.map((item) =>
+        item.stack === stack.fallback ? "TestNG exit code:1" : item.stack,
+      ),
+    });
+    const logs = createAttemptLogStore(resolve(dataDirectory, "attempt-logs"));
+    try {
+      const recordedAt = new Date().toISOString();
+      for (const [index, item] of cases.entries()) {
+        await logs.appendChunks({
+          batchId: fixture.batchId,
+          attemptId: `attempt-run-failed-${index}-${suffix}`,
+          receivedAt: recordedAt,
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 0,
+              recordedAt,
+              content:
+                `\u001b[32m全文起点 ${index}\u001b[0m\n` +
+                (index === 1 ? "跨片业务正文\n".repeat(1000) : "") +
+                `${item.stack}\n\tat e2e.Wallet.run(Wallet.java:${20 + index})\n\n` +
+                `实际原因=${item.cause}\n全文结束 ${index}\nTestNG exit code:1\n`,
+            },
+            { stream: "stderr", sequence: 0, recordedAt, content: "额外诊断应忽略" },
+          ],
+        });
+      }
+    } finally {
+      logs.close();
+    }
+    const statusPath = `/api/v1/ai-analysis?batchId=${fixture.batchId}`;
+    const readStatus = () =>
+      browserJson<{ job: { status: string; completed: number; classificationReviewed: number } }>(
+        page,
+        statusPath,
+      ).then(({ body }) => body?.job);
+    await page.goto(`/run-batches/${fixture.batchId}`);
+    await page.getByRole("button", { name: "AI 初步分析", exact: true }).first().click();
+    const dialog = page.getByRole("dialog", { name: "批次 AI 初步分析", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect.poll(() => inFlightIndependent, { timeout: 90000 }).toBe(3);
+    expect(await readStatus()).toMatchObject({
+      status: "analyzing",
+      completed: 18,
+      classificationReviewed: 24,
+    });
+    const pending = await page.request.get(
+      `/api/v1/run-batches/${fixture.batchId}/export?template=failure-analysis&scope=final`,
+    );
+    expect(pending.status()).toBe(200);
+    const sheetWhileRunning = (await readExportedWorkbook(await pending.body())).worksheets[0]!;
+    const categoryColumn = (sheetWhileRunning.getRow(1).values as string[]).indexOf(
+      "AI分析问题类别",
+    );
+    expect(categoryColumn).toBeGreaterThan(0);
+    const visibleCategories: string[] = [];
+    sheetWhileRunning.eachRow((row, index) => {
+      if (index > 1) visibleCategories.push(row.getCell(categoryColumn).text);
+    });
+    expect(visibleCategories.filter(Boolean)).toHaveLength(18);
+    expect(visibleCategories.filter((value) => value === "")).toHaveLength(10);
+    releaseIndependent();
+    await expect.poll(readStatus, { timeout: 90000 }).toMatchObject({
+      status: "completed",
+      completed: cases.length,
+      classificationReviewed: 24,
+    });
+    expect(initialRequests).toBe(2);
+    expect(firstPass.map(({ stack, count }) => [stack, count])).toEqual(
+      expect.arrayContaining([
+        [stack.wallet, 12],
+        [stack.gateway, 7],
+        [stack.fallback, 5],
+      ]),
+    );
+    expect(firstPass).toHaveLength(3);
+    expect(comparisons.get(0)).toEqual([]);
+    expect(comparisons.get(1)).toEqual([expect.objectContaining({ summary: "钱包数据库连接池" })]);
+    expect(comparisons.get(2)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "连接池指标进一步证实：钱包数据库连接池" }),
+        expect.objectContaining({ summary: "钱包缓存过期" }),
+        expect.objectContaining({ summary: "钱包断言写错" }),
+      ]),
+    );
+    expect(comparisons.get(11)?.map(({ summary }) => summary)).toEqual(
+      expect.arrayContaining(["钱包数据库连接池", "钱包缓存过期"]),
+    );
+    expect([...independent].sort((a, b) => a - b)).toEqual(
+      cases.flatMap((item, index) => (item.rank ? [] : [index])),
+    );
+    expect(logFragments.get(1)?.length).toBeGreaterThan(1);
+    for (const [index, item] of cases.entries()) {
+      const stdout = logFragments.get(index)?.join("") ?? "";
+      expect(stdout).toContain(`全文起点 ${index}`);
+      expect(stdout).toContain(`实际原因=${item.cause}\n全文结束 ${index}`);
+      expect(stdout).not.toMatch(/\u001b|TestNG exit code|额外诊断/u);
+    }
+    await dialog.getByRole("button", { name: "刷新进度", exact: true }).click();
+    await expect(dialog.getByText(/组内已复核 24/u)).toBeVisible();
+    await expect(dialog.getByText("分析完成", { exact: true }).first()).toBeVisible();
+    const screenshots = testInfo.outputPath("screenshots");
+    await mkdir(screenshots, { recursive: true });
+    for (const [theme, width, height] of [
+      ["light", 1024, 768],
+      ["dark", 1536, 960],
+    ] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+        ]);
+      await page.setViewportSize({ width, height });
+      await page.reload();
+      await page.getByRole("button", { name: "AI 初步分析", exact: true }).first().click();
+      await expect(dialog.getByText(/组内已复核 24/u)).toBeVisible();
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(screenshots, `ai-classification-${theme}-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await dialog.getByRole("button", { name: "关闭", exact: true }).last().click();
+    await openExecutionCaseDetails(page);
+    const workspace = page.getByRole("dialog", { name: "用例执行明细", exact: true });
+    await workspace
+      .getByRole("row")
+      .filter({ hasText: fixture.failedNames[0] })
+      .getByRole("button", { name: "AI 初步分析", exact: true })
+      .click();
+    const singleDialog = page.getByRole("dialog", { name: "用例 AI 初步分析", exact: true });
+    const attemptId = `attempt-run-failed-0-${suffix}`;
+    await expect
+      .poll(
+        async () =>
+          (
+            await browserJson<{ job?: { status: string } }>(
+              page,
+              `${statusPath}&attemptId=${attemptId}`,
+            )
+          ).body?.job?.status,
+        { timeout: 90000 },
+      )
+      .toBe("completed");
+    expect([...single]).toEqual([0]);
+    await expect(singleDialog.getByText(/单例细查独有结论/u).first()).toBeVisible();
+    await singleDialog
+      .locator(".ant-modal-footer")
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+
+    for (const template of ["results", "failure-analysis"] as const) {
+      await workspace.getByRole("button", { name: "导出结果", exact: true }).click();
+      const exportDialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
+      await exportDialog
+        .getByRole("radio", { name: /^最终结果/u })
+        .locator("..")
+        .click();
+      if (template === "failure-analysis") {
+        await exportDialog
+          .getByRole("radio", { name: /失败用例分析清单/u })
+          .locator("..")
+          .click();
+      } else {
+        await exportDialog.getByRole("checkbox", { name: "成功", exact: true }).check();
+      }
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        exportDialog
+          .getByRole("button", {
+            name: template === "results" ? "导出 Excel" : "导出分析清单",
+            exact: true,
+          })
+          .click(),
+      ]);
+      const file = testInfo.outputPath(`ai-classification-${template}.xlsx`);
+      await download.saveAs(file);
+      const sheet = (await readExportedWorkbook(await readFile(file))).worksheets[0]!;
+      const headers = sheet.getRow(1).values as string[];
+      const resultColumn = headers.indexOf("AI 初步分析结果");
+      expect(resultColumn).toBeGreaterThan(0);
+      expect(headers.slice(resultColumn + 1, resultColumn + 4)).toEqual([
+        "AI 初步分析原因",
+        "AI分析问题类别",
+        "问题类别简述",
+      ]);
+      if (template === "failure-analysis") expect(headers[resultColumn - 1]).toBe("失败堆栈");
+      const exported = new Map<string, string[]>();
+      sheet.eachRow((row, index) => {
+        if (index > 1)
+          exported.set(
+            row.getCell(1).text,
+            [0, 1, 2, 3].map((column) => row.getCell(resultColumn + column).text),
+          );
+      });
+      for (const [index, item] of cases.entries()) {
+        const row = exported.get(`e2e.analysis.Failed${index}Test`);
+        expect(row?.[0]).toBe("业务问题需要提单");
+        expect(row?.[1]).toContain(
+          item.cause === "钱包数据库连接池" ? `连接池指标进一步证实：${item.cause}` : item.cause,
+        );
+        expect(row?.slice(2)).toEqual([item.rank ?? "非大批量问题", item.rank ? item.cause : ""]);
+      }
+      for (const rank of ["第一类问题", "第二类问题", "第三类问题"]) {
+        const rows = [...exported.values()].filter((row) => row[2] === rank);
+        expect(new Set(rows.map((row) => JSON.stringify(row))).size).toBe(1);
+      }
+      expect(exported.size).toBe(cases.length + (template === "results" ? 1 : 0));
+      if (template === "results")
+        expect(exported.get("e2e.analysis.PassedTest")).toEqual(["", "", "", ""]);
+    }
+  } finally {
+    releaseIndependent();
+    await new Promise<void>((close) => model.close(() => close()));
+  }
+});
 
 test("AI reasoning effort persists and reaches connection checks with consistent desktop layout", async ({
   page,
@@ -80,14 +473,22 @@ test("AI reasoning effort persists and reaches connection checks with consistent
     await page.getByRole("option", { name: "模型默认", exact: true }).click();
     await page.getByRole("button", { name: "检查连接", exact: true }).click();
     await expect(page.getByText("模型连接与工具调用检查通过。", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "检查连接", exact: true })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
     expect(requests.at(-1)).not.toHaveProperty("reasoning_effort");
     expect(requests.at(-1)).toHaveProperty("max_tokens", 512);
     await effort.click();
     await page.getByRole("option", { name: "高（high）", exact: true }).click();
+    const selectedEffort = page
+      .getByTitle("高（high）", { exact: true })
+      .and(page.locator(".ant-select-content"));
+    await expect(selectedEffort).toBeVisible();
     await page.getByRole("button", { name: "保存配置", exact: true }).click();
     await expect(page.getByText("已保存；新分析请求立即使用此配置，无需重启。")).toBeVisible();
     await page.reload();
-    await expect(page.getByText("高（high）", { exact: true })).toBeVisible();
+    await expect(selectedEffort).toBeVisible();
     const saved = await browserJson<{ configuration: { reasoningEffort: string } }>(
       page,
       "/api/v1/ai-analysis/configuration",
@@ -211,6 +612,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
   const inferenceRequests: Array<{
     stage: string;
     partId?: string;
+    member?: string;
     evidenceId: string;
     text: string;
     members: Array<{ displayName: string }>;
@@ -235,6 +637,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       inferenceRequests.push({
         stage: instruction.stage ?? "single_full",
         partId: instruction.partId,
+        member: instruction.member,
         evidenceId: payload.evidenceId,
         text: payload.text ?? "",
         members: payload.members ?? [],
@@ -498,7 +901,9 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     await expect(detail.getByText(/合成模型建议.*依赖瞬时不可用/u)).toBeVisible();
     await dialog.getByRole("button", { name: "收起完整初析", exact: true }).first().click();
     expect(attempts).toBeGreaterThan(4);
-    const smallGroups = inferenceRequests.filter((request) => request.stage === "small_group_full");
+    const smallGroups = inferenceRequests.filter(
+      (request) => request.stage === "independent_issue_member",
+    );
     expect(smallGroups.length).toBeGreaterThan(4);
     const batchLogs = smallGroups.map((request) => request.text).join("");
     for (let index = 0; index < 4; index++) expect(batchLogs).toContain(`用例尾部正文${index}`);
@@ -512,7 +917,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         .filter(
           (request) =>
             request.evidenceId.startsWith("stdout-") &&
-            request.members[0]?.displayName === fixture.failedNames[index],
+            request.member === `run-failed-${index}-${suffix}`,
         )
         .map((request) => request.text)
         .join("");
@@ -530,7 +935,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       }
     }
     expect(smallGroups.every((request) => !/\\u001b|\u001b/u.test(request.messages))).toBe(true);
-    expect(smallGroups.every((request) => request.members.length === 1)).toBe(true);
+    expect(smallGroups.every((request) => request.member?.startsWith("run-failed-"))).toBe(true);
     expect(inferenceRequests.every((request) => !request.messages.includes("e2e-only-key"))).toBe(
       true,
     );
@@ -547,9 +952,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       items: Array<{ conclusion: string }>;
       groups: Array<{ memberCount: number; processed: number; status: string }>;
     }>(page, `/api/v1/ai-analysis?batchId=${fixture.batchId}`);
-    expect(grouped.body.groups).toEqual([
-      expect.objectContaining({ memberCount: 4, processed: 4, status: "completed" }),
-    ]);
+    expect(grouped.body.groups).toEqual([]);
     expect(new Set(grouped.body.items.map((item) => item.conclusion)).size).toBe(1);
     expect(grouped.body.items.every((item) => item.conclusion.split("\n").length === 3)).toBe(true);
     expect(
@@ -660,7 +1063,10 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     const reasonColumn = headers.indexOf("AI 初步分析原因");
     expect(resultColumn).toBeGreaterThan(0);
     expect(reasonColumn).toBe(resultColumn + 1);
-    expect(sheet.getRow(2).getCell(resultColumn).text).toBe("可能重跑通过（待人工确认）");
+    expect(headers.indexOf("AI分析问题类别")).toBe(reasonColumn + 1);
+    expect(headers.indexOf("问题类别简述")).toBe(reasonColumn + 2);
+    expect(sheet.getRow(2).getCell(reasonColumn + 1).text).toBe("非大批量问题");
+    expect(sheet.getRow(2).getCell(resultColumn).text).toBe("重跑通过");
     expect(sheet.getRow(2).getCell(reasonColumn).text).toContain("合成模型建议：依赖瞬时不可用。");
     expect(sheet.getRow(2).getCell(reasonColumn).text).toContain("依据：日志出现连接重置");
     await openExecutionCaseDetails(page);
@@ -686,9 +1092,9 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     const analysisReasonColumn = analysisHeaders.indexOf("AI 初步分析原因");
     expect(analysisResultColumn).toBe(analysisHeaders.indexOf("失败堆栈") + 1);
     expect(analysisReasonColumn).toBe(analysisResultColumn + 1);
-    expect(analysisSheet.getRow(2).getCell(analysisResultColumn).text).toBe(
-      "可能重跑通过（待人工确认）",
-    );
+    expect(analysisHeaders.indexOf("AI分析问题类别")).toBe(analysisReasonColumn + 1);
+    expect(analysisSheet.getRow(2).getCell(analysisReasonColumn + 1).text).toBe("非大批量问题");
+    expect(analysisSheet.getRow(2).getCell(analysisResultColumn).text).toBe("重跑通过");
     expect(analysisSheet.getRow(2).getCell(analysisReasonColumn).text).toContain(
       "依据：日志出现连接重置",
     );
@@ -787,19 +1193,23 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       .poll(
         async () => {
           const result = await browserJson<{
-            job: { completed: number; total: number; acceptingFinalResults?: boolean };
+            job: {
+              prepared: number;
+              completed: number;
+              total: number;
+              acceptingFinalResults?: boolean;
+            };
           } | null>(page, `/api/v1/ai-analysis?batchId=${automaticFixture.batchId}`);
           return result.body?.job;
         },
         { timeout: 60000 },
       )
-      .toMatchObject({ completed: 3, total: 3, acceptingFinalResults: true });
+      .toMatchObject({ prepared: 3, completed: 0, total: 3, acceptingFinalResults: true });
     const running = await browserJson<{ status: string }>(
       page,
       `/api/v1/run-batches/${automaticFixture.batchId}/overview`,
     );
     expect(running.body.status).toBe("running");
-    expect(inferenceRequests.some((input) => input.text.includes("渐进初析业务正文"))).toBe(true);
     expect(submittedKeys).toHaveLength(manualRequestsBeforeAutomatic);
     await expect(progressiveDialog.getByText(/末轮结果持续接收中/u)).toBeVisible();
     for (const theme of ["light", "dark"] as const) {
@@ -863,7 +1273,8 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       groups: Array<{ memberCount: number }>;
     }>(page, `/api/v1/ai-analysis?batchId=${automaticFixture.batchId}`);
     expect(progressiveResult.body.job).toMatchObject({ total: 4, completed: 4 });
-    expect(progressiveResult.body.groups).toEqual([expect.objectContaining({ memberCount: 4 })]);
+    expect(progressiveResult.body.groups).toEqual([]);
+    expect(inferenceRequests.some((input) => input.text.includes("渐进初析业务正文"))).toBe(true);
     expect(new Set(progressiveResult.body.items.map((item) => item.conclusion)).size).toBe(1);
     expect(reasoningEfforts.length).toBeGreaterThan(1);
     expect(new Set(reasoningEfforts)).toEqual(new Set(["high"]));

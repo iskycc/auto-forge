@@ -81,6 +81,7 @@ export * from "./storage-monitoring";
 export * from "./ai-analysis-ports";
 export * from "./ai-analysis";
 export * from "./ai-analysis-worker";
+export { renderPreliminaryConclusion } from "./ai-analysis-prompts";
 
 export * from "./jenkins-dependency-build-ports";
 export * from "./jenkins-dependency-build";

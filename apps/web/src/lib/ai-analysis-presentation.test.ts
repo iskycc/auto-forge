@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { splitAiAnalysisConclusion } from "./ai-analysis-presentation";
+import {
+  aiExportResult,
+  aiExportText,
+  splitAiAnalysisConclusion,
+} from "./ai-analysis-presentation";
+
+it("removes review boilerplate in spreadsheet cells and preserves evidence wording", () => {
+  expect(aiExportResult("可能重跑通过（分析中，待确认）")).toBe("重跑通过");
+  expect(aiExportResult("可能业务问题需要提单（需人工确认）")).toBe("业务问题需要提单");
+  expect(aiExportResult("AI 初步建议（已分析 2/2 证据片；待人工确认）\n可能用例问题需要修改")).toBe(
+    "用例问题需要修改",
+  );
+  expect(
+    aiExportText(
+      "可能原因：等待连接池，需人工确认。\n依据：异常可能来自网络中断。\n需要人工确认。",
+    ),
+  ).toBe("原因：等待连接池。\n依据：异常可能来自网络中断。");
+});
 
 describe("AI analysis presentation", () => {
   it.each([

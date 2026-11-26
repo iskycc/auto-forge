@@ -53,6 +53,39 @@ const completedClaim: FailureAnalysisClaim = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
+  it.each(["results", "failure-analysis"] as const)(
+    "exports ranked, independent and pending AI categories in the %s workbook",
+    async (template) => {
+      const { buffer } = await buildRunBatchExportWorkbook({
+        batchId: "ai-classified",
+        template,
+        scope: "final",
+        includesAi: true,
+        includesAiCategories: true,
+        rows: [
+          failedRow,
+          { ...failedRow, attemptId: "independent" },
+          { ...failedRow, attemptId: "pending" },
+        ],
+        shareLinks: new Map(),
+        aiIssueCategories: new Map([
+          [failedRow.attemptId!, { rank: 1, summary: "登录缓存失效" }],
+          ["independent", { rank: 0, summary: "" }],
+        ]),
+      });
+      const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
+      const headers = sheet.getRow(1).values as string[];
+      const category = headers.indexOf("AI分析问题类别");
+      const summary = headers.indexOf("问题类别简述");
+      expect(category).toBeGreaterThan(0);
+      expect(summary).toBe(category + 1);
+      expect(sheet.getRow(2).getCell(category).text).toBe("第一类问题");
+      expect(sheet.getRow(2).getCell(summary).text).toBe("登录缓存失效");
+      expect(sheet.getRow(3).getCell(category).text).toBe("非大批量问题");
+      expect(sheet.getRow(3).getCell(summary).text).toBe("");
+      expect(sheet.getRow(4).getCell(category).text).toBe("");
+    },
+  );
   it("exports only populated task-marker slots in the failure-analysis workbook", async () => {
     const input = {
       batchId: "marker-export",
@@ -90,7 +123,7 @@ describe("buildRunBatchExportWorkbook", () => {
     });
     const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
     const headers = sheet.getRow(1).values as string[];
-    expect(sheet.getRow(2).getCell(headers.indexOf("AI 初步分析结果")).text).toBe("可能重跑通过");
+    expect(sheet.getRow(2).getCell(headers.indexOf("AI 初步分析结果")).text).toBe("重跑通过");
     const value = sheet.getRow(2).getCell(headers.indexOf("AI 初步分析原因")).text;
     expect(value).toContain("\\ufffe");
     expect(value).toContain("过多换行已折叠");
@@ -130,10 +163,8 @@ describe("buildRunBatchExportWorkbook", () => {
       expect(aiColumn).toBeGreaterThan(0);
       expect(reasonColumn).toBe(aiColumn + 1);
       if (template === "failure-analysis") expect(aiColumn).toBe(headers.indexOf("失败堆栈") + 1);
-      expect(sheet.getRow(2).getCell(aiColumn).text).toBe(
-        "AI 初步建议（分析中 1/3）\n验证环境依赖。",
-      );
-      expect(sheet.getRow(2).getCell(reasonColumn).text).toBe("可能原因：依赖瞬时不可用。");
+      expect(sheet.getRow(2).getCell(aiColumn).text).toBe("验证环境依赖。");
+      expect(sheet.getRow(2).getCell(reasonColumn).text).toBe("原因：依赖瞬时不可用。");
       expect(sheet.getRow(3).getCell(aiColumn).text).toBe("");
       expect(sheet.getRow(3).getCell(reasonColumn).text).toBe("");
       expect(sheet.getRow(2).getCell(sheet.columnCount).value).toMatchObject({
@@ -212,7 +243,7 @@ describe("buildRunBatchExportWorkbook", () => {
           expect(reasonColumn).toBe(resultColumn + 1);
           if (template === "failure-analysis")
             expect(resultColumn).toBe(headers.indexOf("失败堆栈") + 1);
-          expect(sheet.getRow(2).getCell(resultColumn).text).toBe("可能重跑通过");
+          expect(sheet.getRow(2).getCell(resultColumn).text).toBe("重跑通过");
           expect(sheet.getRow(2).getCell(reasonColumn).text).toBe("瞬断。\n依据：连接重置。");
         } else {
           expect([resultColumn, reasonColumn]).toEqual([-1, -1]);

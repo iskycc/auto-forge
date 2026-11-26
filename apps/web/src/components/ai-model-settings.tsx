@@ -164,7 +164,7 @@ export function AiModelSettings({
             {[
               ["contextTokens", "上下文大小（tokens）", 8192, 2097152],
               ["outputTokens", "输出预算（tokens）", 512, 16384],
-              ["concurrency", "端点共享并发", 1, 32],
+              ["concurrency", "AI 分析总并发", 1, 32],
               ["requestsPerMinute", "每分钟请求数（RPM）", 1, 10000],
               ["tokensPerMinute", "每分钟 Token 预算（TPM）", 4096, 10000000],
               ["timeoutSeconds", "单次响应期限（秒）", 10, 300],
@@ -175,6 +175,11 @@ export function AiModelSettings({
                 <Form.Item
                   name={String(name)}
                   label={label}
+                  tooltip={
+                    name === "concurrency"
+                      ? "所有 Worker 共享的模型请求上限。不同堆栈组和独立用例可并行，同组按顺序复核。"
+                      : undefined
+                  }
                   rules={[{ required: true, message: "请输入配置值。" }]}
                 >
                   <InputNumber

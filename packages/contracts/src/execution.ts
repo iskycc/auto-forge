@@ -500,10 +500,12 @@ export const testNgResultDetailsSchema = testNgCountsSchema
     }
   });
 
+export const EXECUTION_RESULT_SUMMARY_MAX_LENGTH = 4_096;
+
 export const completionResultSchema = z.object({
   status: z.enum(["succeeded", "failed", "timed_out", "cancelled"]),
   resultCode: z.string().trim().min(1).max(128),
-  summary: z.string().max(4_096),
+  summary: z.string().max(EXECUTION_RESULT_SUMMARY_MAX_LENGTH),
   durationMs: z.number().int().min(0).max(86_400_000),
   exitCode: z.number().int().min(-1).max(255).optional(),
   testNg: testNgResultDetailsSchema.optional(),

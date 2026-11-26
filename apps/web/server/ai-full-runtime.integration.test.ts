@@ -71,15 +71,16 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
       progressive: false,
     },
     {
-      strategy: "stack_groups_v2",
+      strategy: "stack_refinement_v3",
       databaseLogs: true,
-      caseCount: 4,
-      stackSize: 2,
+      caseCount: 30,
+      stackSize: 6,
       progressive: true,
     },
   ] as const)(
     "uses outbox/NATS and two workers ($strategy, daily logs=$databaseLogs, cases=$caseCount, stack size=$stackSize, progressive=$progressive)",
     async ({ strategy, databaseLogs, caseCount, stackSize, progressive }) => {
+      const modelConcurrency = strategy === "stack_refinement_v3" ? 4 : 2;
       const suffix = randomUUID().replaceAll("-", "");
       const now = new Date().toISOString();
       const databaseName = `ai_runtime_${suffix}`;
@@ -133,11 +134,15 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
       let active = 0;
       let peak = 0;
       let modelCalls = 0;
+      let concurrentCalls = 0;
+      let pauseFirstWorker = false;
+      let firstWorkerPaused = false;
+      let secondWorkerEnabled = !progressive;
       const modelEvidence: string[] = [];
       const reasoningEfforts: Array<string | undefined> = [];
-      let releaseInitialPair: () => void = () => {};
-      const initialPair = new Promise<void>((resolvePair) => {
-        releaseInitialPair = resolvePair;
+      let releaseInitialRequests: () => void = () => {};
+      const initialOverlap = new Promise<void>((resolveRequests) => {
+        releaseInitialRequests = resolveRequests;
       });
       const model = createServer(async (request, response) => {
         const chunks: Buffer[] = [];
@@ -146,15 +151,63 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         reasoningEfforts.push(body.reasoning_effort);
         const read = body.messages.findLast((message: { role: string }) => message.role === "tool");
         modelEvidence.push(read.content);
-        const ref = JSON.parse(read.content).evidenceId;
+        const tool = String(body.tools[0].function.name);
+        const evidence = JSON.parse(read.content);
+        const context = JSON.parse(
+          body.messages.find((message: { role: string }) => message.role === "user").content,
+        );
+        const ref = evidence.evidenceId;
         active++;
         peak = Math.max(peak, active);
         modelCalls++;
-        const callNumber = modelCalls;
-        if (active === 2) releaseInitialPair();
-        // Hold the first request until both workers participate; startup speed is irrelevant.
-        if (callNumber <= 2) await initialPair;
+        const callNumber = tool === "classify_ai_stacks" ? undefined : ++concurrentCalls;
+        if (active === modelConcurrency) releaseInitialRequests();
+        // Require overlapping requests even if the model can return immediately.
+        if (callNumber !== undefined && callNumber <= modelConcurrency) await initialOverlap;
         active--;
+        const compact = {
+          recommendation: "rerun_likely",
+          reason:
+            context.stage === "independent_issue_member"
+              ? "Full 合成初析，独立复核测试数据。".repeat(40)
+              : "Full 合成初析，待验证。".repeat(40),
+          evidence: "共同堆栈显示依赖连接异常。".repeat(40),
+          evidenceReferences: [ref],
+        };
+        const issueSummary = evidence.text?.includes("FULL_CASE_DATA_ROOT_CAUSE")
+          ? "测试数据不一致"
+          : "依赖连接异常";
+        const matchingIssue =
+          tool === "submit_ai_issue"
+            ? context.existingCategories.find(
+                (candidate: { summary: string }) => candidate.summary === issueSummary,
+              )
+            : undefined;
+        const verdict =
+          tool === "classify_ai_stacks"
+            ? {
+                categories: evidence.stacks.map((item: { stackId: string; stack: string }) => ({
+                  stackId: item.stackId,
+                  summary: item.stack,
+                })),
+              }
+            : tool === "submit_ai_issue"
+              ? {
+                  categoryId: matchingIssue?.categoryId ?? null,
+                  useExistingConclusion: !!matchingIssue,
+                  summary: issueSummary,
+                  conclusion: compact,
+                }
+              : strategy === "legacy"
+                ? {
+                    summary: "Full 合成初析，待验证。",
+                    possibleCauses: ["相同堆栈不代表根因已确认。"],
+                    checks: ["核对每个成员的环境和输入差异。"],
+                    evidenceReferences: [ref],
+                    limitations: [],
+                    confidence: "low",
+                  }
+                : compact;
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({
@@ -168,24 +221,8 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
                       id: randomUUID(),
                       type: "function",
                       function: {
-                        name: "submit_ai_conclusion",
-                        arguments: JSON.stringify(
-                          strategy === "stack_groups_v2"
-                            ? {
-                                recommendation: "rerun_likely",
-                                reason: "Full 合成初析，待验证。".repeat(40),
-                                evidence: "共同堆栈显示依赖连接异常。".repeat(40),
-                                evidenceReferences: [ref],
-                              }
-                            : {
-                                summary: "Full 合成初析，待验证。",
-                                possibleCauses: ["相同堆栈不代表根因已确认。"],
-                                checks: ["核对每个成员的环境和输入差异。"],
-                                evidenceReferences: [ref],
-                                limitations: [],
-                                confidence: "low",
-                              },
-                        ),
+                        name: tool,
+                        arguments: JSON.stringify(verdict),
                       },
                     },
                   ],
@@ -245,8 +282,16 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
             [runId, batchId, `Case ${index}`, now],
           );
           await handle.pool.query(
-            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,result_summary,created_at,finished_at) VALUES($1,$2,$3,1,'failed',1,'failed','failure',$4,$4)`,
-            [attemptId, runId, runnerId, now],
+            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,result_summary,created_at,finished_at) VALUES($1,$2,$3,1,'failed',1,'failed',$5,$4,$4)`,
+            [
+              attemptId,
+              runId,
+              runnerId,
+              now,
+              strategy === "stack_refinement_v3"
+                ? `java.lang.AssertionError: expected ${Math.floor(index / stackSize)}`
+                : "failure",
+            ],
           );
         }
         const repository = new PostgresAiAnalysisRepository(handle);
@@ -388,6 +433,9 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
                     (sequence === 24
                       ? `java.lang.AssertionError: expected ${Math.floor(index / stackSize)}\n\tat example.Test.run(Test.java:20)\n\nTestNG exit code:1\n`
                       : "业务正文\n") +
+                    (strategy === "stack_refinement_v3" && index === 5 && sequence === 24
+                      ? "FULL_CASE_DATA_ROOT_CAUSE\n"
+                      : "") +
                     (sequence === 15 ? "\u001b[3" : sequence === 16 ? "\u001b[0m" : ""),
                 })),
                 ...(["stderr", "agent"] as const).map((stream) => ({
@@ -474,6 +522,11 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
                 minio: options,
               },
               (error) => errors.push(error),
+              () => {
+                if (index === 1) return secondWorkerEnabled;
+                if (pauseFirstWorker) firstWorkerPaused = true;
+                return !pauseFirstWorker;
+              },
             ),
           );
         if (progressive) {
@@ -482,7 +535,12 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
               timeout: 60000,
               interval: 500,
             })
-            .toMatchObject({ total: caseCount, completed: caseCount, acceptingFinalResults: true })
+            .toMatchObject({
+              total: caseCount,
+              prepared: caseCount,
+              completed: 0,
+              acceptingFinalResults: true,
+            })
             .catch(async (cause: unknown) => {
               const view = await repository.view({ batchId, jobId: job.id, limit: 50 });
               throw new Error(
@@ -503,6 +561,25 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           ).toBe("running");
           await handle.pool.query("UPDATE run_batches SET status='failed' WHERE id=$1", [batchId]);
           hosts.forEach((host) => host.wake());
+          // One Worker fills two slots. Keep its requests in flight while another Worker
+          // takes work under a live increase of the shared limit.
+          await expect.poll(() => active, { timeout: 30000, interval: 100 }).toBe(2);
+          pauseFirstWorker = true;
+          await expect.poll(() => firstWorkerPaused, { timeout: 5000, interval: 50 }).toBe(true);
+          expect(
+            await repository.saveConfiguration(
+              {
+                revision: 2,
+                configuration: { ...configuration, concurrency: modelConcurrency },
+                encryptedKey: null,
+              },
+              1,
+            ),
+          ).toBe(true);
+          secondWorkerEnabled = true;
+          hosts[1]!.wake();
+          await expect.poll(() => peak, { timeout: 5000, interval: 100 }).toBe(modelConcurrency);
+          pauseFirstWorker = false;
         }
         await expect
           .poll(
@@ -522,11 +599,14 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         );
         expect(view.groups?.every((group) => group.processed === group.memberCount)).toBe(true);
         // A small member contributes one input part and its cleaned, combined stdout.
-        const expectedCalls = databaseLogs
-          ? groupSizes.reduce((sum, size) => sum + (size < 10 ? size * 2 : 1), 0)
-          : strategy === "legacy"
-            ? caseCount * 2
-            : caseCount;
+        const expectedCalls =
+          strategy === "stack_refinement_v3"
+            ? caseCount * 2 + 1 + 2
+            : databaseLogs
+              ? groupSizes.reduce((sum, size) => sum + (size < 10 ? size * 2 : 1), 0)
+              : strategy === "legacy"
+                ? caseCount * 2
+                : caseCount;
         expect(modelCalls).toBe(expectedCalls);
         expect(new Set(reasoningEfforts)).toEqual(
           new Set([strategy === "legacy" ? undefined : "high"]),
@@ -536,7 +616,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           for (let member = 0; member < caseCount; member++) {
             const groupSize = groupSizes[Math.floor(member / stackSize)]!;
             for (let sequence = 0; sequence < 25; sequence++)
-              if (groupSize < 10)
+              if (strategy === "stack_refinement_v3" || groupSize < 10)
                 expect(delivered).toContain(`实际日志 member=${member} page=${sequence}\\n`);
               else expect(delivered).not.toContain(`实际日志 member=${member} page=${sequence}\\n`);
           }
@@ -557,10 +637,14 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           expect(original.items[0]?.content).toContain("\u001b[3");
           expect(original.items[1]?.content).toContain("\u001b[0m");
           expect(
-            view.items.every((item) => item.signature?.startsWith("exact-stack-bundle-v2:")),
+            view.items.every((item) =>
+              item.signature?.startsWith(
+                strategy === "stack_refinement_v3" ? "stack-line-v3:" : "exact-stack-bundle-v2:",
+              ),
+            ),
           ).toBe(true);
         }
-        expect(peak).toBe(2);
+        expect(peak).toBe(modelConcurrency);
         const progress = await redis.get(
           namespacedKey("ai-progress", DEFAULT_PROJECT_ID, 1, job.id),
         );
@@ -568,13 +652,24 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         else {
           expect(view.items.every((item) => item.conclusion?.split("\n").length === 3)).toBe(true);
           for (const item of view.items) assertBoundedConclusion(item.conclusion);
-          expect(
-            await repository.exportConclusions(
-              batchId,
-              view.items.map((item) => item.attemptId),
-              new Date().toISOString(),
-            ),
-          ).toHaveLength(caseCount);
+          const exported = await repository.exportConclusions(
+            batchId,
+            view.items.map((item) => item.attemptId),
+            new Date().toISOString(),
+            strategy === "stack_refinement_v3" ? job.id : undefined,
+          );
+          expect(exported).toHaveLength(caseCount);
+          if (strategy === "stack_refinement_v3") {
+            for (const rank of [1, 2, 3, 4])
+              expect(exported.filter(({ category }) => category?.rank === rank)).toHaveLength(6);
+            expect(exported.filter(({ category }) => category?.rank === 5)).toHaveLength(5);
+            expect(exported.filter(({ category }) => category?.rank === 0)).toEqual([
+              expect.objectContaining({
+                attemptId: `attempt-5-${suffix}`,
+                conclusion: expect.stringContaining("独立复核测试数据"),
+              }),
+            ]);
+          }
         }
         if (databaseLogs && caseCount === 4) {
           const firstSingleCall = modelEvidence.length;
@@ -626,6 +721,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         ).toBe("failed");
         expect(errors).toEqual([]);
       } finally {
+        releaseInitialRequests();
         await Promise.all(hosts.map((host) => host.close()));
         await logStore.close();
         await logRegistry.close();

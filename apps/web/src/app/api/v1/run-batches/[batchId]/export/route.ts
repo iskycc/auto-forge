@@ -90,6 +90,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         hasPermission(identity, "case.read", exportData.projectId));
     const includesAi =
       canReadAi && (await services.aiAnalysis.repository.hasAnalysis(batchId, aiSnapshotAt));
+    const classificationJobId = includesAi
+      ? await services.aiAnalysis.repository.exportClassificationJob(batchId, aiSnapshotAt)
+      : null;
     const filename = executionExportFilename({
       batch: exportData.batch,
       template: parsed.template,
@@ -132,6 +135,14 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           }),
         );
 
+        const aiRows = includesAi
+          ? await services.aiAnalysis.repository.exportConclusions(
+              batchId,
+              rows.flatMap((row) => (row.attemptId ? [row.attemptId] : [])),
+              aiSnapshotAt,
+              classificationJobId ?? undefined,
+            )
+          : [];
         const input: RunBatchExportWorkbookInput = {
           batchId,
           template: parsed.template,
@@ -139,16 +150,12 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           includesDdt: exportData.includesDdt,
           markerColumns,
           includesAi,
-          aiConclusions: new Map(
-            includesAi
-              ? (
-                  await services.aiAnalysis.repository.exportConclusions(
-                    batchId,
-                    rows.flatMap((row) => (row.attemptId ? [row.attemptId] : [])),
-                    aiSnapshotAt,
-                  )
-                ).map((item) => [item.attemptId, item.conclusion])
-              : [],
+          includesAiCategories: classificationJobId !== null,
+          aiConclusions: new Map(aiRows.map((item) => [item.attemptId, item.conclusion])),
+          aiIssueCategories: new Map(
+            aiRows.flatMap((item) =>
+              item.category ? [[item.attemptId, item.category] as const] : [],
+            ),
           ),
           ...(parsed.round !== undefined ? { round: parsed.round } : {}),
           rows,

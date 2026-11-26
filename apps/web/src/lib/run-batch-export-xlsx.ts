@@ -7,6 +7,7 @@ import {
   EXPORT_ISSUE_PREVIEW_LIMIT,
   type ExportValidationReport,
   type ExportOutcomeFilter,
+  type AiIssueCategory,
   type RunBatchExportTemplate,
 } from "@autoforge/contracts";
 import {
@@ -21,6 +22,8 @@ import { setImmediate } from "node:timers/promises";
 import {
   AI_ANALYSIS_REASON_LABEL,
   AI_ANALYSIS_RESULT_LABEL,
+  aiExportResult,
+  aiExportText,
   splitAiAnalysisConclusion,
 } from "./ai-analysis-presentation";
 import {
@@ -52,6 +55,10 @@ const DDT_EXPORT_COLUMNS = [
 const AI_EXPORT_COLUMNS = [
   { header: AI_ANALYSIS_RESULT_LABEL, group: "analysis", minimum: 28, maximum: 38 },
   { header: AI_ANALYSIS_REASON_LABEL, group: "analysis", minimum: 44, maximum: 62 },
+] as const;
+const AI_CATEGORY_COLUMNS = [
+  { header: "AI分析问题类别", group: "analysis", minimum: 19, maximum: 24 },
+  { header: "问题类别简述", group: "analysis", minimum: 30, maximum: 42 },
 ] as const;
 
 const EXPORT_COLUMNS = [
@@ -112,8 +119,10 @@ export type RunBatchExportWorkbookInput = {
   /** Determined from the whole batch before reading filtered pages. */
   includesDdt?: boolean;
   includesAi?: boolean;
+  includesAiCategories?: boolean;
   markerColumns?: readonly number[];
   aiConclusions?: ReadonlyMap<string, string>;
+  aiIssueCategories?: ReadonlyMap<string, AiIssueCategory>;
   /** scope=round 时记录具体轮次。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
@@ -262,7 +271,7 @@ function buildExecutionResultsSheet(
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
     ...markerExportColumns(input.markerColumns),
     ...EXPORT_COLUMNS.slice(2, -1),
-    ...(input.includesAi ? AI_EXPORT_COLUMNS : []),
+    ...aiExportColumns(input),
     ...EXPORT_COLUMNS.slice(-1),
   ];
   const cellsFor = (row: RunBatchExportRow) => executionResultCells(row, input, timestampFormatter);
@@ -369,7 +378,7 @@ function buildFailureAnalysisSheet(
       : []),
     ...markerExportColumns(input.markerColumns).map((column) => column.minimum),
     FAILURE_ANALYSIS_COLUMN_WIDTHS[2],
-    ...(input.includesAi ? AI_EXPORT_COLUMNS.map((column) => column.minimum) : []),
+    ...aiExportColumns(input).map((column) => column.minimum),
     ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(3),
   ];
   sheet.columns = headers.map((header, index) => ({
@@ -424,11 +433,52 @@ function failureAnalysisCells(
 }
 
 function aiAnalysisExportCells(row: RunBatchExportRow, input: RunBatchExportWorkbookInput) {
-  if (!input.includesAi) return [];
+  const category = row.attemptId ? input.aiIssueCategories?.get(row.attemptId) : undefined;
   const { result, reason } = splitAiAnalysisConclusion(
     row.attemptId ? input.aiConclusions?.get(row.attemptId) : undefined,
   );
-  return [aiExportCell(result), aiExportCell(reason)];
+  return [
+    ...(input.includesAi
+      ? [aiExportCell(aiExportResult(result)), aiExportCell(aiExportText(reason))]
+      : []),
+    ...(input.includesAiCategories
+      ? [
+          category ? issueCategoryLabel(category.rank) : "",
+          aiExportCell(aiExportText(category?.summary ?? "")),
+        ]
+      : []),
+  ];
+}
+
+function issueCategoryLabel(rank: number): string {
+  if (!rank) return "非大批量问题";
+  const digits = "零一二三四五六七八九";
+  const units = ["", "十", "百", "千", "万"];
+  const places = String(rank);
+  if (places.length > units.length) return `第${rank}类问题`;
+  let ordinal = "";
+  let zero = false;
+  for (const [index, character] of Array.from(places).entries()) {
+    const place = places.length - index - 1;
+    if (character === "0") {
+      zero = true;
+      continue;
+    }
+    if (zero) ordinal += digits[0];
+    if (!(index === 0 && place === 1 && character === "1")) ordinal += digits[Number(character)];
+    ordinal += units[place];
+    zero = false;
+  }
+  return `第${ordinal}类问题`;
+}
+
+function aiExportColumns(
+  input: Pick<RunBatchExportWorkbookInput, "includesAi" | "includesAiCategories">,
+) {
+  return [
+    ...(input.includesAi ? AI_EXPORT_COLUMNS : []),
+    ...(input.includesAiCategories ? AI_CATEGORY_COLUMNS : []),
+  ];
 }
 
 /** Model prose must never make an otherwise valid execution row incompatible with Excel. */
@@ -473,7 +523,7 @@ function emptyExportValidationReport(): ExportValidationReport {
 function exportHeaders(
   input: Pick<
     RunBatchExportWorkbookInput,
-    "template" | "scope" | "includesDdt" | "includesAi" | "markerColumns"
+    "template" | "scope" | "includesDdt" | "includesAi" | "includesAiCategories" | "markerColumns"
   >,
 ): readonly string[] {
   return exportColumns(input).map((column) => column.header);
@@ -495,7 +545,7 @@ function markerExportCells(row: RunBatchExportRow, input: RunBatchExportWorkbook
 function exportColumns(
   input: Pick<
     RunBatchExportWorkbookInput,
-    "template" | "scope" | "includesDdt" | "includesAi" | "markerColumns"
+    "template" | "scope" | "includesDdt" | "includesAi" | "includesAiCategories" | "markerColumns"
   >,
 ) {
   const columns = input.template === "failure-analysis" ? FAILURE_ANALYSIS_COLUMNS : EXPORT_COLUMNS;
@@ -507,9 +557,9 @@ function exportColumns(
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
     ...markerExportColumns(input.markerColumns),
     ...(input.template === "failure-analysis" ? columns.slice(2, 3) : []),
-    ...(input.template === "failure-analysis" && input.includesAi ? AI_EXPORT_COLUMNS : []),
+    ...(input.template === "failure-analysis" ? aiExportColumns(input) : []),
     ...columns.slice(input.template === "failure-analysis" ? 3 : 2, -1),
-    ...(input.template !== "failure-analysis" && input.includesAi ? AI_EXPORT_COLUMNS : []),
+    ...(input.template !== "failure-analysis" ? aiExportColumns(input) : []),
     ...columns.slice(-1),
   ];
 }
