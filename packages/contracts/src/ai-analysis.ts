@@ -98,6 +98,40 @@ export const AI_RECOMMENDATION_LABELS = {
   business_issue_likely: "可能业务问题需要提单",
 } as const;
 export const AI_PRELIMINARY_TEXT_LIMITS = { reason: 160, evidence: 200 } as const;
+export const AI_INTERMEDIATE_CONCLUSION_SUFFIX = "（分析中，待确认）";
+
+const PREVIOUS_NOTE_PREFIX =
+  /^(?:结合|根据|综合)(?:前片|前一片|上一片|本片|当前分片|前序分片|前后分片)(?:分析|证据|日志|内容)?\s*[，,：:、]\s*/u;
+const LOG_PART_PREFIX =
+  /^(?:(?:定位到|发现|识别出)\s*)?(?:本片|当前片|本分片|当前分片|本日志片|当前日志片|前片|前一片|上一片|最后一片)(?:日志)?(?:中(?:的)?|的)?[、，,：:\s]*/u;
+const EXCEPTION_HEADING =
+  /^(?:(?:最早(?:的)?|首个)(?:可)?解释性异常|最早(?:能|可)解释失败的异常)\s*(?:是|为|[：:＝=])?\s*/u;
+const READING_PROCESS =
+  /解释性异常|^(?:(?:请|仍需|有待|需要|需|待|已|尚未|仅|正在)\s*)?(?:结合|等待|查看|读取|分析)(?:前片|前一片|上一片|本片|后续(?:的)?(?:片段|分片|日志片)|下片|下一片|各分片)|^(?:已|尚未|仅|正在)(?:查看|读取|分析)(?:日志片|证据片)[。.!…\s]*$/u;
+const EMPTY_OBSERVATION = /^(?:未知|无|暂无|待确认|参考日志|详见日志)[。.!…\s]*$/u;
+
+/** Removes commentary about reading evidence while retaining the observation. */
+export function aiPublishedStatement(value: string): string {
+  return value
+    .split(/(?<=[。！？])|\r?\n/u)
+    .map((sentence) =>
+      sentence
+        .trim()
+        .replace(PREVIOUS_NOTE_PREFIX, "")
+        .replace(LOG_PART_PREFIX, "")
+        .replace(EXCEPTION_HEADING, "")
+        .replace(/^[：:，,\s]+/u, "")
+        .trim(),
+    )
+    .filter(
+      (sentence) =>
+        /[\p{L}\p{N}]/u.test(sentence) &&
+        !READING_PROCESS.test(sentence) &&
+        !EMPTY_OBSERVATION.test(sentence),
+    )
+    .join(" ");
+}
+
 export const aiPreliminaryConclusionSchema = z
   .object({
     recommendation: z.enum(["rerun_likely", "case_change_likely", "business_issue_likely"]),
@@ -135,6 +169,44 @@ export type AiAnalysisStatus =
   | "partial"
   | "failed"
   | "cancelled";
+
+export const aiModelRequestStageSchema = z.enum(["stack", "group", "individual"]);
+export type AiModelRequestStage = z.infer<typeof aiModelRequestStageSchema>;
+
+const aiRuntimeCount = z.number().int().nonnegative();
+export const aiAnalysisRuntimeSchema = z.object({
+  sampledAt: z.iso.datetime(),
+  enabled: z.boolean(),
+  activeRequests: aiRuntimeCount,
+  concurrencyLimit: aiRuntimeCount,
+  coolingUntil: z.iso.datetime().nullable(),
+  hasMoreJobs: z.boolean(),
+  jobs: z
+    .array(
+      z.object({
+        id: z.string(),
+        batchId: z.string(),
+        taskName: z.string(),
+        sequenceNumber: aiRuntimeCount.nullable(),
+        single: z.boolean(),
+        status: z.enum(["queued", "preparing", "analyzing", "summarizing"]),
+        phase: z.enum(["plan", "classify", "refine", "rank", "publish", "individual"]).nullable(),
+        acceptingFinalResults: z.boolean(),
+        total: aiRuntimeCount,
+        prepared: aiRuntimeCount,
+        reviewed: aiRuntimeCount,
+        completed: aiRuntimeCount,
+        failed: aiRuntimeCount,
+        requests: z.object({
+          stack: aiRuntimeCount,
+          group: aiRuntimeCount,
+          individual: aiRuntimeCount,
+        }),
+      }),
+    )
+    .max(20),
+});
+export type AiAnalysisRuntime = z.infer<typeof aiAnalysisRuntimeSchema>;
 export type AiAnalysisJob = {
   acceptingFinalResults?: boolean;
   classificationReviewed?: number;

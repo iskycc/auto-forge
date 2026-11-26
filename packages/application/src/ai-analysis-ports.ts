@@ -64,6 +64,7 @@ export type AiGroupWork = {
   memberCount: number;
   initialSummary?: string;
   refinement?: AiIssueRefinement;
+  releaseAfter?: string;
 };
 export type AiIssueCandidate = {
   id: string;
@@ -113,6 +114,7 @@ export interface AiIssueClassificationRepository {
     now: string,
   ): Promise<void>;
   skipMember(work: AiGroupWork, memberId: string, now: string): Promise<void>;
+  releaseSmallCategories(work: AiGroupWork, now: string): Promise<void>;
 }
 export type AiGroupMember = {
   id: string;
@@ -124,6 +126,10 @@ export type AiGroupMember = {
 export interface AiAnalysisRepository {
   readonly issues: AiIssueClassificationRepository;
   configuration(): Promise<AiConfigurationRecord>;
+  runtime(input: {
+    now: string;
+    projectIds?: readonly string[];
+  }): Promise<import("@autoforge/contracts").AiAnalysisRuntime>;
   saveConfiguration(record: AiConfigurationRecord, expectedRevision: number): Promise<boolean>;
   create(
     job: AiAnalysisJob,
@@ -150,7 +156,7 @@ export interface AiAnalysisRepository {
     token: string,
     now: string,
     expiresAt: string,
-    stage?: "prepare" | "infer",
+    stage?: "prepare" | "infer" | "supplement",
   ): Promise<AiWork | null>;
   renew(work: AiWork, expiresAt: string, now: string): Promise<boolean>;
   saveEvidence(work: AiWork, evidenceKey: string, signature: string, now: string): Promise<void>;
@@ -158,7 +164,7 @@ export interface AiAnalysisRepository {
     work: AiWork,
     draft: AiConclusionDraft,
     cursor: number,
-    conclusion: string,
+    conclusion: string | null,
     done: boolean,
     partial: boolean,
     now: string,
@@ -203,6 +209,7 @@ export interface AiAnalysisRepository {
     expiresAt: string;
     tokens: number;
     configuration: AiModelConfiguration;
+    work?: { jobId: string; stage: import("@autoforge/contracts").AiModelRequestStage };
   }): Promise<boolean>;
   releaseModel(token: string): Promise<void>;
   coolDown(until: string): Promise<void>;

@@ -221,7 +221,18 @@ for (const mode of ["sqlite", "postgres"] as const) {
           "INSERT INTO ai_analysis_conclusions(id,item_id,batch_id,attempt_id,conclusion,created_at) VALUES ('old-conclusion','old-item',?,'attempt-run-00','旧初析结论',?)",
           [batchId, now()],
         );
+        await db.query("INSERT INTO ai_model_leases(token,expires_at) VALUES ('legacy-lease',?)", [
+          new Date(time + 1000).toISOString(),
+        ]);
         await db.upgrade();
+        expect(await analysis.runtime({ now: now() })).toMatchObject({
+          activeRequests: 1,
+          jobs: [],
+        });
+        expect(await analysis.runtime({ now: new Date(time + 1000).toISOString() })).toMatchObject({
+          activeRequests: 0,
+        });
+        await analysis.releaseModel("legacy-lease");
         expect(await analysis.exportConclusions(batchId, ["attempt-run-00"], now())).toEqual([
           { attemptId: "attempt-run-00", conclusion: "旧初析结论" },
         ]);
@@ -230,6 +241,44 @@ for (const mode of ["sqlite", "postgres"] as const) {
         ).toBe(true);
         await analysis.create(job, "classified");
         const signal = new AbortController().signal;
+        for (let tick = 0; tick < 80 && !coarse.length; tick++) {
+          await createWorker().tick(signal);
+          time += 250;
+        }
+        const leaseUntil = new Date(time + 60_000).toISOString();
+        const firstGroup = await analysis.claimGroup("first-held-group", now(), leaseUntil);
+        const secondGroup = await analysis.claimGroup("second-held-group", now(), leaseUntil);
+        expect(firstGroup?.signature).toBe("stack-line-v3:A");
+        expect(secondGroup?.signature).toBe("stack-line-v3:B");
+        await analysis.deferGroup(firstGroup!, "release A", now(), false, now(), false);
+        for (let tick = 0; tick < 50 && independent.size < 9; tick++) {
+          await createWorker().tick(signal);
+          time += 250;
+        }
+        expect(independent.size).toBe(9);
+        expect(comparisons.has("run-10")).toBe(false);
+        expect(
+          await analysis.reserveModel({
+            token: "monitored-slot",
+            revision: 1,
+            now: now(),
+            expiresAt: leaseUntil,
+            tokens: 1,
+            configuration,
+            work: { jobId: job.id, stage: "group" },
+          }),
+        ).toBe(true);
+        expect(await analysis.runtime({ now: now(), projectIds: [projectId] })).toMatchObject({
+          concurrencyLimit: 2,
+          activeRequests: 1,
+          jobs: [{ taskName: "fixture", phase: "refine", reviewed: 10, requests: { group: 1 } }],
+        });
+        expect(await analysis.runtime({ now: now(), projectIds: [] })).toMatchObject({
+          activeRequests: 1,
+          jobs: [],
+        });
+        await analysis.releaseModel("monitored-slot");
+        await analysis.deferGroup(secondGroup!, "release B", now(), false, now(), false);
         for (let tick = 0; tick < 130; tick++) {
           // Recreate the worker to exercise the persisted cursors at every phase boundary.
           await createWorker().tick(signal);

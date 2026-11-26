@@ -2,6 +2,7 @@ import {
   updateAiModelConfigurationSchema,
   createAiAnalysisSchema,
   AI_BATCH_CLASSIFICATION_STRATEGY,
+  aiAnalysisRuntimeSchema,
   type AiAnalysisJob,
   type AiModelConfigurationView,
 } from "@autoforge/contracts";
@@ -26,17 +27,16 @@ import type {
 } from "./ports";
 
 export const AI_KEY_PURPOSE = "ai-model-api-key-v1";
+const AI_READ_PERMISSIONS = ["run.read", "case.read", "log.read", "analysis.ai.read"] as const;
 export function assertAiPermission(
   identity: AuthenticatedIdentity,
   projectId: string,
   write = false,
 ) {
-  for (const permission of [
-    "run.read",
-    "case.read",
-    "log.read",
-    write ? "analysis.ai.create" : "analysis.ai.read",
-  ] as Permission[]) {
+  const permissions: readonly Permission[] = write
+    ? ["run.read", "case.read", "log.read", "analysis.ai.create"]
+    : AI_READ_PERMISSIONS;
+  for (const permission of permissions) {
     if (
       !identity.systemPermissions.includes(permission) &&
       !identity.projectPermissions[projectId]?.includes(permission)
@@ -54,6 +54,48 @@ export class AiAnalysisService {
     private readonly cache?: CachePort,
     private readonly report: (error: unknown) => void = () => {},
   ) {}
+  async runtime(identity: AuthenticatedIdentity) {
+    const projectPermissions = AI_READ_PERMISSIONS.filter(
+      (permission) => !identity.systemPermissions.includes(permission),
+    );
+    const projectIds = projectPermissions.length
+      ? Object.entries(identity.projectPermissions)
+          .filter(([, granted]) =>
+            projectPermissions.every((permission) => granted.includes(permission)),
+          )
+          .map(([id]) => id)
+          .sort()
+      : undefined;
+    const key = JSON.stringify(projectIds ?? null);
+    const namespace = "ai-analysis-runtime";
+    if (this.cache) {
+      try {
+        const cached = await this.cache.get(namespace, "platform", 1, key);
+        if (cached) return aiAnalysisRuntimeSchema.parse(JSON.parse(cached));
+      } catch (cause) {
+        this.report(cause);
+      }
+    }
+    const runtime = await this.repository.runtime({
+      now: this.clock.now().toISOString(),
+      ...(projectIds ? { projectIds } : {}),
+    });
+    if (this.cache) {
+      try {
+        await this.cache.set({
+          namespace,
+          tenantId: "platform",
+          schemaVersion: 1,
+          key,
+          value: JSON.stringify(runtime),
+          ttlMs: 3000,
+        });
+      } catch (cause) {
+        this.report(cause);
+      }
+    }
+    return runtime;
+  }
   async configuration(): Promise<AiModelConfigurationView> {
     const record = await this.repository.configuration();
     return {

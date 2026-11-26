@@ -6,6 +6,29 @@ and known limitations.
 
 ## Unreleased
 
+## 1.23.13 - 2026-11-26
+
+### Added
+
+- 系统信息显示 AI 初析任务、阶段、用例进展及模型请求占用。
+
+### Changed
+
+- 已确定为独立分析的用例可填补空闲请求槽位。同一堆栈组保持顺序复核，不同组可以并行。
+
+### Fixed
+
+- AI 初析分开保存分片笔记和最终结论。发布时保留业务原因与日志依据，清理已知的过程措辞。只有过程描述的输出会有限重试。页面和新导出过滤可识别的历史分片草稿。
+
+### Compatibility
+
+- Lite 与 Full 的 `0106_ai_model_activity.sql` 为并发租约记录分析任务与阶段。Full 需使用同一版本更新 Web 和全部 Worker。离线资产包含 amd64、arm64 后端镜像和部署包。
+
+### Verification
+
+- 154 项定向测试、PostgreSQL 仓储契约、6 项真实 Full 中间件集成、5 项 Playwright 验证以及 Web 生产构建通过。两种实际下载的 XLSX 经 LibreOffice Calc 核对行数及分析依据。
+- 本次走快速发布路径，Release 保留双架构构建、镜像启动、SBOM、签名和资产校验。完整标准 CI、Release checks 和发布后验收未运行。
+
 ## 1.23.12 - 2026-11-26
 
 ### Changed

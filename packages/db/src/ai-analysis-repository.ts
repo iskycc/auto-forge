@@ -9,6 +9,9 @@ import type {
 } from "@autoforge/application";
 import {
   AI_BATCH_CLASSIFICATION_STRATEGY,
+  AI_INTERMEDIATE_CONCLUSION_SUFFIX,
+  aiAnalysisRuntimeSchema,
+  aiModelRequestStageSchema,
   aiModelConfigurationSchema,
   type AiAnalysisJob,
   type AiAnalysisItem,
@@ -24,11 +27,15 @@ const statement = (text: string, ...values: AiSqlStatement["values"]): AiSqlStat
   values,
 });
 const ACTIVE_JOB = "status IN ('queued','preparing','analyzing','summarizing')";
+const RUNTIME_JOB_LIMIT = 20;
 const REUSABLE_STACK_GROUP =
   "member_count>=10 AND signature LIKE 'exact-stack-bundle-%' AND conclusion IS NOT NULL AND status='completed'";
 const CLAIMABLE_ITEM = `j.status='analyzing' AND i.status IN ('queued','ready','retry_wait','collecting','analyzing')
   AND (i.evidence_key IS NULL OR j.strategy NOT IN ('stack_groups_v2','${AI_BATCH_CLASSIFICATION_STRATEGY}')
        OR (j.strategy='${AI_BATCH_CLASSIFICATION_STRATEGY}' AND j.issue_phase='individual'))`;
+const OPEN_INDEPENDENT_ANALYSIS = `j.status='summarizing' AND j.strategy='${AI_BATCH_CLASSIFICATION_STRATEGY}'`;
+const OWNED_ITEM_JOB = `EXISTS(SELECT 1 FROM ai_analysis_jobs j
+  WHERE j.id=job_id AND (j.status='analyzing' OR (${OPEN_INDEPENDENT_ANALYSIS} AND evidence_key IS NOT NULL)))`;
 
 /** Shared SQL semantics; each dialect owns binding, transactions and short lock budgets. */
 export class SqlAiAnalysisRepository implements AiAnalysisRepository {
@@ -54,6 +61,71 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
           encryptedKey: row.encrypted_key === null ? null : String(row.encrypted_key),
         }
       : { revision: 0, configuration: null, encryptedKey: null };
+  }
+  async runtime(input: { now: string; projectIds?: readonly string[] }) {
+    const jobs =
+      input.projectIds?.length === 0
+        ? Promise.resolve([])
+        : this.query(
+            statement(
+              `SELECT j.id,j.batch_id,j.attempt_id,j.status,j.strategy,j.issue_phase,j.intake_open,
+                  j.total,j.prepared,j.issue_reviewed,j.completed,j.failed,b.suite_name,b.sequence_number
+           FROM ai_analysis_jobs j JOIN run_batches b ON b.id=j.batch_id
+           WHERE j.${ACTIVE_JOB} ${input.projectIds ? `AND j.project_id IN (${input.projectIds.map(() => "?").join(",")})` : ""}
+           ORDER BY j.updated_at DESC,j.id DESC LIMIT ?`,
+              ...(input.projectIds ?? []),
+              RUNTIME_JOB_LIMIT + 1,
+            ),
+          );
+    const [configuration, leases, admission, activeJobs] = await Promise.all([
+      this.configuration(),
+      this.query(
+        statement(
+          "SELECT job_id,stage,COUNT(*) AS count FROM ai_model_leases WHERE expires_at>? GROUP BY job_id,stage",
+          input.now,
+        ),
+      ),
+      this.query(statement("SELECT cooling_until FROM ai_model_admission WHERE id='default'")),
+      jobs,
+    ]);
+    const countsByJob = new Map<string, { stack: number; group: number; individual: number }>();
+    let activeRequests = 0;
+    for (const lease of leases) {
+      const count = Number(lease.count);
+      activeRequests += count;
+      const stage = aiModelRequestStageSchema.safeParse(lease.stage);
+      if (lease.job_id === null || !stage.success) continue;
+      const id = String(lease.job_id);
+      const requests = countsByJob.get(id) ?? { stack: 0, group: 0, individual: 0 };
+      requests[stage.data] += count;
+      countsByJob.set(id, requests);
+    }
+    const coolingUntil = admission[0]?.cooling_until;
+    return aiAnalysisRuntimeSchema.parse({
+      sampledAt: input.now,
+      enabled: configuration.configuration?.enabled ?? false,
+      activeRequests,
+      concurrencyLimit: configuration.configuration?.concurrency ?? 0,
+      coolingUntil:
+        typeof coolingUntil === "string" && coolingUntil > input.now ? coolingUntil : null,
+      hasMoreJobs: activeJobs.length > RUNTIME_JOB_LIMIT,
+      jobs: activeJobs.slice(0, RUNTIME_JOB_LIMIT).map((row) => ({
+        id: String(row.id),
+        batchId: String(row.batch_id),
+        taskName: String(row.suite_name),
+        sequenceNumber: row.sequence_number == null ? null : Number(row.sequence_number),
+        single: row.attempt_id !== null,
+        status: row.status,
+        phase: row.strategy === AI_BATCH_CLASSIFICATION_STRATEGY ? row.issue_phase : null,
+        acceptingFinalResults: Number(row.intake_open) === 1,
+        total: Number(row.total),
+        prepared: Number(row.prepared),
+        reviewed: Number(row.issue_reviewed),
+        completed: Number(row.completed),
+        failed: Number(row.failed),
+        requests: countsByJob.get(String(row.id)) ?? { stack: 0, group: 0, individual: 0 },
+      })),
+    });
   }
   async saveConfiguration(record: AiConfigurationRecord, expectedRevision: number) {
     const results = await this.write([
@@ -263,14 +335,15 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
     token: string,
     now: string,
     expiresAt: string,
-    stage?: "prepare" | "infer",
+    stage?: "prepare" | "infer" | "supplement",
   ): Promise<AiWork | null> {
-    const eligible =
-      stage === "prepare"
-        ? `${CLAIMABLE_ITEM} AND i.evidence_key IS NULL`
-        : stage === "infer"
-          ? `${CLAIMABLE_ITEM} AND i.evidence_key IS NOT NULL`
-          : CLAIMABLE_ITEM;
+    const eligibility = {
+      prepare: `${CLAIMABLE_ITEM} AND i.evidence_key IS NULL`,
+      infer: `${CLAIMABLE_ITEM} AND i.evidence_key IS NOT NULL`,
+      supplement: `${OPEN_INDEPENDENT_ANALYSIS} AND i.evidence_key IS NOT NULL
+        AND i.status IN ('ready','retry_wait','analyzing')`,
+    };
+    const eligible = stage ? eligibility[stage] : CLAIMABLE_ITEM;
     if (
       !(
         await this.query(
@@ -289,7 +362,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
       WHERE id=(SELECT i.id FROM ai_analysis_items i JOIN ai_analysis_jobs j ON j.id=i.job_id
         WHERE ${eligible} AND i.available_at<=?
         AND (i.lease_expires_at IS NULL OR i.lease_expires_at<?) ORDER BY i.available_at,i.id LIMIT 1)
-      AND (lease_expires_at IS NULL OR lease_expires_at<?) AND EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE id=job_id AND status='analyzing') RETURNING *`,
+      AND (lease_expires_at IS NULL OR lease_expires_at<?) AND ${OWNED_ITEM_JOB} RETURNING *`,
         token,
         expiresAt,
         now,
@@ -319,7 +392,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
   async renew(work: AiWork, expiresAt: string, now: string) {
     const result = await this.write([
       statement(
-        `UPDATE ai_analysis_items SET lease_expires_at=? WHERE id=? AND lease_token=? AND lease_expires_at>? AND EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE id=job_id AND status='analyzing') RETURNING id`,
+        `UPDATE ai_analysis_items SET lease_expires_at=? WHERE id=? AND lease_token=? AND lease_expires_at>? AND ${OWNED_ITEM_JOB} RETURNING id`,
         expiresAt,
         work.id,
         work.leaseToken,
@@ -330,7 +403,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
   }
   private owned(work: AiWork, now: string) {
     return statement(
-      "SELECT id FROM ai_analysis_items WHERE id=? AND lease_token=? AND lease_expires_at>? AND EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE id=job_id AND status='analyzing')",
+      `SELECT id FROM ai_analysis_items WHERE id=? AND lease_token=? AND lease_expires_at>? AND ${OWNED_ITEM_JOB}`,
       work.id,
       work.leaseToken,
       now,
@@ -362,30 +435,32 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
     work: AiWork,
     draft: AiConclusionDraft,
     cursor: number,
-    conclusion: string,
+    conclusion: string | null,
     done: boolean,
     partial: boolean,
     now: string,
   ) {
     const owned = this.owned(work, now);
-    const statements = [
-      statement(
-        `INSERT INTO ai_analysis_conclusions(id,item_id,batch_id,attempt_id,conclusion,created_at,issue_rank)
+    const statements: AiSqlStatement[] = [];
+    if (conclusion !== null)
+      statements.push(
+        statement(
+          `INSERT INTO ai_analysis_conclusions(id,item_id,batch_id,attempt_id,conclusion,created_at,issue_rank)
       SELECT ?,?,?,?,?,?,? WHERE EXISTS(${owned.text}) ON CONFLICT(id) DO NOTHING RETURNING id`,
-        `${work.id}:${cursor}`,
-        work.id,
-        work.batchId,
-        work.attemptId,
-        conclusion,
-        now,
-        work.strategy === AI_BATCH_CLASSIFICATION_STRATEGY ? 0 : null,
-        ...owned.values,
-      ),
-    ];
+          `${work.id}:${cursor}`,
+          work.id,
+          work.batchId,
+          work.attemptId,
+          conclusion,
+          now,
+          work.strategy === AI_BATCH_CLASSIFICATION_STRATEGY ? 0 : null,
+          ...owned.values,
+        ),
+      );
     if (done)
       statements.push(
         statement(
-          `UPDATE ai_analysis_jobs SET completed=completed+1,failed=failed+?,revision=revision+1,updated_at=? WHERE id=? AND status='analyzing' AND EXISTS(${owned.text}) RETURNING id`,
+          `UPDATE ai_analysis_jobs SET completed=completed+1,failed=failed+?,revision=revision+1,updated_at=? WHERE id=? AND EXISTS(${owned.text}) RETURNING id`,
           partial ? 1 : 0,
           now,
           work.jobId,
@@ -395,7 +470,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
     else
       statements.push(
         statement(
-          `UPDATE ai_analysis_jobs SET revision=revision+1,updated_at=? WHERE id=? AND status='analyzing' AND EXISTS(${owned.text}) RETURNING id`,
+          `UPDATE ai_analysis_jobs SET revision=revision+1,updated_at=? WHERE id=? AND EXISTS(${owned.text}) RETURNING id`,
           now,
           work.jobId,
           ...owned.values,
@@ -438,7 +513,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
     if (failed)
       statements.push(
         statement(
-          `UPDATE ai_analysis_jobs SET completed=completed+1,failed=failed+1,revision=revision+1,updated_at=? WHERE id=? AND status='analyzing' AND EXISTS(${owned.text}) RETURNING id`,
+          `UPDATE ai_analysis_jobs SET completed=completed+1,failed=failed+1,revision=revision+1,updated_at=? WHERE id=? AND EXISTS(${owned.text}) RETURNING id`,
           now,
           work.jobId,
           ...owned.values,
@@ -469,7 +544,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
   async wait(work: AiWork, reason: string, retryAt: string, now: string) {
     await this.write([
       statement(
-        `UPDATE ai_analysis_items SET status='ready',reason=?,available_at=?,lease_token=NULL,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_token=? AND lease_expires_at>? RETURNING id`,
+        `UPDATE ai_analysis_items SET status='ready',reason=?,available_at=?,lease_token=NULL,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_token=? AND lease_expires_at>? AND ${OWNED_ITEM_JOB} RETURNING id`,
         reason,
         retryAt,
         now,
@@ -521,8 +596,8 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
   async claimGroup(token: string, now: string, expiresAt: string): Promise<AiGroupWork | null> {
     const candidate = statement(
       `SELECT g.id FROM ai_analysis_groups g JOIN ai_analysis_jobs j ON j.id=g.job_id
-       WHERE j.status='summarizing' AND g.status IN ('queued','running')
-       AND (j.strategy<>'${AI_BATCH_CLASSIFICATION_STRATEGY}' OR j.issue_phase='refine')
+       WHERE j.status='summarizing' AND g.status IN ('queued','running','releasing')
+       AND (j.strategy<>'${AI_BATCH_CLASSIFICATION_STRATEGY}' OR j.issue_phase IN ('classify','refine'))
        AND g.available_at<=? AND (g.lease_expires_at IS NULL OR g.lease_expires_at<?)
        ORDER BY g.available_at,g.id LIMIT 1`,
       now,
@@ -531,7 +606,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
     if (!(await this.query(candidate)).length) return null;
     const result = await this.write([
       statement(
-        `UPDATE ai_analysis_groups SET lease_token=?,lease_expires_at=?,status='running'
+        `UPDATE ai_analysis_groups SET lease_token=?,lease_expires_at=?,status=CASE WHEN status='releasing' THEN status ELSE 'running' END
       WHERE id=(${candidate.text})
       AND (lease_expires_at IS NULL OR lease_expires_at<?) RETURNING *`,
         token,
@@ -561,6 +636,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
       processed: Number(row.processed),
       memberCount: Number(row.member_count),
       ...(typeof row.initial_summary === "string" ? { initialSummary: row.initial_summary } : {}),
+      ...(row.status === "releasing" ? { releaseAfter: String(row.publication_cursor) } : {}),
       ...(typeof row.refinement_json === "string"
         ? { refinement: JSON.parse(row.refinement_json) as AiIssueRefinement }
         : {}),
@@ -738,7 +814,13 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
         "UPDATE ai_analysis_groups SET reason=?,available_at=?,status=?,attempts=attempts+?,lease_token=NULL,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_token=? AND lease_expires_at>? AND EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE id=job_id AND status='summarizing') RETURNING id",
         reason.slice(0, 500),
         retryAt,
-        failed ? (work.strategy === "stack_groups_v2" ? "publishing" : "failed") : "queued",
+        failed
+          ? work.strategy === "stack_groups_v2"
+            ? "publishing"
+            : "failed"
+          : work.releaseAfter === undefined
+            ? "queued"
+            : "releasing",
         consumeAttempt ? 1 : 0,
         now,
         work.id,
@@ -786,9 +868,12 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
         input.revision,
       ),
       statement(
-        `INSERT INTO ai_model_leases(token,expires_at) SELECT ?,? WHERE EXISTS(SELECT 1 FROM ai_model_admission WHERE id='default' AND last_token=?) RETURNING token`,
+        `INSERT INTO ai_model_leases(token,expires_at,job_id,stage) SELECT ?,?,?,?
+         WHERE EXISTS(SELECT 1 FROM ai_model_admission WHERE id='default' AND last_token=?) RETURNING token`,
         input.token,
         input.expiresAt,
+        input.work?.jobId ?? null,
+        input.work?.stage ?? null,
         input.token,
       ),
     ]);
@@ -864,11 +949,13 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
             ROW_NUMBER() OVER (PARTITION BY c.attempt_id ORDER BY
               CASE WHEN i.job_id=selected.job_id THEN 0 ELSE 1 END,c.created_at DESC,c.id DESC) AS precedence
           FROM ai_analysis_conclusions c JOIN ai_analysis_items i ON i.id=c.item_id CROSS JOIN selected
-          WHERE c.batch_id=? AND c.created_at<=? AND c.attempt_id IN (${attemptIds.map(() => "?").join(",")})
+          WHERE c.batch_id=? AND c.created_at<=?
+            AND c.conclusion NOT LIKE ? AND c.attempt_id IN (${attemptIds.map(() => "?").join(",")})
         ) SELECT * FROM candidates WHERE precedence=1`,
         classificationJobId ?? null,
         batchId,
         before,
+        `%${AI_INTERMEDIATE_CONCLUSION_SUFFIX}\n原因：%`,
         ...attemptIds,
       ),
     );
@@ -956,6 +1043,7 @@ function mapJob(row: Record<string, unknown>): AiAnalysisJob {
   };
 }
 function mapItem(row: Record<string, unknown>): AiAnalysisItem {
+  const conclusion = row.conclusion === null ? null : String(row.conclusion);
   return {
     id: String(row.id),
     jobId: String(row.job_id),
@@ -964,7 +1052,9 @@ function mapItem(row: Record<string, unknown>): AiAnalysisItem {
     displayName: String(row.display_name),
     status: String(row.status),
     signature: row.signature === null ? null : String(row.signature),
-    conclusion: row.conclusion === null ? null : String(row.conclusion),
+    conclusion: conclusion?.includes(`${AI_INTERMEDIATE_CONCLUSION_SUFFIX}\n原因：`)
+      ? null
+      : conclusion,
     reason: row.reason === null ? null : String(row.reason),
     updatedAt: String(row.updated_at),
   };

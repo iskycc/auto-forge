@@ -1,6 +1,7 @@
 import {
   aiInitialStackVerdictSchema,
   aiIssueVerdictSchema,
+  aiPublishedStatement,
   type AiModelConfiguration,
 } from "@autoforge/contracts";
 import type { AiEvidencePort } from "./ai-analysis-worker";
@@ -14,8 +15,10 @@ import {
   type AiToolDefinition,
 } from "./ai-analysis-ports";
 import {
+  AI_EVIDENCE_DRAFT_PROMPT,
   AI_ISSUE_REFINEMENT_PROMPT,
   aiPromptMessages,
+  cleanPublishedConclusion,
   parsePreliminaryConclusion,
   PRELIMINARY_TOOL,
   readPreliminaryConclusion,
@@ -130,7 +133,7 @@ function toolArguments(reply: AiModelMessage, tool: AiToolDefinition): unknown {
 }
 
 function issueSummary(text: string): string {
-  const compact = text.replace(/\s+/gu, " ").trim();
+  const compact = aiPublishedStatement(text).replace(/\s+/gu, " ");
   if (!compact) throw new AiModelRequestError("模型分类缺少问题简述。", true);
   return Array.from(compact).slice(0, ISSUE_SUMMARY_LENGTH).join("");
 }
@@ -271,9 +274,10 @@ export class AiIssueClassifier {
             ...context,
             stage: "read_issue_member",
             instruction:
-              "提取本例的因果链、业务错误及相反证据并保留前片有效线索。待后续日志片补齐再比较类别。提交本片草稿，引用本片 evidenceId。",
+              "记录本案新增的因果线索、业务错误及反证，保留仍有效的事实。暂不判定归属，引用本次提供的证据 ID。",
           },
           payload,
+          AI_EVIDENCE_DRAFT_PROMPT,
         ),
         PRELIMINARY_TOOL,
       );
@@ -305,15 +309,23 @@ export class AiIssueClassifier {
         {
           ...context,
           stage: "refine_issue_member",
-          existingCategories: compared.map(({ summary, conclusion }, index) => ({
-            categoryId: String(index + 1),
-            summary,
-            recommendation: conclusion.recommendation,
-            reason: conclusion.reason,
-            evidence: conclusion.evidence,
-          })),
+          ...(work.attempts > 0
+            ? { retryGuidance: "请使用可核对的业务原因与依据，省略读取顺序、分片和检查步骤。" }
+            : {}),
+          existingCategories: compared.map(({ summary, conclusion }, index) => {
+            const cleaned = cleanPublishedConclusion(conclusion);
+            const name = aiPublishedStatement(summary);
+            return {
+              categoryId: String(index + 1),
+              summary: name,
+              recommendation: conclusion.recommendation,
+              reason: cleaned?.reason ?? "",
+              evidence: cleaned?.evidence ?? "",
+              ...(!cleaned || !name ? { requiresUpdatedConclusion: true } : {}),
+            };
+          }),
           instruction:
-            "比对已有类别并返回相应的 categoryId，沿用时 useExistingConclusion 为 true，更新统一结论时为 false。没有匹配时 categoryId 为 null、useExistingConclusion 为 false。summary 写组件或操作及具体故障，省略推测标签、人工确认和分类序号。conclusion 必须引用本片 evidenceId。",
+            "比对已有类别并返回相应的 categoryId，沿用时 useExistingConclusion 为 true，更新统一结论时为 false。没有匹配时 categoryId 为 null、useExistingConclusion 为 false。summary 写组件或操作及具体故障，省略阅读过程、推测标签、人工确认和分类序号。conclusion 必须引用本次提供的证据 ID。",
         },
         payload,
         AI_ISSUE_REFINEMENT_PROMPT,
@@ -341,19 +353,31 @@ export class AiIssueClassifier {
         : compared.find((_, index) => String(index + 1) === verdict.data.categoryId);
     if (verdict.data.categoryId !== null && !match)
       throw new AiModelRequestError("模型选择了当前堆栈组以外的问题类别。", true);
-    const conclusion = parsePreliminaryConclusion(verdict.data.conclusion, allowed);
+    const conclusion = parsePreliminaryConclusion(
+      verdict.data.conclusion,
+      allowed,
+      verdict.data.useExistingConclusion ? "draft" : "final",
+    );
     if (!conclusion.evidenceReferences.includes(part.id))
       throw new AiModelRequestError("问题结论缺少本用例的日志引用。", true);
     if (verdict.data.useExistingConclusion && !match)
       throw new AiModelRequestError("沿用结论时必须选择本组已有类别。", true);
-    const category =
-      verdict.data.useExistingConclusion && match
-        ? match
-        : {
-            id: match?.id ?? `${work.id}:${member.id}`,
-            summary: issueSummary(verdict.data.summary),
-            conclusion,
-          };
+    let category: AiIssueCandidate;
+    if (verdict.data.useExistingConclusion && match) {
+      const cleaned = cleanPublishedConclusion(match.conclusion);
+      if (!cleaned || !aiPublishedStatement(match.summary))
+        throw new AiModelRequestError(
+          "旧类别结论缺少可发布的具体原因或依据，请按本案证据完善。",
+          true,
+        );
+      category = { ...match, summary: issueSummary(match.summary), conclusion: cleaned };
+    } else {
+      category = {
+        id: match?.id ?? `${work.id}:${member.id}`,
+        summary: issueSummary(verdict.data.summary),
+        conclusion,
+      };
+    }
     if (consumed < candidates.length) {
       await this.repository.issues.saveRefinement(
         work,

@@ -120,29 +120,47 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
       sql(
         `SELECT signature,COUNT(*) AS member_count FROM ai_analysis_items
        WHERE job_id=? AND signature>? AND status='group_ready'
-       GROUP BY signature HAVING COUNT(*)>=? ORDER BY signature LIMIT ?`,
+       GROUP BY signature ORDER BY signature LIMIT ?`,
         work.jobId,
         work.cursor,
-        AI_BULK_ISSUE_MINIMUM,
         PLAN_PAGE,
       ),
     );
     const owned = this.ownedBatch(work, now);
+    const smallSignatures = rows
+      .filter((row) => Number(row.member_count) < AI_BULK_ISSUE_MINIMUM)
+      .map((row) => String(row.signature));
     await this.write([
-      ...rows.map((row) =>
-        sql(
-          `INSERT INTO ai_analysis_groups(id,job_id,signature,member_count,status,available_at,updated_at)
+      ...rows
+        .filter((row) => Number(row.member_count) >= AI_BULK_ISSUE_MINIMUM)
+        .map((row) =>
+          sql(
+            `INSERT INTO ai_analysis_groups(id,job_id,signature,member_count,status,available_at,updated_at)
          SELECT ?,?,?,?,'classifying',?,? WHERE EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE ${owned.text})
          ON CONFLICT(job_id,signature) DO NOTHING RETURNING id`,
-          `${work.jobId}:${String(row.signature)}`,
-          work.jobId,
-          String(row.signature),
-          Number(row.member_count),
-          now,
-          now,
-          ...owned.values,
+            `${work.jobId}:${String(row.signature)}`,
+            work.jobId,
+            String(row.signature),
+            Number(row.member_count),
+            now,
+            now,
+            ...owned.values,
+          ),
         ),
-      ),
+      ...(smallSignatures.length
+        ? [
+            sql(
+              `UPDATE ai_analysis_items SET status='ready',available_at=?,updated_at=?
+               WHERE job_id=? AND status='group_ready' AND signature IN (${smallSignatures.map(() => "?").join(",")})
+                 AND EXISTS(SELECT 1 FROM ai_analysis_jobs WHERE ${owned.text}) RETURNING id`,
+              now,
+              now,
+              work.jobId,
+              ...smallSignatures,
+              ...owned.values,
+            ),
+          ]
+        : []),
       this.moveBatch(
         work,
         rows.length < PLAN_PAGE ? "classify" : "plan",
@@ -233,14 +251,15 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
     }));
   }
 
-  private ownedGroup(work: AiGroupWork, now: string) {
+  private ownedGroup(work: AiGroupWork, now: string, status: "running" | "releasing" = "running") {
     return sql(
       `SELECT g.id FROM ai_analysis_groups g JOIN ai_analysis_jobs j ON j.id=g.job_id
-       WHERE g.id=? AND g.lease_token=? AND g.lease_expires_at>? AND g.status='running'
-         AND j.status='summarizing' AND j.issue_phase='refine'`,
+       WHERE g.id=? AND g.lease_token=? AND g.lease_expires_at>? AND g.status=?
+         AND j.status='summarizing' AND j.issue_phase IN ('classify','refine')`,
       work.id,
       work.leaseToken,
       now,
+      status,
     );
   }
 
@@ -322,10 +341,53 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
        WHERE id IN (${owned.text}) RETURNING id`,
       memberId || work.cursor,
       memberId ? 1 : 0,
-      !memberId || work.processed + 1 >= work.memberCount ? "completed" : "queued",
+      !memberId || work.processed + 1 >= work.memberCount ? "releasing" : "queued",
       now,
       ...owned.values,
     );
+  }
+
+  async releaseSmallCategories(work: AiGroupWork, now: string) {
+    const items = await this.query(
+      sql(
+        `SELECT i.id,c.member_count FROM ai_analysis_items i
+         LEFT JOIN ai_analysis_issue_categories c ON c.id=i.issue_category_id
+         WHERE i.job_id=? AND i.signature=? AND i.id>? AND i.status='group_ready'
+         ORDER BY i.id LIMIT ?`,
+        work.jobId,
+        work.signature,
+        work.releaseAfter!,
+        PUBLICATION_PAGE,
+      ),
+    );
+    const independent = items
+      .filter((item) => Number(item.member_count ?? 0) < AI_BULK_ISSUE_MINIMUM)
+      .map((item) => String(item.id));
+    const owned = this.ownedGroup(work, now, "releasing");
+    await this.write([
+      ...(independent.length
+        ? [
+            sql(
+              `UPDATE ai_analysis_items SET status='ready',issue_category_id=NULL,available_at=?,updated_at=?
+               WHERE job_id=? AND status='group_ready' AND id IN (${independent.map(() => "?").join(",")})
+                 AND EXISTS(${owned.text}) RETURNING id`,
+              now,
+              now,
+              work.jobId,
+              ...independent,
+              ...owned.values,
+            ),
+          ]
+        : []),
+      sql(
+        `UPDATE ai_analysis_groups SET publication_cursor=?,status=?,lease_token=NULL,lease_expires_at=NULL,
+         attempts=0,reason=NULL,updated_at=? WHERE id IN (${owned.text}) RETURNING id`,
+        String(items.at(-1)?.id ?? work.releaseAfter),
+        items.length < PUBLICATION_PAGE ? "completed" : "releasing",
+        now,
+        ...owned.values,
+      ),
+    ]);
   }
 
   private async rank(work: AiIssueBatchWork, now: string) {

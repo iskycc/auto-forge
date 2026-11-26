@@ -1,5 +1,6 @@
 import { hasPermission } from "@autoforge/domain";
 import { SystemDiagnostics } from "@/components/system-diagnostics";
+import { SystemAiAnalysisRuntime } from "@/components/system-ai-analysis-runtime";
 import { Badge } from "@/components/ui/badge";
 import { uiPatterns } from "@/components/ui/patterns";
 import { requirePagePermission } from "@/lib/auth";
@@ -16,6 +17,7 @@ export default async function SystemInformationPage() {
           <Badge>范围：全平台</Badge>
         </div>
       </header>
+      <SystemAiAnalysisRuntime />
       <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
     </section>
   );

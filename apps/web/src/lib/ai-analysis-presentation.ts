@@ -1,10 +1,15 @@
-import { AI_RECOMMENDATION_LABELS } from "@autoforge/contracts";
+import {
+  AI_INTERMEDIATE_CONCLUSION_SUFFIX,
+  AI_RECOMMENDATION_LABELS,
+  aiPublishedStatement,
+} from "@autoforge/contracts";
 
 export const AI_ANALYSIS_RESULT_LABEL = "AI 初步分析结果";
 export const AI_ANALYSIS_REASON_LABEL = "AI 初步分析原因";
 
 const LEGACY_DETAIL = /^(?:可能原因|建议检查|证据限制|模型自评置信度)[：:]/u;
 const REASON_PREFIX = /^原因[：:]\s*/u;
+const EVIDENCE_PREFIX = /^依据[：:]\s*/u;
 const REVIEW_NOTE =
   /[（(]\s*(?:(?:分析中|已分析)\s+\d+\/\d+\s+证据片[；;]\s*|分析中[，,]\s*)?(?:待(?:人工)?确认|需(?:要)?人工确认)\s*[）)]/gu;
 const REVIEW_LINE =
@@ -26,9 +31,20 @@ export function splitAiAnalysisConclusion(conclusion: string | null | undefined)
   }
 
   if (lines[1] && REASON_PREFIX.test(lines[1])) {
+    if (lines[0]?.endsWith(AI_INTERMEDIATE_CONCLUSION_SUFFIX)) return { result: "", reason: "" };
+    const reason = aiPublishedStatement(lines[1].replace(REASON_PREFIX, ""));
+    const evidence = lines
+      .slice(2)
+      .map((line) => {
+        const statement = aiPublishedStatement(line.replace(EVIDENCE_PREFIX, ""));
+        if (!statement) return "";
+        return EVIDENCE_PREFIX.test(line) ? "依据：" + statement : statement;
+      })
+      .filter(Boolean);
+    if (!reason && !evidence.length) return { result: "", reason: "" };
     return {
       result: lines[0]!,
-      reason: [lines[1].replace(REASON_PREFIX, ""), ...lines.slice(2)].join("\n").trim(),
+      reason: [reason, ...evidence].filter(Boolean).join("\n"),
     };
   }
 
@@ -36,7 +52,10 @@ export function splitAiAnalysisConclusion(conclusion: string | null | undefined)
     (label) => text.startsWith(`${label}：`) || text.startsWith(`${label}:`),
   );
   return recommendation
-    ? { result: recommendation, reason: text.slice(recommendation.length + 1).trim() }
+    ? {
+        result: recommendation,
+        reason: aiPublishedStatement(text.slice(recommendation.length + 1)),
+      }
     : { result: text, reason: "" };
 }
 

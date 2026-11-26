@@ -44,10 +44,14 @@ test("AI batch classification shares refined conclusions and exports ranked issu
   const independent = new Set<number>();
   const single = new Set<number>();
   let initialRequests = 0;
-  let inFlightIndependent = 0;
-  let releaseIndependent: () => void = () => undefined;
-  const allowIndependent = new Promise<void>((release) => {
-    releaseIndependent = release;
+  let rejectedFinals = 0;
+  let blockedIndependent = 0;
+  let blockedGroup = false;
+  let sameGroupOverlap = false;
+  const inFlightGroups = new Set<string>();
+  let releaseRequests: () => void = () => undefined;
+  const allowRequests = new Promise<void>((release) => {
+    releaseRequests = release;
   });
   const model = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -84,9 +88,23 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       const conclusion = {
         recommendation: "business_issue_likely",
         reason: cause ? `根据业务日志确认：${cause}` : "已读取本片，继续等待实际原因。",
-        evidence: cause ? `观察到 ${cause} 错误。` : "已读取日志片。",
+        evidence: cause ? `本片最早的解释性异常：观察到 ${cause} 错误。` : "已读取日志片。",
         evidenceReferences: [evidence.evidenceId],
       };
+      if (tool === "submit_ai_issue" || context.stage === "read_issue_member") {
+        const group = cases[index]!.stack;
+        if (inFlightGroups.has(group)) sameGroupOverlap = true;
+        inFlightGroups.add(group);
+        try {
+          if (index === 0 && tool === "submit_ai_issue") {
+            blockedGroup = true;
+            await allowRequests;
+            blockedGroup = false;
+          }
+        } finally {
+          inFlightGroups.delete(group);
+        }
+      }
       if (tool === "submit_ai_issue") {
         const candidates = context.existingCategories as Array<{
           categoryId: string;
@@ -114,13 +132,18 @@ test("AI batch classification shares refined conclusions and exports ranked issu
         verdict = conclusion;
       } else if (context.stage === "independent_issue_member") {
         independent.add(index);
-        inFlightIndependent++;
-        try {
-          await allowIndependent;
-        } finally {
-          inFlightIndependent--;
+        if (index === 19 || index === 20) {
+          blockedIndependent++;
+          try {
+            await allowRequests;
+          } finally {
+            blockedIndependent--;
+          }
         }
-        verdict = conclusion;
+        if (index === 21 && context.output === "final" && rejectedFinals === 0) {
+          rejectedFinals++;
+          verdict = { ...conclusion, reason: "本片最早的解释性异常仍需结合后续片段核实。" };
+        } else verdict = conclusion;
       } else {
         single.add(index);
         verdict = { ...conclusion, reason: "单例细查独有结论" };
@@ -232,12 +255,33 @@ test("AI batch classification shares refined conclusions and exports ranked issu
     await page.getByRole("button", { name: "AI 初步分析", exact: true }).first().click();
     const dialog = page.getByRole("dialog", { name: "批次 AI 初步分析", exact: true });
     await expect(dialog).toBeVisible();
-    await expect.poll(() => inFlightIndependent, { timeout: 90000 }).toBe(3);
-    expect(await readStatus()).toMatchObject({
-      status: "analyzing",
-      completed: 18,
-      classificationReviewed: 24,
-    });
+    await expect
+      .poll(() => ({ blockedIndependent, blockedGroup }), { timeout: 90000 })
+      .toEqual({
+        blockedIndependent: 2,
+        blockedGroup: true,
+      });
+    expect(await readStatus()).toMatchObject({ status: "summarizing" });
+    const diagnostics = await page.context().newPage();
+    await diagnostics.goto("/system-info#ai-analysis-runtime");
+    const runtime = diagnostics.locator("#ai-analysis-runtime");
+    const currentTask = runtime.getByRole("row").filter({ hasText: fixture.suiteName });
+    await expect(currentTask.getByText("复核 1 · 独立 2", { exact: true })).toBeVisible();
+    await expect(runtime.getByText("模型请求占用", { exact: true })).toBeVisible();
+    await expect(runtime.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    const runtimeScreenshots = testInfo.outputPath("screenshots");
+    await mkdir(runtimeScreenshots, { recursive: true });
+    for (const [width, height] of [
+      [1024, 768],
+      [1536, 960],
+    ] as const) {
+      await diagnostics.setViewportSize({ width, height });
+      await expectUiIntegrity(diagnostics);
+      await runtime.screenshot({
+        path: resolve(runtimeScreenshots, `ai-system-runtime-${width}.png`),
+        animations: "disabled",
+      });
+    }
     const pending = await page.request.get(
       `/api/v1/run-batches/${fixture.batchId}/export?template=failure-analysis&scope=final`,
     );
@@ -251,15 +295,21 @@ test("AI batch classification shares refined conclusions and exports ranked issu
     sheetWhileRunning.eachRow((row, index) => {
       if (index > 1) visibleCategories.push(row.getCell(categoryColumn).text);
     });
-    expect(visibleCategories.filter(Boolean)).toHaveLength(18);
-    expect(visibleCategories.filter((value) => value === "")).toHaveLength(10);
-    releaseIndependent();
+    expect(visibleCategories).toHaveLength(cases.length);
+    expect(visibleCategories).toContain("");
+    expect(visibleCategories.every((value) => value === "" || value === "非大批量问题")).toBe(true);
+    releaseRequests();
     await expect.poll(readStatus, { timeout: 90000 }).toMatchObject({
       status: "completed",
       completed: cases.length,
       classificationReviewed: 24,
     });
+    expect(sameGroupOverlap).toBe(false);
+    await expect(currentTask).toHaveCount(0, { timeout: 15000 });
+    await expect(runtime.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+    await diagnostics.close();
     expect(initialRequests).toBe(2);
+    expect(rejectedFinals).toBe(1);
     expect(firstPass.map(({ stack, count }) => [stack, count])).toEqual(
       expect.arrayContaining([
         [stack.wallet, 12],
@@ -293,6 +343,7 @@ test("AI batch classification shares refined conclusions and exports ranked issu
     await dialog.getByRole("button", { name: "刷新进度", exact: true }).click();
     await expect(dialog.getByText(/组内已复核 24/u)).toBeVisible();
     await expect(dialog.getByText("分析完成", { exact: true }).first()).toBeVisible();
+    await expect(dialog.getByText(/本片最早的解释性异常/u)).toHaveCount(0);
     const screenshots = testInfo.outputPath("screenshots");
     await mkdir(screenshots, { recursive: true });
     for (const [theme, width, height] of [
@@ -308,6 +359,8 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       await page.reload();
       await page.getByRole("button", { name: "AI 初步分析", exact: true }).first().click();
       await expect(dialog.getByText(/组内已复核 24/u)).toBeVisible();
+      await dialog.getByRole("button", { name: "查看完整初析", exact: true }).first().click();
+      await expect(dialog.getByText(/依据：观察到.+错误。/u).first()).toBeVisible();
       await expectUiIntegrity(page);
       await page.screenshot({
         path: resolve(screenshots, `ai-classification-${theme}-${width}.png`),
@@ -338,6 +391,7 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       .toBe("completed");
     expect([...single]).toEqual([0]);
     await expect(singleDialog.getByText(/单例细查独有结论/u).first()).toBeVisible();
+    await expect(singleDialog.getByText(/本片最早的解释性异常/u)).toHaveCount(0);
     await singleDialog
       .locator(".ant-modal-footer")
       .getByRole("button", { name: "关闭", exact: true })
@@ -393,6 +447,8 @@ test("AI batch classification shares refined conclusions and exports ranked issu
         expect(row?.[1]).toContain(
           item.cause === "钱包数据库连接池" ? `连接池指标进一步证实：${item.cause}` : item.cause,
         );
+        expect(row?.[1]).toContain(`依据：观察到 ${item.cause} 错误。`);
+        expect(row?.[1]).not.toContain("本片最早的解释性异常");
         expect(row?.slice(2)).toEqual([item.rank ?? "非大批量问题", item.rank ? item.cause : ""]);
       }
       for (const rank of ["第一类问题", "第二类问题", "第三类问题"]) {
@@ -404,7 +460,7 @@ test("AI batch classification shares refined conclusions and exports ranked issu
         expect(exported.get("e2e.analysis.PassedTest")).toEqual(["", "", "", ""]);
     }
   } finally {
-    releaseIndependent();
+    releaseRequests();
     await new Promise<void>((close) => model.close(() => close()));
   }
 });

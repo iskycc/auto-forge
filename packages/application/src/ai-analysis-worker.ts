@@ -5,6 +5,8 @@ import {
   AI_BATCH_CLASSIFICATION_STRATEGY,
 } from "@autoforge/contracts";
 import {
+  AI_EVIDENCE_DRAFT_PROMPT,
+  AI_FINAL_CONCLUSION_PROMPT,
   aiPromptMessages,
   PRELIMINARY_TOOL,
   readPreliminaryConclusion,
@@ -118,7 +120,7 @@ export class AiAnalysisWorker {
         return true;
       }
     }
-    const work = await this.repository.claimWork(
+    let work = await this.repository.claimWork(
       this.ids.next(),
       now.toISOString(),
       new Date(now.getTime() + 120000).toISOString(),
@@ -128,14 +130,22 @@ export class AiAnalysisWorker {
       if (workSelection?.stage === "prepare") return false;
       if (await this.processIssueBatch(record, record.configuration, signal)) return true;
       await this.repository.prepareGroups(now.toISOString());
-      return this.summarize(record, signal);
+      if (await this.summarize(record, signal)) return true;
+      work = await this.repository.claimWork(
+        this.ids.next(),
+        this.clock.now().toISOString(),
+        this.after(120000),
+        "supplement",
+      );
+      if (!work) return false;
     }
+    const leasedWork = work;
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
     const renewal = setInterval(() => {
       void this.repository
         .renew(
-          work,
+          leasedWork,
           new Date(this.clock.now().getTime() + 120000).toISOString(),
           this.clock.now().toISOString(),
         )
@@ -179,9 +189,14 @@ export class AiAnalysisWorker {
         const previous = work.drafts.at(-1);
         const compact =
           work.strategy === "single_full_v2" || work.strategy === AI_BATCH_CLASSIFICATION_STRATEGY;
+        const cursor = work.partCursor + 1;
+        const done = cursor >= evidence.parts.length;
         const messages: AiModelMessage[] = [
           ...(compact
-            ? aiPromptMessages(record.configuration)
+            ? aiPromptMessages(
+                record.configuration,
+                done ? AI_FINAL_CONCLUSION_PROMPT : AI_EVIDENCE_DRAFT_PROMPT,
+              )
             : [
                 { role: "system" as const, content: AI_SYSTEM_PROMPT },
                 ...aiPromptMessages(record.configuration).slice(1),
@@ -197,11 +212,21 @@ export class AiAnalysisWorker {
               partId: part.id,
               partIndex: work.partCursor + 1,
               totalParts: evidence.parts.length,
+              ...(compact ? { output: done ? "final" : "draft" } : {}),
+              ...(compact && done && work.attempts > 0
+                ? {
+                    retryGuidance:
+                      "请直接写业务事实，例如「订单查询超时，网关收到 HTTP 504」，省略阅读步骤。",
+                  }
+                : {}),
               knownLimitations: evidence.limitations,
               inputTransformations: evidence.inputTransformations ?? [],
               previousPreliminaryFinding: previous ?? null,
-              instruction:
-                "先 read_evidence，再更新累计的初步建议并 submit_ai_conclusion。前片建议是未确认推测，保持反证；不要把本片当作全部日志。",
+              instruction: compact
+                ? done
+                  ? "结合已提供的业务证据写出原因和依据，内容应独立可读。使用 submit_ai_conclusion，引用本次提供的证据 ID。"
+                  : "记录本案新增的业务错误、实际值和反证，保留关键事实供后续分析。"
+                : "先 read_evidence，再更新累计的初步建议并 submit_ai_conclusion。前片建议是未确认推测，保持反证；不要把本片当作全部日志。",
             }),
           },
         ];
@@ -243,6 +268,7 @@ export class AiAnalysisWorker {
         const token = this.ids.next();
         const admitted = await this.reserveModel({
           token,
+          work: { jobId: work.jobId, stage: "individual" },
           revision: record.revision,
           now: this.clock.now().toISOString(),
           expiresAt: this.after((record.configuration.timeoutSeconds + 15) * 1000),
@@ -287,7 +313,7 @@ export class AiAnalysisWorker {
           );
         const allowed = new Set([part.id, ...(previous?.evidenceReferences ?? [])]);
         const conclusion = compact
-          ? readPreliminaryConclusion(reply, [...allowed])
+          ? readPreliminaryConclusion(reply, [...allowed], done ? "final" : "draft")
           : aiConclusionSchema.parse(JSON.parse(call.function.arguments));
         if (
           !conclusion.evidenceReferences.includes(part.id) ||
@@ -300,11 +326,11 @@ export class AiAnalysisWorker {
           !(await this.repository.renew(work, this.after(120000), this.clock.now().toISOString()))
         )
           return true;
-        const cursor = work.partCursor + 1;
-        const done = cursor >= evidence.parts.length;
         const rendered =
           "recommendation" in conclusion
-            ? renderPreliminaryConclusion(conclusion, !done)
+            ? done
+              ? renderPreliminaryConclusion(conclusion)
+              : null
             : renderAiConclusion(conclusion, cursor, evidence.parts.length, evidence.limitations);
         await this.repository.saveDraft(
           work,
@@ -410,6 +436,7 @@ export class AiAnalysisWorker {
         const token = this.ids.next();
         const admitted = await this.reserveModel({
           token,
+          work: { jobId: work.jobId, stage: "phase" in work ? "stack" : "group" },
           revision: record.revision,
           now: this.clock.now().toISOString(),
           expiresAt: this.after((configuration.timeoutSeconds + 15) * 1000),
@@ -528,7 +555,13 @@ export class AiAnalysisWorker {
     if (work.strategy === AI_BATCH_CLASSIFICATION_STRATEGY) {
       try {
         await this.authorize(work);
-        await this.issueClassifier(record, configuration, work, signal).refineMember(work, signal);
+        if (work.releaseAfter !== undefined)
+          await this.repository.issues.releaseSmallCategories(work, this.clock.now().toISOString());
+        else
+          await this.issueClassifier(record, configuration, work, signal).refineMember(
+            work,
+            signal,
+          );
       } catch (error) {
         if (!signal.aborted) {
           const retry = await this.issueRetry(error, work, configuration);
@@ -623,6 +656,7 @@ export class AiAnalysisWorker {
       if (
         !(await this.reserveModel({
           token,
+          work: { jobId: work.jobId, stage: "group" },
           revision: record.revision,
           now: this.clock.now().toISOString(),
           expiresAt: this.after((configuration.timeoutSeconds + 15) * 1000),
@@ -726,7 +760,7 @@ export class AiAnalysisWorker {
     const reference = part?.id ?? candidates[0]?.id;
     if (!reference) throw new AiModelRequestError("本组缺少待分析的证据或成员。", false);
     const messagesFor = (): AiModelMessage[] => [
-      ...aiPromptMessages(configuration),
+      ...aiPromptMessages(configuration, AI_FINAL_CONCLUSION_PROMPT),
       {
         role: "user",
         content: JSON.stringify({
@@ -787,6 +821,7 @@ export class AiAnalysisWorker {
     if (
       !(await this.reserveModel({
         token,
+        work: { jobId: work.jobId, stage: "group" },
         revision: record.revision,
         now: this.clock.now().toISOString(),
         expiresAt: this.after((configuration.timeoutSeconds + 15) * 1000),
@@ -816,17 +851,19 @@ export class AiAnalysisWorker {
     } finally {
       await this.repository.releaseModel(token);
     }
-    const draft = readPreliminaryConclusion(reply, [
-      reference,
-      ...members.map((member) => member.id),
-    ]);
+    const nextPart = partCursor + (part ? 1 : 0);
+    const memberComplete = nextPart >= parts.length;
+    const processed = work.processed + (fullLogs ? (memberComplete ? 1 : 0) : members.length);
+    const done = memberComplete && processed >= work.memberCount;
+    const draft = readPreliminaryConclusion(
+      reply,
+      [reference, ...members.map((member) => member.id)],
+      done ? "final" : "draft",
+    );
     if (!draft.evidenceReferences.includes(reference))
       throw new AiModelRequestError("分组结论未引用当前堆栈证据。", false);
     signal.throwIfAborted();
     await this.authorize(work);
-    const nextPart = partCursor + (part ? 1 : 0);
-    const memberComplete = nextPart >= parts.length;
-    const processed = work.processed + (fullLogs ? (memberComplete ? 1 : 0) : members.length);
     await this.repository.saveStackGroup(
       work,
       {
@@ -834,7 +871,7 @@ export class AiAnalysisWorker {
         partCursor: fullLogs && memberComplete ? 0 : nextPart,
         processed,
         conclusion: renderPreliminaryConclusion(draft),
-        done: nextPart >= parts.length && processed >= work.memberCount,
+        done,
       },
       this.clock.now().toISOString(),
     );

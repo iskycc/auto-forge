@@ -21,7 +21,7 @@ it("removes review boilerplate in spreadsheet cells and preserves evidence wordi
 describe("AI analysis presentation", () => {
   it.each([
     ["可能重跑通过（待人工确认）", "\n"],
-    ["可能用例问题需要修改（分析中，待确认）", "\r\n"],
+    ["可能用例问题需要修改（待人工确认）", "\r\n"],
   ])("separates the recommendation %s from its reason and evidence", (recommendation, newline) => {
     expect(
       splitAiAnalysisConclusion(
@@ -31,6 +31,24 @@ describe("AI analysis presentation", () => {
       result: recommendation,
       reason: "依赖瞬时不可用。\n依据：连接被重置。",
     });
+  });
+
+  it("does not present retained compact drafts as finished analysis or expose process-only statements", () => {
+    expect(
+      splitAiAnalysisConclusion(
+        "可能重跑通过（分析中，待确认）\n原因：连接池耗尽。\n依据：等待 30 秒。",
+      ),
+    ).toEqual({ result: "", reason: "" });
+    expect(
+      splitAiAnalysisConclusion(
+        "可能重跑通过（待人工确认）\n原因：本片最早的解释性异常。\n依据：请结合下一片检查。",
+      ),
+    ).toEqual({ result: "", reason: "" });
+    expect(
+      splitAiAnalysisConclusion(
+        "可能重跑通过（待人工确认）\n原因：本片最早的解释性异常：连接池耗尽。\n依据：等待 30 秒。",
+      ),
+    ).toEqual({ result: "可能重跑通过（待人工确认）", reason: "连接池耗尽。\n依据：等待 30 秒。" });
   });
 
   it("keeps summaries and separates details from older multiline reports", () => {

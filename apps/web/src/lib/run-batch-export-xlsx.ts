@@ -4,6 +4,7 @@ import type { RunBatchExportRow } from "@autoforge/application";
 import {
   CASE_SUITE_MARKER_HEADERS,
   DEFAULT_PLATFORM_TIME_ZONE,
+  aiPublishedStatement,
   EXPORT_ISSUE_PREVIEW_LIMIT,
   type ExportValidationReport,
   type ExportOutcomeFilter,
@@ -444,7 +445,7 @@ function aiAnalysisExportCells(row: RunBatchExportRow, input: RunBatchExportWork
     ...(input.includesAiCategories
       ? [
           category ? issueCategoryLabel(category.rank) : "",
-          aiExportCell(aiExportText(category?.summary ?? "")),
+          aiExportCell(aiExportText(aiPublishedStatement(category?.summary ?? ""))),
         ]
       : []),
   ];

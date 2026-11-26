@@ -21,6 +21,7 @@ function issueRepository(
     saveRefinement: vi.fn(),
     assignCategory: vi.fn(),
     skipMember: vi.fn(),
+    releaseSmallCategories: vi.fn(),
     ...overrides,
   };
 }

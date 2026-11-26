@@ -280,11 +280,44 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             }))!.items.every((item) => item.conclusion === null),
           ).toBe(true);
           const attemptId = `${suffix}-passed-1`;
-          await repository.create(job(`single-${suffix}`, attemptId), "single");
-          const single = await repository.claimPlanning("single-planner", now, later);
-          expect((await repository.candidates(single!, 100)).map((item) => item.attemptId)).toEqual(
-            [attemptId],
+          await repository.create(
+            { ...job(`single-${suffix}`, attemptId), strategy: "single_full_v2" },
+            "single",
           );
+          const single = await repository.claimPlanning("single-planner", now, later);
+          const singleCandidates = await repository.candidates(single!, 100);
+          expect(singleCandidates.map((item) => item.attemptId)).toEqual([attemptId]);
+          await repository.appendCandidates(single!, singleCandidates, true, now);
+          const collecting = await repository.claimWork("single-evidence", now, later);
+          await repository.saveEvidence(collecting!, "single.json", "single-stack", now);
+          const oldWorker = await repository.claimWork("old-draft", now, later);
+          await repository.saveDraft(
+            oldWorker!,
+            draft,
+            1,
+            "可能重跑通过（分析中，待确认）\n原因：本片最早的解释性异常。",
+            false,
+            false,
+            now,
+          );
+          expect(
+            (await repository.view({ batchId, attemptId, limit: 1 }))?.items[0]?.conclusion,
+          ).toBeNull();
+          expect(await repository.exportConclusions(batchId, [attemptId], now)).toEqual([]);
+          const resumed = await repository.claimWork("private-draft", now, later);
+          expect(resumed?.partCursor).toBe(1);
+          await repository.saveDraft(resumed!, draft, 2, null, false, false, now);
+          expect(await repository.exportConclusions(batchId, [attemptId], now)).toEqual([]);
+          const readyToPublish = await repository.claimWork("finished-conclusion", now, later);
+          expect(readyToPublish).toMatchObject({ partCursor: 2, drafts: [draft] });
+          const finalAt = "2026-11-04T00:00:30.000Z";
+          const final =
+            "可能重跑通过（待人工确认）\n原因：订单服务连接池耗尽。\n依据：等待 30 秒。";
+          await repository.saveDraft(readyToPublish!, draft, 3, final, true, false, finalAt);
+          expect(await repository.exportConclusions(batchId, [attemptId], now)).toEqual([]);
+          expect(await repository.exportConclusions(batchId, [attemptId], finalAt)).toEqual([
+            { attemptId, conclusion: final },
+          ]);
           const configuration = aiModelConfigurationSchema.parse({
             baseUrl: "http://model/v1",
             modelId: "test",

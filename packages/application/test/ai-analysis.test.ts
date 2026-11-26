@@ -109,6 +109,32 @@ describe("AI connection checks", () => {
   });
 });
 describe("AI evidence authorization", () => {
+  it("restricts system diagnostics task names to projects with every AI evidence read permission", async () => {
+    const now = new Date("2026-11-26T00:00:00Z");
+    const runtime = vi.fn<AiAnalysisRepository["runtime"]>().mockResolvedValue({
+      sampledAt: now.toISOString(),
+      enabled: true,
+      activeRequests: 4,
+      concurrencyLimit: 8,
+      coolingUntil: null,
+      hasMoreJobs: false,
+      jobs: [],
+    });
+    const service = new AiAnalysisService(
+      { runtime } as unknown as AiAnalysisRepository,
+      {} as RunBatchRepository,
+      {} as SecretCipherPort,
+      { now: () => now },
+      { next: () => "unused" },
+    );
+    const identity = actor(["analysis.ai.read", "case.read", "log.read"]);
+    identity.systemPermissions = ["settings.read", "run.read"];
+    identity.projectPermissions.restricted = ["analysis.ai.read", "case.read"];
+    await expect(service.runtime(identity)).resolves.toMatchObject({ activeRequests: 4 });
+    expect(runtime).toHaveBeenLastCalledWith({ now: now.toISOString(), projectIds: ["project"] });
+    await service.runtime(actor(["settings.read"]));
+    expect(runtime).toHaveBeenLastCalledWith({ now: now.toISOString(), projectIds: [] });
+  });
   it("keeps manual analysis permissions separate from model disclosure", () => {
     expect(() =>
       assertAiPermission(

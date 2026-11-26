@@ -23,6 +23,42 @@ function reply(value: unknown): AiModelMessage {
   };
 }
 describe("AI conclusion text boundary", () => {
+  it("keeps the concrete error while removing the log-reading instruction from the final report", () => {
+    expect(
+      readPreliminaryConclusion(
+        reply({
+          ...draft,
+          reason: "本片最早的解释性异常是订单服务连接池耗尽。",
+          evidence: "结合前片，当前分片的首个可解释性异常：HikariPool 等待连接 30 秒。",
+        }),
+        ["stdout-1"],
+        "final",
+      ),
+    ).toMatchObject({ reason: "订单服务连接池耗尽。", evidence: "HikariPool 等待连接 30 秒。" });
+  });
+  it.each(["本片最早的解释性异常仍需结合后续片段核实。", "已读取本片，继续等待实际原因。"])(
+    "retries a final report that only describes processing: %s",
+    (reason) => {
+      expect(() =>
+        readPreliminaryConclusion(reply({ ...draft, reason }), ["stdout-1"], "final"),
+      ).toThrow("缺少可发布的具体原因或依据");
+    },
+  );
+  it("keeps a real evidence limitation", () => {
+    expect(
+      readPreliminaryConclusion(
+        reply({ ...draft, evidence: "证据不足，日志未记录数据库返回的错误码。" }),
+        ["stdout-1"],
+        "final",
+      ).evidence,
+    ).toBe("证据不足，日志未记录数据库返回的错误码。");
+  });
+  it("preserves a concrete error while reading the application's own log fragment", () => {
+    const evidence = "读取日志片段时，归档服务返回 UnexpectedEOF。";
+    expect(
+      readPreliminaryConclusion(reply({ ...draft, evidence }), ["stdout-1"], "final"),
+    ).toMatchObject({ evidence });
+  });
   it("accepts and visibly shortens overlong reason/evidence while keeping the persisted compact contract", () => {
     const result = readPreliminaryConclusion(
       reply({
