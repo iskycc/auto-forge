@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import type { SystemDiagnostic } from "@autoforge/contracts";
 import {
-  Activity,
   CircleCheck,
   CircleAlert,
   Clock3,
@@ -31,9 +30,11 @@ import styles from "./system-diagnostics.styles";
 export function DiagnosticPanels({
   diagnostic: report,
   canManage = false,
+  queueOverview,
 }: {
   diagnostic: SystemDiagnostic;
   canManage?: boolean;
+  queueOverview: ReactNode;
 }) {
   const [selected, setSelected] = useState<InfrastructureDependency>();
   const dependencies = [
@@ -201,7 +202,7 @@ export function DiagnosticPanels({
       <div className={styles.panels}>
         <NodeBuildPanel report={report} />
         <ResourceCapacityPanel report={report} />
-        <QueueSnapshotPanel report={report} />
+        {queueOverview}
         <ClockStatusPanel report={report} />
       </div>
     </>
@@ -308,33 +309,6 @@ function ResourceCapacityPanel({ report }: { report: SystemDiagnostic }) {
       )}
       <p className={styles.note}>
         数据卷为整个文件系统容量，不代表 AutoForge 占用或远端对象存储容量。
-      </p>
-    </Card>
-  );
-}
-
-function QueueSnapshotPanel({ report }: { report: SystemDiagnostic }) {
-  return (
-    <Card
-      as="section"
-      className={cn(uiPatterns["content-card"], `content-card ${styles.panel}`)}
-      aria-label="队列快照"
-    >
-      <PanelHeading icon={<Activity size={18} />} title="队列快照" />
-      <div className={styles.queueStats}>
-        {[
-          { label: "可投递", value: report.queueDepth?.available },
-          { label: "已租约", value: report.queueDepth?.leased },
-          { label: "死信", value: report.queueDepth?.deadLetter },
-        ].map(({ label, value }) => (
-          <div key={label}>
-            <strong>{value?.toLocaleString("zh-CN") ?? "—"}</strong>
-            <small>{label}</small>
-          </div>
-        ))}
-      </div>
-      <p className={styles.note}>
-        这是队列消息数量，不是执行中的用例数量。死信列表最多展示 20 条，每次最多重新投递 100 条。
       </p>
     </Card>
   );

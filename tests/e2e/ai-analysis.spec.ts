@@ -263,25 +263,70 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       });
     expect(await readStatus()).toMatchObject({ status: "summarizing" });
     const diagnostics = await page.context().newPage();
-    await diagnostics.goto("/system-info#ai-analysis-runtime");
-    const runtime = diagnostics.locator("#ai-analysis-runtime");
-    const currentTask = runtime.getByRole("row").filter({ hasText: fixture.suiteName });
-    await expect(currentTask.getByText("复核 1 · 独立 2", { exact: true })).toBeVisible();
-    await expect(runtime.getByText("模型请求占用", { exact: true })).toBeVisible();
-    await expect(runtime.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    await diagnostics.goto("/system-info");
+    const queueOverview = diagnostics.getByRole("region", { name: "队列概况", exact: true });
+    const queue = queueOverview.getByRole("region", { name: "队列快照", exact: true });
+    const runtime = queueOverview.getByRole("region", { name: "AI 初步分析", exact: true });
+    const analysisButton = runtime.getByRole("button", { name: "查看分析详情", exact: true });
+    const analysisDetails = diagnostics.getByRole("dialog", {
+      name: "AI 初步分析详情",
+      exact: true,
+    });
+    const currentTask = analysisDetails.getByRole("row").filter({ hasText: fixture.suiteName });
     const runtimeScreenshots = testInfo.outputPath("screenshots");
     await mkdir(runtimeScreenshots, { recursive: true });
-    for (const [width, height] of [
-      [1024, 768],
-      [1536, 960],
+    for (const [width, height, theme] of [
+      [1024, 768, "light"],
+      [1536, 960, "dark"],
     ] as const) {
+      await diagnostics
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL("/", diagnostics.url()).href },
+        ]);
       await diagnostics.setViewportSize({ width, height });
+      await diagnostics.reload();
+      await expect(runtime).toContainText("3 / 3");
+      await expect(queue.getByText("可投递", { exact: true })).toBeVisible();
+      await expect(queueOverview.getByRole("table")).toHaveCount(0);
+      await expect(queueOverview).not.toContainText(fixture.suiteName);
+      const left = (await queue.boundingBox())!;
+      const right = (await runtime.boundingBox())!;
+      expect(right.x).toBeGreaterThan(left.x + left.width);
+      expect(Math.abs(left.y - right.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(left.width - right.width)).toBeLessThanOrEqual(1);
       await expectUiIntegrity(diagnostics);
-      await runtime.screenshot({
-        path: resolve(runtimeScreenshots, `ai-system-runtime-${width}.png`),
+      await queueOverview.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await diagnostics.screenshot({
+        path: resolve(runtimeScreenshots, `system-queue-overview-${width}.png`),
         animations: "disabled",
       });
+      await queue.getByRole("button", { name: "查看队列详情", exact: true }).click();
+      const queueDetails = diagnostics.getByRole("dialog", { name: "队列详情", exact: true });
+      await expect(queueDetails.getByText("已租约", { exact: true })).toBeVisible();
+      await expectUiIntegrity(diagnostics);
+      await diagnostics.screenshot({
+        path: resolve(runtimeScreenshots, `system-queue-details-${width}.png`),
+        animations: "disabled",
+      });
+      await queueDetails.getByRole("button", { name: "关闭队列详情", exact: true }).click();
+      await expect(queueDetails).toHaveCount(0);
+      await analysisButton.press("Enter");
+      await expect(currentTask.getByText("复核 1 · 独立 2", { exact: true })).toBeVisible();
+      await expect(analysisDetails.getByText("模型请求占用", { exact: true })).toBeVisible();
+      await expect(analysisDetails.getByRole("progressbar")).toHaveAttribute(
+        "aria-valuenow",
+        "100",
+      );
+      await expectUiIntegrity(diagnostics);
+      await diagnostics.screenshot({
+        path: resolve(runtimeScreenshots, `system-ai-analysis-details-${width}.png`),
+        animations: "disabled",
+      });
+      await analysisDetails.getByRole("button", { name: "关闭分析详情", exact: true }).click();
+      await expect(analysisDetails).toHaveCount(0);
     }
+    await analysisButton.click();
     const pending = await page.request.get(
       `/api/v1/run-batches/${fixture.batchId}/export?template=failure-analysis&scope=final`,
     );
@@ -306,7 +351,8 @@ test("AI batch classification shares refined conclusions and exports ranked issu
     });
     expect(sameGroupOverlap).toBe(false);
     await expect(currentTask).toHaveCount(0, { timeout: 15000 });
-    await expect(runtime.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+    await expect(analysisDetails.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+    await expect(analysisDetails.getByText("暂无可见的分析任务", { exact: true })).toBeVisible();
     await diagnostics.close();
     expect(initialRequests).toBe(2);
     expect(rejectedFinals).toBe(1);

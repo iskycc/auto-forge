@@ -117,6 +117,11 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
   await page.getByRole("button", { name: "刷新信息" }).click();
   await expect(report).toHaveAttribute("aria-busy", "false");
   await expect(page.getByText(longError, { exact: true })).toHaveCount(0);
+
+  const liteDataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (diagnostic.mode === "lite" && liteDataDirectory) {
+    await verifyQueueDetails(page, liteDataDirectory);
+  }
 });
 
 async function captureDiagnosticUi(page: Page, name: string, fullPage = true): Promise<void> {
@@ -267,17 +272,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
 
   const liteDataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (diagnosticBody.mode === "lite" && liteDataDirectory) {
-    insertLiteDeadLetterFixture(liteDataDirectory);
     insertSqliteStorageFixture(liteDataDirectory);
-    await page.getByRole("button", { name: "刷新信息" }).click();
-    const deadLetterPanel = page.locator(".diagnostic-dead-letters");
-    await expect(deadLetterPanel).toContainText("对象清理");
-    await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
-    await expect(deadLetterPanel).toContainText("模拟可恢复死信");
-    await deadLetterPanel.getByRole("button", { name: "重新投递（最多 100 条）" }).click();
-    await acceptSystemDialog(page, "重新投递死信任务", "重新投递");
-    await expect(page.locator(".toast-card", { hasText: "已重新投递 1 个死信任务" })).toBeVisible();
-    await expect(deadLetterPanel).toHaveCount(0);
   }
 
   await page
@@ -483,6 +478,34 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     items: [expect.objectContaining({ action: "retention.execute", resourceId: "log" })],
   });
 });
+
+async function verifyQueueDetails(page: Page, dataDirectory: string) {
+  insertLiteDeadLetterFixture(dataDirectory);
+  await page.getByRole("button", { name: "刷新信息" }).click();
+  const queueSummary = page.getByRole("region", { name: "队列快照", exact: true });
+  await expect(queueSummary.getByText("死信", { exact: true })).toBeVisible();
+  await expect(page.locator(".diagnostic-dead-letters")).toHaveCount(0);
+  await queueSummary.getByRole("button", { name: "查看队列详情", exact: true }).click();
+  const queueDetails = page.getByRole("dialog", { name: "队列详情", exact: true });
+  const deadLetterPanel = queueDetails.locator(".diagnostic-dead-letters");
+  await expect(deadLetterPanel).toContainText("对象清理");
+  await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
+  await expect(deadLetterPanel).toContainText("模拟可恢复死信");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureDiagnosticUi(page, `queue-dead-letter-details-${viewport.width}`, false);
+  }
+  await deadLetterPanel.getByRole("button", { name: "重新投递（最多 100 条）" }).click();
+  await acceptSystemDialog(page, "重新投递死信任务", "重新投递");
+  await expect(page.locator(".toast-card", { hasText: "已重新投递 1 个死信任务" })).toBeVisible();
+  await expect(deadLetterPanel).toHaveCount(0);
+  await expect(queueDetails.getByText("暂无死信任务", { exact: true })).toBeVisible();
+  await queueDetails.getByRole("button", { name: "关闭队列详情", exact: true }).click();
+}
 
 function insertLiteDeadLetterFixture(dataDirectory: string): void {
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));

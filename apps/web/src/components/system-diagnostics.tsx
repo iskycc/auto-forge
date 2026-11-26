@@ -18,7 +18,7 @@ import {
   writeBrowserSnapshot,
 } from "@/lib/browser-read-cache";
 import { DiagnosticPanels } from "./system-diagnostic-panels";
-import { DiagnosticDeadLetters } from "./system-diagnostic-dead-letters";
+import { DiagnosticQueues } from "./system-diagnostic-queues";
 import styles from "./system-diagnostics.styles";
 
 const CACHE_KEY = "system-diagnostics:v2";
@@ -156,16 +156,19 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
         />
       ) : null}
       {diagnostic ? (
-        <>
-          <DiagnosticPanels diagnostic={diagnostic} canManage={canManage} />
-          <DiagnosticDeadLetters
-            diagnostic={diagnostic}
-            canManage={canManage}
-            redriving={redriving}
-            loading={loading}
-            redriveDeadLetters={redriveDeadLetters}
-          />
-        </>
+        <DiagnosticPanels
+          diagnostic={diagnostic}
+          canManage={canManage}
+          queueOverview={
+            <DiagnosticQueues
+              diagnostic={diagnostic}
+              canManage={canManage}
+              redriving={redriving}
+              loading={loading}
+              redriveDeadLetters={redriveDeadLetters}
+            />
+          }
+        />
       ) : null}
     </section>
   );

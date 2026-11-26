@@ -54,7 +54,19 @@ export function DiagnosticDeadLetters({
             ) : null}
           </div>
           <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
-            <Table className={cn("data-table", uiPatterns["data-table"])}>
+            <Table
+              className={cn(
+                "data-table w-full [table-layout:fixed] [&_td]:[overflow-wrap:anywhere]",
+                uiPatterns["data-table"],
+              )}
+            >
+              <colgroup>
+                <col className="w-[16%]" />
+                <col className="w-[19%]" />
+                <col className="w-[32%]" />
+                <col className="w-[12%]" />
+                <col className="w-[21%]" />
+              </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHead>任务类型</TableHead>
@@ -119,5 +131,5 @@ function formatDate(value: string): string {
 
 const systemDiagnosticDeadLettersStyles = {
   "diagnostic-dead-letters":
-    "grid gap-2.5 border border-solid border-border rounded-xl p-3.5 bg-warning/10 [&_.section-heading_h3]:m-0 [&_.section-heading_p]:m-0 [&_.section-heading_p]:mt-[3px] [&_.section-heading_p]:text-muted-foreground [&_.section-heading_p]:text-xs [&_.table-scroll]:max-h-[360px] [&_.table-scroll]:bg-card",
+    "grid min-w-0 gap-2.5 border border-solid border-border rounded-xl p-3.5 bg-warning/10 [&_.section-heading_h3]:m-0 [&_.section-heading_p]:m-0 [&_.section-heading_p]:mt-[3px] [&_.section-heading_p]:text-muted-foreground [&_.section-heading_p]:text-xs [&_.table-scroll]:bg-card",
 } as const;

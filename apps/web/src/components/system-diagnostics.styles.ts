@@ -1,6 +1,6 @@
 /** Component compositions using the shared Ant Design theme. */
 const styles = {
-  page: "system-diagnostics-page grid gap-4 min-w-0 [&_.diagnostic-dead-letters]:min-w-0 [&_.diagnostic-dead-letters_.data-table]:[table-layout:fixed] [&_.diagnostic-dead-letters_.data-table]:w-full [&_.diagnostic-dead-letters_td]:[overflow-wrap:anywhere]",
+  page: "system-diagnostics-page grid gap-4 min-w-0",
   toolbar:
     "system-diagnostics-toolbar flex items-center gap-3 min-w-0 justify-between flex-wrap [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-xs [&_p]:leading-[1.6]",
   actions: "system-diagnostics-actions flex items-center gap-2 min-w-0 flex-wrap",
@@ -23,8 +23,9 @@ const styles = {
     "system-diagnostics-summary grid grid-cols-3 [margin:16px_0_0] gap-4 border-t border-solid border-border pt-4 [&_>_div]:grid [&_>_div]:gap-1 [&_>_div]:min-w-0 [&_strong]:flex [&_strong]:flex-wrap [&_strong]:items-center [&_strong]:gap-2 [&_strong]:text-lg [&_small]:text-xs [&_small]:text-muted-foreground [&_small]:font-normal [&_strong_span]:text-xs [&_strong_span]:font-normal [&_strong_span]:border-0 [&_strong_span]:p-0 [&_strong_span]:bg-transparent",
   resourceTop:
     "system-diagnostics-resourceTop [&_small]:text-xs [&_small]:text-muted-foreground [&_small]:font-normal grid grid-cols-3 gap-2 my-4 mx-0 [&_>_div]:grid [&_>_div]:gap-2 [&_>_div]:min-w-0 [&_strong]:text-sm",
+  queueSummary: "min-w-0 flex flex-col items-start gap-3",
   queueStats:
-    "system-diagnostics-queueStats [&_small]:text-xs [&_small]:text-muted-foreground [&_small]:font-normal [&_>_div]:grid [&_>_div]:gap-2 [&_>_div]:min-w-0 grid grid-cols-3 gap-3 my-4 mx-0 [&_strong]:text-2xl [&_strong]:tabular-nums",
+    "grid w-full grid-flow-col auto-cols-fr gap-2 [&_.ant-statistic-content]:tabular-nums [&_.ant-statistic-content]:[overflow-wrap:anywhere]",
   dependencies:
     "system-diagnostics-dependencies grid grid-cols-4 gap-3 max-[1181px]:grid max-[1181px]:grid-cols-2",
   issues:
