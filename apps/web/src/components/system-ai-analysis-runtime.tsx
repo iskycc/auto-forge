@@ -18,8 +18,10 @@ import { RobotOutlined } from "@ant-design/icons";
 import { aiAnalysisRuntimeSchema, type AiAnalysisRuntime } from "@autoforge/contracts";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { throwApiErrorResponse } from "@/lib/client-api";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { ActionDialog } from "./action-dialog";
+import { useConfirm, useToast } from "./ui-feedback";
 import styles from "./system-diagnostics.styles";
 
 const REFRESH_INTERVAL_MS = 5000;
@@ -42,22 +44,30 @@ function jobStage(job: RuntimeJob) {
 }
 
 export function SystemAiAnalysisRuntime() {
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [sample, setSample] = useState<AiAnalysisRuntime>();
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [stopping, setStopping] = useState<string>();
   const request = useRef<AbortController | null>(null);
-  const refresh = useCallback(async () => {
-    if (document.hidden || request.current) return;
+  const refresh = useCallback(async (force = false) => {
+    if (document.hidden || (request.current && !force)) return;
+    request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
     setLoading(true);
     try {
-      const response = await fetch("/api/v1/settings/diagnostics/ai-analysis", {
-        cache: "no-store",
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
-      });
-      if (response.status === 401 || response.status === 403) setSample(undefined);
+      const response = await fetch(
+        `/api/v1/settings/diagnostics/ai-analysis${force ? "?refresh=1" : ""}`,
+        {
+          cache: "no-store",
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+        },
+      );
+      if (!controller.signal.aborted && (response.status === 401 || response.status === 403))
+        setSample(undefined);
       if (!response.ok) throw new Error("AI 分析状态读取失败");
       const next = aiAnalysisRuntimeSchema.parse(await response.json());
       if (!controller.signal.aborted) {
@@ -84,6 +94,42 @@ export function SystemAiAnalysisRuntime() {
       request.current = null;
     };
   }, [refresh]);
+
+  async function stopAnalysis(job: RuntimeJob) {
+    setStopping(job.id);
+    try {
+      const target =
+        job.sequenceNumber === null
+          ? job.taskName
+          : `批次 #${job.sequenceNumber} · ${job.taskName}`;
+      if (
+        !(await confirmAction({
+          title: "停止 AI 初步分析",
+          description: `${target}。停止后保留已发布的初析结论，执行批次仍按当前状态运行。`,
+          confirmLabel: "停止初析",
+          tone: "danger",
+        }))
+      )
+        return;
+      const response = await fetch("/api/v1/ai-analysis", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ batchId: job.batchId, jobId: job.id }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) await throwApiErrorResponse(response, "停止 AI 初析失败。");
+      setSample(
+        (current) =>
+          current && { ...current, jobs: current.jobs.filter(({ id }) => id !== job.id) },
+      );
+      toast.success("AI 初析停止请求已处理。");
+      await refresh(true);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "停止 AI 初析失败。");
+    } finally {
+      setStopping(undefined);
+    }
+  }
 
   return (
     <section
@@ -125,7 +171,7 @@ export function SystemAiAnalysisRuntime() {
         closeLabel="关闭分析详情"
         className="w-[min(880px,calc(100vw-3rem))]"
         footer={
-          <Button disabled={loading} onClick={() => void refresh()}>
+          <Button disabled={loading} onClick={() => void refresh(true)}>
             刷新进度
           </Button>
         }
@@ -203,7 +249,7 @@ export function SystemAiAnalysisRuntime() {
                 columns={[
                   {
                     title: "执行任务",
-                    width: "32%",
+                    width: "30%",
                     render: (_, job) => (
                       <Space
                         orientation="vertical"
@@ -228,7 +274,7 @@ export function SystemAiAnalysisRuntime() {
                   { title: "阶段", width: "18%", render: (_, job) => <Tag>{jobStage(job)}</Tag> },
                   {
                     title: "用例进展",
-                    width: "32%",
+                    width: "27%",
                     render: (_, job) => (
                       <Space orientation="vertical" size={0}>
                         <Typography.Text strong>
@@ -243,7 +289,7 @@ export function SystemAiAnalysisRuntime() {
                   },
                   {
                     title: "占用请求",
-                    width: "18%",
+                    width: "15%",
                     render: (_, job) => {
                       const { stack, group, individual } = job.requests;
                       return (
@@ -262,6 +308,27 @@ export function SystemAiAnalysisRuntime() {
                       );
                     },
                   },
+                  ...(sample.jobs.some(({ canCancel }) => canCancel)
+                    ? [
+                        {
+                          title: "操作",
+                          width: 106,
+                          render: (_: unknown, job: RuntimeJob) =>
+                            job.canCancel ? (
+                              <Button
+                                danger
+                                type="link"
+                                className="!min-h-8 !px-0"
+                                loading={stopping === job.id}
+                                disabled={stopping !== undefined}
+                                onClick={() => void stopAnalysis(job)}
+                              >
+                                停止初析
+                              </Button>
+                            ) : null,
+                        },
+                      ]
+                    : []),
                 ]}
               />
               {sample.hasMoreJobs ? (

@@ -145,7 +145,7 @@ export interface AiAnalysisRepository {
   runtime(input: {
     now: string;
     projectIds?: readonly string[];
-  }): Promise<import("@autoforge/contracts").AiAnalysisRuntime>;
+  }): Promise<import("@autoforge/contracts").AiAnalysisRuntimeSnapshot>;
   saveConfiguration(record: AiConfigurationRecord, expectedRevision: number): Promise<boolean>;
   create(
     job: AiAnalysisJob,

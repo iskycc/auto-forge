@@ -135,6 +135,82 @@ describe("AI evidence authorization", () => {
     await service.runtime(actor(["settings.read"]));
     expect(runtime).toHaveBeenLastCalledWith({ now: now.toISOString(), projectIds: [] });
   });
+
+  it("derives stop permissions per identity even when the runtime snapshot is shared", async () => {
+    const now = new Date("2026-11-26T00:00:00Z");
+    const snapshot: Awaited<ReturnType<AiAnalysisRepository["runtime"]>> = {
+      sampledAt: now.toISOString(),
+      enabled: true,
+      activeRequests: 0,
+      concurrencyLimit: 2,
+      coolingUntil: null,
+      hasMoreJobs: false,
+      jobs: [
+        {
+          id: "job",
+          batchId: "batch",
+          projectId: "project",
+          taskName: "任务",
+          sequenceNumber: null,
+          single: false,
+          status: "queued",
+          phase: null,
+          acceptingFinalResults: false,
+          total: 0,
+          prepared: 0,
+          reviewed: 0,
+          completed: 0,
+          failed: 0,
+          requests: { stack: 0, group: 0, individual: 0 },
+        },
+      ],
+    };
+    const runtime = vi.fn<AiAnalysisRepository["runtime"]>().mockResolvedValue(snapshot);
+    const cancel = vi.fn<AiAnalysisRepository["cancel"]>();
+    const cache = {
+      get: vi.fn(async (namespace: string) =>
+        namespace === "ai-analysis-runtime" ? JSON.stringify(snapshot) : null,
+      ),
+      set: vi.fn(),
+      delete: vi.fn(),
+      close: vi.fn(),
+    };
+    const service = new AiAnalysisService(
+      {
+        runtime,
+        cancel,
+        view: async () => ({ job: { projectId: "project" } }),
+      } as unknown as AiAnalysisRepository,
+      { getMetadata: async () => ({ projectId: "project" }) } as unknown as RunBatchRepository,
+      {} as SecretCipherPort,
+      { now: () => now },
+      { next: () => "unused" },
+      cache,
+    );
+    const reader = actor(["run.read", "case.read", "log.read", "analysis.ai.read"]);
+    reader.systemPermissions = ["settings.read", "settings.manage"];
+    const writer = actor([
+      "run.read",
+      "case.read",
+      "log.read",
+      "analysis.ai.read",
+      "analysis.ai.create",
+    ]);
+    const [readerJob] = (await service.runtime(reader)).jobs;
+    const [writerJob] = (await service.runtime(writer)).jobs;
+    expect(readerJob?.canCancel).toBe(false);
+    expect(writerJob?.canCancel).toBe(true);
+    expect(writerJob).not.toHaveProperty("projectId");
+    expect(runtime).not.toHaveBeenCalled();
+    await expect(service.cancel(reader, "batch", "job")).rejects.toMatchObject({
+      code: "AUTH_FORBIDDEN",
+    });
+    expect(cancel).not.toHaveBeenCalled();
+    await service.cancel(writer, "batch", "job");
+    expect(cancel).toHaveBeenCalledWith("job", now.toISOString());
+    await service.runtime(writer, true);
+    expect(runtime).toHaveBeenCalledOnce();
+  });
   it("keeps manual analysis permissions separate from model disclosure", () => {
     expect(() =>
       assertAiPermission(

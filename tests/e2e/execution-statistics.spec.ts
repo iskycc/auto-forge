@@ -19,6 +19,69 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("execution detail rates retain precision from the pass counts in both viewers", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const fixture = await database();
+  const anonymous = await browser.newContext();
+  const batchId = randomUUID();
+  const runnerId = randomUUID();
+  const recordedAt = new Date().toISOString();
+  try {
+    await seedLargeExecutionOverview(fixture.execute, {
+      dialect: fixture.dialect,
+      batchId,
+      runnerId,
+      suiteId: randomUUID(),
+      projectId: DEFAULT_PROJECT_ID,
+      caseCount: 643,
+      roundCount: 1,
+      recordedAt,
+    });
+    await fixture.execute(`
+      UPDATE execution_runs SET status='failed',terminal_outcome='failed'
+      WHERE id IN (SELECT id FROM execution_runs WHERE batch_id='${batchId}' ORDER BY id LIMIT 15);
+      UPDATE run_attempts SET status='failed',outcome='failed'
+      WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id='${batchId}' AND status='failed');
+    `);
+    const share = await browserJson<{ shareUrl: string }>(
+      page,
+      `/api/v1/run-batches/${batchId}/share`,
+      { method: "POST" },
+    );
+    expect(share.status).toBe(200);
+    const visitor = await anonymous.newPage();
+    for (const [target, width, height, url] of [
+      [page, 1024, 768, `/run-batches/${batchId}`],
+      [visitor, 1536, 960, share.body.shareUrl],
+    ] as const) {
+      await target.setViewportSize({ width, height });
+      await target.goto(url);
+      await expect(target.getByRole("region", { name: "批次概览" })).toContainText("97.67%", {
+        timeout: 30_000,
+      });
+      await expect(
+        target.getByRole("region", { name: "执行结果图表" }).getByText("97.67%", { exact: true }),
+      ).toBeVisible();
+      const rows = target.getByRole("region", { name: "轮次列表" });
+      await expect(rows.getByRole("cell", { name: "97.67%", exact: true })).toHaveCount(4);
+      await expectUiIntegrity(target);
+      await target.screenshot({
+        path: testInfo.outputPath(`execution-percent-${width}.png`),
+        animations: "disabled",
+      });
+    }
+  } finally {
+    await anonymous.close();
+    await fixture.execute(
+      `DELETE FROM read_model_snapshots WHERE query_json LIKE '%${batchId}%'; DELETE FROM run_batches WHERE id='${batchId}'; DELETE FROM runners WHERE id='${runnerId}'`,
+    );
+    await fixture.close();
+  }
+});
+
 test("live summary and open case details follow a retry without reloading either viewer", async ({
   page,
   browser,

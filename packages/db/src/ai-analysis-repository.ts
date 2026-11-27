@@ -10,7 +10,7 @@ import type {
 import {
   AI_BATCH_CLASSIFICATION_STRATEGY,
   AI_INTERMEDIATE_CONCLUSION_SUFFIX,
-  aiAnalysisRuntimeSchema,
+  aiAnalysisRuntimeSnapshotSchema,
   aiModelRequestStageSchema,
   aiModelConfigurationSchema,
   type AiAnalysisJob,
@@ -68,7 +68,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
         ? Promise.resolve([])
         : this.query(
             statement(
-              `SELECT j.id,j.batch_id,j.attempt_id,j.status,j.strategy,j.issue_phase,j.intake_open,
+              `SELECT j.id,j.batch_id,j.project_id,j.attempt_id,j.status,j.strategy,j.issue_phase,j.intake_open,
                   j.total,j.prepared,j.issue_reviewed,j.completed,j.failed,b.suite_name,b.sequence_number
            FROM ai_analysis_jobs j JOIN run_batches b ON b.id=j.batch_id
            WHERE j.${ACTIVE_JOB} ${input.projectIds ? `AND j.project_id IN (${input.projectIds.map(() => "?").join(",")})` : ""}
@@ -101,7 +101,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
       countsByJob.set(id, requests);
     }
     const coolingUntil = admission[0]?.cooling_until;
-    return aiAnalysisRuntimeSchema.parse({
+    return aiAnalysisRuntimeSnapshotSchema.parse({
       sampledAt: input.now,
       enabled: configuration.configuration?.enabled ?? false,
       activeRequests,
@@ -112,6 +112,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
       jobs: activeJobs.slice(0, RUNTIME_JOB_LIMIT).map((row) => ({
         id: String(row.id),
         batchId: String(row.batch_id),
+        projectId: String(row.project_id),
         taskName: String(row.suite_name),
         sequenceNumber: row.sequence_number == null ? null : Number(row.sequence_number),
         single: row.attempt_id !== null,

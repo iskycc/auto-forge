@@ -2,12 +2,13 @@ import {
   updateAiModelConfigurationSchema,
   createAiAnalysisSchema,
   AI_BATCH_CLASSIFICATION_STRATEGY,
-  aiAnalysisRuntimeSchema,
+  aiAnalysisRuntimeSnapshotSchema,
   type AiAnalysisJob,
   type AiModelConfigurationView,
 } from "@autoforge/contracts";
 import {
   DomainError,
+  hasPermission,
   projectIdsForPermission,
   type AuthenticatedIdentity,
   type Permission,
@@ -28,21 +29,21 @@ import type {
 
 export const AI_KEY_PURPOSE = "ai-model-api-key-v1";
 const AI_READ_PERMISSIONS = ["run.read", "case.read", "log.read", "analysis.ai.read"] as const;
+const AI_WRITE_PERMISSIONS = ["run.read", "case.read", "log.read", "analysis.ai.create"] as const;
+function hasAiPermissions(
+  identity: AuthenticatedIdentity,
+  projectId: string,
+  permissions: readonly Permission[],
+) {
+  return permissions.every((permission) => hasPermission(identity, permission, projectId));
+}
 export function assertAiPermission(
   identity: AuthenticatedIdentity,
   projectId: string,
   write = false,
 ) {
-  const permissions: readonly Permission[] = write
-    ? ["run.read", "case.read", "log.read", "analysis.ai.create"]
-    : AI_READ_PERMISSIONS;
-  for (const permission of permissions) {
-    if (
-      !identity.systemPermissions.includes(permission) &&
-      !identity.projectPermissions[projectId]?.includes(permission)
-    )
-      throw new DomainError("AUTH_FORBIDDEN", "没有读取本项目执行证据或进行 AI 初析的权限。");
-  }
+  if (!hasAiPermissions(identity, projectId, write ? AI_WRITE_PERMISSIONS : AI_READ_PERMISSIONS))
+    throw new DomainError("AUTH_FORBIDDEN", "没有读取本项目执行证据或进行 AI 初析的权限。");
 }
 export class AiAnalysisService {
   constructor(
@@ -54,7 +55,7 @@ export class AiAnalysisService {
     private readonly cache?: CachePort,
     private readonly report: (error: unknown) => void = () => {},
   ) {}
-  async runtime(identity: AuthenticatedIdentity) {
+  async runtime(identity: AuthenticatedIdentity, refresh = false) {
     const projectPermissions = AI_READ_PERMISSIONS.filter(
       (permission) => !identity.systemPermissions.includes(permission),
     );
@@ -66,12 +67,23 @@ export class AiAnalysisService {
           .map(([id]) => id)
           .sort()
       : undefined;
+    const runtime = await this.readRuntimeSnapshot(projectIds, refresh);
+    return {
+      ...runtime,
+      jobs: runtime.jobs.map(({ projectId, ...job }) => ({
+        ...job,
+        canCancel: hasAiPermissions(identity, projectId, AI_WRITE_PERMISSIONS),
+      })),
+    };
+  }
+
+  private async readRuntimeSnapshot(projectIds: string[] | undefined, refresh: boolean) {
     const key = JSON.stringify(projectIds ?? null);
     const namespace = "ai-analysis-runtime";
-    if (this.cache) {
+    if (this.cache && !refresh) {
       try {
-        const cached = await this.cache.get(namespace, "platform", 1, key);
-        if (cached) return aiAnalysisRuntimeSchema.parse(JSON.parse(cached));
+        const cached = await this.cache.get(namespace, "platform", 2, key);
+        if (cached) return aiAnalysisRuntimeSnapshotSchema.parse(JSON.parse(cached));
       } catch (cause) {
         this.report(cause);
       }
@@ -85,7 +97,7 @@ export class AiAnalysisService {
         await this.cache.set({
           namespace,
           tenantId: "platform",
-          schemaVersion: 1,
+          schemaVersion: 2,
           key,
           value: JSON.stringify(runtime),
           ttlMs: 3000,

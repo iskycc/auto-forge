@@ -6,7 +6,8 @@ export async function GET(request: Request) {
   try {
     const identity = await authorizeRequest(request, "settings.read", undefined);
     const services = await getPlatformServices();
-    return Response.json(await services.aiAnalysis.runtime(identity), {
+    const refresh = new URL(request.url).searchParams.get("refresh") === "1";
+    return Response.json(await services.aiAnalysis.runtime(identity, refresh), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (cause) {

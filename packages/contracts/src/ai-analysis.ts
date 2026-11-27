@@ -198,37 +198,40 @@ export const aiModelRequestStageSchema = z.enum(["stack", "group", "individual"]
 export type AiModelRequestStage = z.infer<typeof aiModelRequestStageSchema>;
 
 const aiRuntimeCount = z.number().int().nonnegative();
-export const aiAnalysisRuntimeSchema = z.object({
+const aiRuntimeJobSchema = z.object({
+  id: z.string(),
+  batchId: z.string(),
+  taskName: z.string(),
+  sequenceNumber: aiRuntimeCount.nullable(),
+  single: z.boolean(),
+  status: z.enum(["queued", "preparing", "analyzing", "summarizing"]),
+  phase: z.enum(["plan", "classify", "refine", "rank", "publish", "individual"]).nullable(),
+  acceptingFinalResults: z.boolean(),
+  total: aiRuntimeCount,
+  prepared: aiRuntimeCount,
+  reviewed: aiRuntimeCount,
+  completed: aiRuntimeCount,
+  failed: aiRuntimeCount,
+  requests: z.object({
+    stack: aiRuntimeCount,
+    group: aiRuntimeCount,
+    individual: aiRuntimeCount,
+  }),
+});
+const aiRuntimeTotalsSchema = z.object({
   sampledAt: z.iso.datetime(),
   enabled: z.boolean(),
   activeRequests: aiRuntimeCount,
   concurrencyLimit: aiRuntimeCount,
   coolingUntil: z.iso.datetime().nullable(),
   hasMoreJobs: z.boolean(),
-  jobs: z
-    .array(
-      z.object({
-        id: z.string(),
-        batchId: z.string(),
-        taskName: z.string(),
-        sequenceNumber: aiRuntimeCount.nullable(),
-        single: z.boolean(),
-        status: z.enum(["queued", "preparing", "analyzing", "summarizing"]),
-        phase: z.enum(["plan", "classify", "refine", "rank", "publish", "individual"]).nullable(),
-        acceptingFinalResults: z.boolean(),
-        total: aiRuntimeCount,
-        prepared: aiRuntimeCount,
-        reviewed: aiRuntimeCount,
-        completed: aiRuntimeCount,
-        failed: aiRuntimeCount,
-        requests: z.object({
-          stack: aiRuntimeCount,
-          group: aiRuntimeCount,
-          individual: aiRuntimeCount,
-        }),
-      }),
-    )
-    .max(20),
+});
+export const aiAnalysisRuntimeSnapshotSchema = aiRuntimeTotalsSchema.extend({
+  jobs: z.array(aiRuntimeJobSchema.extend({ projectId: z.string() })).max(20),
+});
+export type AiAnalysisRuntimeSnapshot = z.infer<typeof aiAnalysisRuntimeSnapshotSchema>;
+export const aiAnalysisRuntimeSchema = aiRuntimeTotalsSchema.extend({
+  jobs: z.array(aiRuntimeJobSchema.extend({ canCancel: z.boolean().default(false) })).max(20),
 });
 export type AiAnalysisRuntime = z.infer<typeof aiAnalysisRuntimeSchema>;
 export type AiAnalysisJob = {

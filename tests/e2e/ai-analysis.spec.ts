@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { openExecutionCaseDetails } from "./support/execution-details";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +11,7 @@ import { createAttemptLogStore } from "../../packages/db/src/attempt-log-store";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import {
   browserJson,
+  acceptSystemDialog,
   ensureAdministrator,
   selectProjectContext,
   uniqueName,
@@ -315,7 +317,10 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       name: "AI 初步分析详情",
       exact: true,
     });
-    const currentTask = analysisDetails.getByRole("row").filter({ hasText: fixture.suiteName });
+    const currentTask = analysisDetails
+      .getByRole("row")
+      .filter({ hasText: fixture.suiteName })
+      .filter({ hasText: "批次初析" });
     const runtimeScreenshots = testInfo.outputPath("screenshots");
     await mkdir(runtimeScreenshots, { recursive: true });
     for (const [width, height, theme] of [
@@ -356,6 +361,9 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       await expect(queueDetails).toHaveCount(0);
       await analysisButton.press("Enter");
       await expect(currentTask.getByText("复核 1 · 独立 2", { exact: true })).toBeVisible();
+      await expect(
+        currentTask.getByRole("button", { name: "停止初析", exact: true }),
+      ).toBeVisible();
       await expect(analysisDetails.getByText("模型请求占用", { exact: true })).toBeVisible();
       await expect(analysisDetails.getByRole("progressbar")).toHaveAttribute(
         "aria-valuenow",
@@ -370,6 +378,46 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       await expect(analysisDetails).toHaveCount(0);
     }
     await analysisButton.click();
+    const secondary = await browserJson<{ id: string }>(page, "/api/v1/ai-analysis", {
+      method: "POST",
+      body: {
+        batchId: fixture.batchId,
+        attemptId: `attempt-run-failed-3-${suffix}`,
+        requestKey: randomUUID(),
+      },
+    });
+    expect(secondary.status).toBe(202);
+    const secondaryRow = analysisDetails
+      .getByRole("row")
+      .filter({ hasText: fixture.suiteName })
+      .filter({ hasText: "单例细查" });
+    const stop = secondaryRow.getByRole("button", { name: "停止初析", exact: true });
+    await stop.click();
+    const confirmation = diagnostics.getByRole("dialog", { name: "停止 AI 初步分析", exact: true });
+    await expect(confirmation).toContainText(fixture.suiteName);
+    for (const [width, height] of [
+      [1024, 768],
+      [1536, 960],
+    ] as const) {
+      await diagnostics.setViewportSize({ width, height });
+      await expectUiIntegrity(diagnostics);
+      await diagnostics.screenshot({
+        path: resolve(runtimeScreenshots, `system-ai-stop-confirmation-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(stop).toBeVisible();
+    await stop.click();
+    await acceptSystemDialog(diagnostics, "停止 AI 初步分析", "停止初析");
+    await expect(secondaryRow).toHaveCount(0);
+    await expect(currentTask).toBeVisible();
+    const stopped = await browserJson<{
+      job: { status: string };
+      items: { conclusion: string | null }[];
+    }>(diagnostics, `${statusPath}&jobId=${secondary.body.id}`);
+    expect(stopped.body.job.status).toBe("cancelled");
+    expect(stopped.body.items.every(({ conclusion }) => conclusion === null)).toBe(true);
     const pending = await page.request.get(
       `/api/v1/run-batches/${fixture.batchId}/export?template=failure-analysis&scope=final`,
     );

@@ -3,6 +3,7 @@
 import { Card, Empty, Tag, Typography, theme } from "antd";
 import { DonutChart, type DonutChartSegment } from "./donut-chart";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
+import { formatExecutionPassRate } from "@/lib/run-batch-presentation";
 
 export function ExecutionRoundCharts({
   batch,
@@ -39,7 +40,7 @@ export function ExecutionRoundCharts({
   const executed = summary?.executed ?? Math.max(0, total - notExecuted);
   const inProgress = Math.max(0, executed - passed - failed - timedOut - cancelled);
   const overallPassed = summary?.overallPassed ?? batch.finalSummary.passed;
-  const overallPassRate = summary?.overallPassRate ?? batch.finalSummary.passRate;
+  const overallPassRate = batch.totalRuns > 0 ? (overallPassed / batch.totalRuns) * 100 : 0;
   const scope = summary ? "本轮用例" : round === "all" ? "累计执行数" : "批次用例";
   const segments: DonutChartSegment[] = [
     { label: "通过", value: passed, color: token.colorSuccess },
@@ -104,7 +105,7 @@ export function ExecutionRoundCharts({
               color: token.colorBorder,
             },
           ]}
-          centerValue={`${overallPassRate}%`}
+          centerValue={formatExecutionPassRate(overallPassed, batch.totalRuns)}
           centerLabel="累计通过率"
           ariaLabel={`总体通过进度：累计通过 ${overallPassed} 个用例，共 ${batch.totalRuns} 个`}
         />

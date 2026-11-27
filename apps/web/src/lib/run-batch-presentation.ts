@@ -62,6 +62,19 @@ export function runBatchPassRate<Batch extends Pick<RunBatch, "succeededRuns" | 
   return Math.round((batch.succeededRuns / batch.totalRuns) * 100);
 }
 
+const executionPassRateFormatter = new Intl.NumberFormat("zh-CN", {
+  style: "percent",
+  maximumFractionDigits: 2,
+});
+
+export function formatExecutionPassRate(passed: number, total: number): string {
+  const rate = total > 0 ? passed / total : 0;
+  const formatted = executionPassRateFormatter.format(rate);
+  if (rate > 0 && formatted === "0%") return "<0.01%";
+  if (rate < 1 && formatted === "100%") return ">99.99%";
+  return formatted;
+}
+
 const terminalStatuses = new Set<RunBatch["status"]>(["succeeded", "failed", "cancelled"]);
 
 export function runBatchDurationMs(batch: RunBatch): number {

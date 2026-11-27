@@ -80,6 +80,7 @@ import {
   attemptFailureHint,
   formatAttemptDuration,
   formatBatchDuration,
+  formatExecutionPassRate,
   formatLocalDateTime,
   isActiveRunBatch,
 } from "@/lib/run-batch-presentation";
@@ -505,7 +506,9 @@ export function RunBatchRounds({
                 </TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>{finalStats.totalRuns}</TableCell>
-                <TableCell>{finalStats.passRate}%</TableCell>
+                <TableCell>
+                  {formatExecutionPassRate(finalStats.passed, finalStats.totalRuns)}
+                </TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>{finalStats.passed}</TableCell>
                 <TableCell>{finalStats.failed + finalStats.timedOut}</TableCell>
@@ -529,7 +532,9 @@ export function RunBatchRounds({
                 <TableCell>—</TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>{allRoundsStats.totalRuns}</TableCell>
-                <TableCell>{allRoundsStats.passRate}%</TableCell>
+                <TableCell>
+                  {formatExecutionPassRate(allRoundsStats.passed, allRoundsStats.totalRuns)}
+                </TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>{allRoundsStats.passed}</TableCell>
                 <TableCell>{allRoundsStats.failed + allRoundsStats.timedOut}</TableCell>
@@ -540,6 +545,8 @@ export function RunBatchRounds({
               {summaries.flatMap((summary) => {
                 const recovery = recoveries.find((item) => item.afterRound === summary.round);
                 const roundConcurrency = concurrencyByRound.get(summary.round);
+                const completed =
+                  summary.passed + summary.failed + summary.timedOut + summary.cancelled;
                 const roundSelected =
                   !allRoundsSelected &&
                   !summarySelected &&
@@ -598,11 +605,12 @@ export function RunBatchRounds({
                       )}
                     </TableCell>
                     <TableCell>{summary.totalRuns}</TableCell>
-                    <TableCell>{summary.overallPassRate}%</TableCell>
                     <TableCell>
-                      {summary.roundPassRate === null
-                        ? "—"
-                        : `${summary.roundPassRate}%${summary.status === "running" ? "（进行中）" : ""}`}
+                      {formatExecutionPassRate(summary.overallPassed, batch.totalRuns)}
+                    </TableCell>
+                    <TableCell>
+                      {completed === 0 ? "—" : formatExecutionPassRate(summary.passed, completed)}
+                      {completed > 0 && summary.status === "running" ? "（进行中）" : null}
                     </TableCell>
                     <TableCell>{summary.passed}</TableCell>
                     <TableCell>{summary.failed + summary.timedOut}</TableCell>
