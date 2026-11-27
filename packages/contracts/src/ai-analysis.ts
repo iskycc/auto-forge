@@ -147,6 +147,29 @@ export const AI_BATCH_CLASSIFICATION_STRATEGY = "stack_refinement_v3";
 export type AiAnalysisStrategy =
   "legacy" | "stack_groups_v2" | "single_full_v2" | typeof AI_BATCH_CLASSIFICATION_STRATEGY;
 export type AiIssueCategory = { rank: number; summary: string };
+export const AI_ISSUE_SUBJECT_LIMIT = 8;
+export const AI_ISSUE_SUBJECT_LENGTH = 80;
+export const AI_ISSUE_SCOPE_PREFIX = "受影响对象：";
+export const aiIssueSubjectsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(AI_ISSUE_SUBJECT_LENGTH)
+      .regex(/^[^\p{Cc}\p{Cs}]+$/u),
+  )
+  .max(AI_ISSUE_SUBJECT_LIMIT);
+export const aiIssueScopeSchema = z
+  .object({ subjects: aiIssueSubjectsSchema, hasMore: z.boolean() })
+  .strict();
+export type AiIssueScope = z.infer<typeof aiIssueScopeSchema>;
+export const aiIssueMemberObservationSchema = z
+  .object({ conclusion: z.unknown(), affectedSubjects: aiIssueSubjectsSchema })
+  .strict();
+export const aiIssueSynthesisVerdictSchema = z
+  .object({ summary: z.string(), conclusion: z.unknown() })
+  .strict();
 export const aiInitialStackVerdictSchema = z
   .object({
     categories: z.array(z.object({ stackId: z.string(), summary: z.string() }).strict()).max(50),
@@ -158,6 +181,7 @@ export const aiIssueVerdictSchema = z
     useExistingConclusion: z.boolean(),
     summary: z.string(),
     conclusion: z.unknown(),
+    affectedSubjects: aiIssueSubjectsSchema.default([]),
   })
   .strict();
 export type AiAnalysisStatus =

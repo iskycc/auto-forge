@@ -38,6 +38,8 @@ test("AI batch classification shares refined conclusions and exports ranked issu
     { stack: stack.fallback, cause: "重复流水号", count: 2 },
   ];
   const cases = cohorts.flatMap((cohort) => Array.from({ length: cohort.count }, () => cohort));
+  const walletSubjects = ["POST /wallet/detail", "POST /wallet/balance", "WalletSettlementJob"];
+  const affectedSubject = (index: number) => walletSubjects[index % walletSubjects.length]!;
   const firstPass: Array<{ stackId: string; stack: string; count: number }> = [];
   const comparisons = new Map<number, Array<{ summary: string; reason: string }>>();
   const logFragments = new Map<number, string[]>();
@@ -45,6 +47,8 @@ test("AI batch classification shares refined conclusions and exports ranked issu
   const single = new Set<number>();
   let initialRequests = 0;
   let rejectedFinals = 0;
+  let rejectedNarrowScope = 0;
+  const synthesizedMembers = new Map<string, number>();
   let blockedIndependent = 0;
   let blockedGroup = false;
   let sameGroupOverlap = false;
@@ -78,17 +82,49 @@ test("AI batch classification shares refined conclusions and exports ranked issu
           summary: `暂定 ${stack.split(": ")[1]}`,
         })),
       };
+    } else if (tool === "summarize_ai_issue") {
+      const label: string = evidence.categoryLabel;
+      const count = (evidence.findings as Array<{ count: number }>).reduce(
+        (sum, finding) => sum + finding.count,
+        0,
+      );
+      synthesizedMembers.set(label, count);
+      const wallet = label === "钱包数据库连接池";
+      const narrow = wallet && rejectedNarrowScope++ === 0;
+      if (wallet) {
+        expect(evidence.previousSynthesis).toBeNull();
+        expect(evidence.affectedSubjects).toEqual(walletSubjects);
+        expect(evidence.findings).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              evidence: expect.stringContaining("后续成员也出现连接等待超阈"),
+            }),
+          ]),
+        );
+      }
+      verdict = {
+        summary: label,
+        conclusion: {
+          recommendation: "business_issue_likely",
+          reason: narrow ? `${walletSubjects[0]} 连接超时` : `多例共同确认：${label}`,
+          evidence: wallet ? "多类对象均连接等待超阈。" : `观察到 ${label} 错误。`,
+          evidenceReferences: [evidence.evidenceId],
+        },
+      };
     } else {
       const run = /run-failed-(\d+)/u.exec(context.member ?? "")?.[1];
       const index = run === undefined ? -1 : Number(run);
       const text: string = evidence.text ?? "";
       const cause = /实际原因=(.+)/u.exec(text)?.[1];
+      const subject = /出错对象=(.+)/u.exec(text)?.[1];
       if (evidence.evidenceId.startsWith("stdout-"))
         logFragments.set(index, [...(logFragments.get(index) ?? []), text]);
       const conclusion = {
         recommendation: "business_issue_likely",
         reason: cause ? `根据业务日志确认：${cause}` : "已读取本片，继续等待实际原因。",
-        evidence: cause ? `本片最早的解释性异常：观察到 ${cause} 错误。` : "已读取日志片。",
+        evidence: cause
+          ? `本片最早的解释性异常：观察到 ${cause} 错误。${text.includes("Connection wait deadline exceeded") ? "后续成员也出现连接等待超阈。" : ""}`
+          : "已读取日志片。",
         evidenceReferences: [evidence.evidenceId],
       };
       if (tool === "submit_ai_issue" || context.stage === "read_issue_member") {
@@ -110,26 +146,29 @@ test("AI batch classification shares refined conclusions and exports ranked issu
           categoryId: string;
           summary: string;
           reason: string;
+          requiresUpdatedConclusion?: boolean;
         }>;
         comparisons.set(index, candidates);
         const match = candidates.find(({ summary }) => summary === cause);
         const improves = index === 1;
+        if (improves) expect(match?.requiresUpdatedConclusion).toBe(true);
         const useExistingConclusion = !!match && !improves;
         verdict = {
           categoryId: match?.categoryId ?? null,
           useExistingConclusion,
           summary: useExistingConclusion ? "逐例复核时的临时简述" : cause,
+          affectedSubjects: index === 1 ? context.subjectCandidates : subject ? [subject] : [],
           conclusion: {
             ...conclusion,
             reason: improves
               ? `连接池指标进一步证实：${cause}`
-              : useExistingConclusion
-                ? `逐例复核时的临时结论：${index}`
+              : index === 0
+                ? `${affectedSubject(index)} 发生${cause}故障`
                 : conclusion.reason,
           },
         };
       } else if (context.stage === "read_issue_member") {
-        verdict = conclusion;
+        verdict = { conclusion, affectedSubjects: subject ? [subject] : [] };
       } else if (context.stage === "independent_issue_member") {
         independent.add(index);
         if (index === 19 || index === 20) {
@@ -234,7 +273,11 @@ test("AI batch classification shares refined conclusions and exports ranked issu
               recordedAt,
               content:
                 `\u001b[32m全文起点 ${index}\u001b[0m\n` +
+                (index < 6
+                  ? `出错对象=${affectedSubject(index)}\n错误响应=Service unavailable\n`
+                  : "") +
                 (index === 1 ? "跨片业务正文\n".repeat(1000) : "") +
+                (index === 2 ? "Connection wait deadline exceeded\n" : "") +
                 `${item.stack}\n\tat e2e.Wallet.run(Wallet.java:${20 + index})\n\n` +
                 `实际原因=${item.cause}\n全文结束 ${index}\nTestNG exit code:1\n`,
             },
@@ -356,6 +399,15 @@ test("AI batch classification shares refined conclusions and exports ranked issu
     await diagnostics.close();
     expect(initialRequests).toBe(2);
     expect(rejectedFinals).toBe(1);
+    expect(rejectedNarrowScope).toBe(2);
+    expect([...synthesizedMembers]).toEqual(
+      expect.arrayContaining([
+        ["钱包数据库连接池", 6],
+        ["钱包缓存过期", 5],
+        ["网关鉴权服务故障", 7],
+      ]),
+    );
+    expect(synthesizedMembers.size).toBe(3);
     expect(firstPass.map(({ stack, count }) => [stack, count])).toEqual(
       expect.arrayContaining([
         [stack.wallet, 12],
@@ -406,7 +458,8 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       await page.getByRole("button", { name: "AI 初步分析", exact: true }).first().click();
       await expect(dialog.getByText(/组内已复核 24/u)).toBeVisible();
       await dialog.getByRole("button", { name: "查看完整初析", exact: true }).first().click();
-      await expect(dialog.getByText(/依据：观察到.+错误。/u).first()).toBeVisible();
+      await expect(dialog.getByText(/依据：多类对象均连接等待超阈。/u).first()).toBeVisible();
+      await expect(dialog.getByText(/受影响对象：.*WalletSettlementJob/u).first()).toBeVisible();
       await expectUiIntegrity(page);
       await page.screenshot({
         path: resolve(screenshots, `ai-classification-${theme}-${width}.png`),
@@ -490,11 +543,16 @@ test("AI batch classification shares refined conclusions and exports ranked issu
       for (const [index, item] of cases.entries()) {
         const row = exported.get(`e2e.analysis.Failed${index}Test`);
         expect(row?.[0]).toBe("业务问题需要提单");
+        expect(row?.[1]).toContain(item.rank ? `多例共同确认：${item.cause}` : item.cause);
         expect(row?.[1]).toContain(
-          item.cause === "钱包数据库连接池" ? `连接池指标进一步证实：${item.cause}` : item.cause,
+          index < 6 ? "依据：多类对象均连接等待超阈。" : `依据：观察到 ${item.cause} 错误。`,
         );
-        expect(row?.[1]).toContain(`依据：观察到 ${item.cause} 错误。`);
         expect(row?.[1]).not.toContain("本片最早的解释性异常");
+        if (index < 6) {
+          const scope = row?.[1]?.split("\n").at(-1);
+          expect(scope).toBe(`受影响对象：${walletSubjects.join("、")}`);
+          expect(row?.[1]?.split("\n")[0]).not.toContain(affectedSubject(index));
+        } else expect(row?.[1]).not.toContain("受影响对象");
         expect(row?.slice(2)).toEqual([item.rank ?? "非大批量问题", item.rank ? item.cause : ""]);
       }
       for (const rank of ["第一类问题", "第二类问题", "第三类问题"]) {

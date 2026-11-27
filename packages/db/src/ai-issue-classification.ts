@@ -4,16 +4,30 @@ import {
   type AiIssueBatchWork,
   type AiIssueCandidate,
   type AiIssueClassificationRepository,
+  type AiIssueSynthesis,
 } from "@autoforge/application";
 import {
   AI_BATCH_CLASSIFICATION_STRATEGY,
   AI_BULK_ISSUE_MINIMUM,
+  aiIssueScopeSchema,
   aiPreliminaryConclusionSchema,
+  type AiPreliminaryConclusion,
 } from "@autoforge/contracts";
 import type { AiSql, AiSqlBatch, AiSqlStatement } from "./ai-analysis-repository";
 
 const PLAN_PAGE = 50;
 const PUBLICATION_PAGE = 100;
+
+function mapCategory(row: Record<string, unknown>): AiIssueCandidate {
+  return {
+    id: String(row.id),
+    summary: String(row.summary),
+    conclusion: aiPreliminaryConclusionSchema.parse(JSON.parse(String(row.conclusion_json))),
+    ...(typeof row.affected_subjects_json === "string"
+      ? { scope: aiIssueScopeSchema.parse(JSON.parse(row.affected_subjects_json)) }
+      : {}),
+  };
+}
 
 function sql(text: string, ...values: AiSqlStatement["values"]): AiSqlStatement {
   return { text, values };
@@ -238,20 +252,20 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
     return (
       await this.query(
         sql(
-          "SELECT id,summary,conclusion_json FROM ai_analysis_issue_categories WHERE group_id=? AND id>? ORDER BY id LIMIT ?",
+          "SELECT id,summary,conclusion_json,affected_subjects_json FROM ai_analysis_issue_categories WHERE group_id=? AND id>? ORDER BY id LIMIT ?",
           work.id,
           after,
           limit,
         ),
       )
-    ).map((row) => ({
-      id: String(row.id),
-      summary: String(row.summary),
-      conclusion: aiPreliminaryConclusionSchema.parse(JSON.parse(String(row.conclusion_json))),
-    }));
+    ).map(mapCategory);
   }
 
-  private ownedGroup(work: AiGroupWork, now: string, status: "running" | "releasing" = "running") {
+  private ownedGroup(
+    work: AiGroupWork,
+    now: string,
+    status: "running" | "releasing" | "synthesizing" = "running",
+  ) {
     return sql(
       `SELECT g.id FROM ai_analysis_groups g JOIN ai_analysis_jobs j ON j.id=g.job_id
        WHERE g.id=? AND g.lease_token=? AND g.lease_expires_at>? AND g.status=?
@@ -286,31 +300,35 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
     memberId: string,
     category: AiIssueCandidate,
     now: string,
+    finding?: AiPreliminaryConclusion,
   ) {
     const owned = this.ownedGroup(work, now);
     await this.write([
       sql(
-        `INSERT INTO ai_analysis_issue_categories(id,job_id,group_id,member_count,summary,conclusion_json)
-         SELECT ?,?,?,1,?,? WHERE EXISTS(${owned.text})
+        `INSERT INTO ai_analysis_issue_categories(id,job_id,group_id,member_count,summary,conclusion_json,affected_subjects_json)
+         SELECT ?,?,?,1,?,?,? WHERE EXISTS(${owned.text})
            AND EXISTS(SELECT 1 FROM ai_analysis_items WHERE id=? AND job_id=? AND signature=?
              AND status='group_ready' AND issue_category_id IS NULL)
          ON CONFLICT(id) DO UPDATE SET member_count=ai_analysis_issue_categories.member_count+1,
-           summary=excluded.summary,conclusion_json=excluded.conclusion_json
+           summary=excluded.summary,conclusion_json=excluded.conclusion_json,
+           affected_subjects_json=excluded.affected_subjects_json
          WHERE ai_analysis_issue_categories.group_id=excluded.group_id RETURNING id`,
         category.id,
         work.jobId,
         work.id,
         category.summary,
         JSON.stringify(category.conclusion),
+        category.scope ? JSON.stringify(category.scope) : null,
         ...owned.values,
         memberId,
         work.jobId,
         work.signature,
       ),
       sql(
-        `UPDATE ai_analysis_items SET issue_category_id=?,updated_at=? WHERE id=? AND job_id=?
+        `UPDATE ai_analysis_items SET issue_category_id=?,issue_finding_json=?,updated_at=? WHERE id=? AND job_id=?
          AND status='group_ready' AND issue_category_id IS NULL AND EXISTS(${owned.text}) RETURNING id`,
         category.id,
+        finding ? JSON.stringify(finding) : null,
         now,
         memberId,
         work.jobId,
@@ -382,8 +400,78 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
       sql(
         `UPDATE ai_analysis_groups SET publication_cursor=?,status=?,lease_token=NULL,lease_expires_at=NULL,
          attempts=0,reason=NULL,updated_at=? WHERE id IN (${owned.text}) RETURNING id`,
-        String(items.at(-1)?.id ?? work.releaseAfter),
-        items.length < PUBLICATION_PAGE ? "completed" : "releasing",
+        items.length < PUBLICATION_PAGE ? "" : String(items.at(-1)!.id),
+        items.length < PUBLICATION_PAGE ? "synthesizing" : "releasing",
+        now,
+        ...owned.values,
+      ),
+    ]);
+  }
+
+  async nextSynthesis(work: AiGroupWork): Promise<AiIssueSynthesis | null> {
+    const [row] = await this.query(
+      sql(
+        `SELECT id,summary,conclusion_json,affected_subjects_json,member_count,synthesis_cursor
+       FROM ai_analysis_issue_categories WHERE group_id=? AND id>? AND member_count>=?
+       ORDER BY id LIMIT 1`,
+        work.id,
+        work.synthesisAfter!,
+        AI_BULK_ISSUE_MINIMUM,
+      ),
+    );
+    return row
+      ? {
+          ...mapCategory(row),
+          memberCount: Number(row.member_count),
+          memberCursor: String(row.synthesis_cursor),
+        }
+      : null;
+  }
+
+  async synthesisFindings(category: AiIssueSynthesis, limit: number) {
+    return (
+      await this.query(
+        sql(
+          `SELECT id,issue_finding_json FROM ai_analysis_items
+       WHERE issue_category_id=? AND issue_finding_json IS NOT NULL AND id>? ORDER BY id LIMIT ?`,
+          category.id,
+          category.memberCursor,
+          limit,
+        ),
+      )
+    ).map((row) => ({
+      id: String(row.id),
+      conclusion: aiPreliminaryConclusionSchema.parse(JSON.parse(String(row.issue_finding_json))),
+    }));
+  }
+
+  async saveSynthesis(
+    work: AiGroupWork,
+    now: string,
+    progress?: { category: AiIssueSynthesis; memberCursor: string; complete: boolean },
+  ) {
+    const owned = this.ownedGroup(work, now, "synthesizing");
+    await this.write([
+      ...(progress
+        ? [
+            sql(
+              `UPDATE ai_analysis_issue_categories SET summary=?,conclusion_json=?,synthesis_cursor=?,synthesis_complete=?
+         WHERE id=? AND group_id=? AND EXISTS(${owned.text}) RETURNING id`,
+              progress.category.summary,
+              JSON.stringify(progress.category.conclusion),
+              progress.memberCursor,
+              progress.complete ? 1 : 0,
+              progress.category.id,
+              work.id,
+              ...owned.values,
+            ),
+          ]
+        : []),
+      sql(
+        `UPDATE ai_analysis_groups SET publication_cursor=?,status=?,lease_token=NULL,lease_expires_at=NULL,
+         attempts=0,reason=NULL,updated_at=? WHERE id IN (${owned.text}) RETURNING id`,
+        progress?.complete ? progress.category.id : work.synthesisAfter!,
+        progress ? "synthesizing" : "completed",
         now,
         ...owned.values,
       ),
@@ -393,10 +481,12 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
   private async rank(work: AiIssueBatchWork, now: string) {
     const rows = await this.query(
       sql(
-        `SELECT id, (SELECT COALESCE(MAX(rank),0) FROM ai_analysis_issue_categories WHERE job_id=?)
-         + ROW_NUMBER() OVER (ORDER BY member_count DESC,id) AS next_rank
-       FROM ai_analysis_issue_categories WHERE job_id=? AND rank IS NULL AND member_count>=?
-       ORDER BY member_count DESC,id LIMIT ?`,
+        `SELECT c.id, (SELECT COALESCE(MAX(rank),0) FROM ai_analysis_issue_categories WHERE job_id=?)
+         + ROW_NUMBER() OVER (ORDER BY c.member_count DESC,c.id) AS next_rank
+       FROM ai_analysis_issue_categories c JOIN ai_analysis_groups g ON g.id=c.group_id
+       WHERE c.job_id=? AND c.rank IS NULL AND c.member_count>=?
+         AND (c.synthesis_complete=1 OR g.status='completed')
+       ORDER BY c.member_count DESC,c.id LIMIT ?`,
         work.jobId,
         work.jobId,
         AI_BULK_ISSUE_MINIMUM,
@@ -422,7 +512,7 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
   private async publish(work: AiIssueBatchWork, now: string) {
     const items = await this.query(
       sql(
-        `SELECT i.id,i.attempt_id,c.rank,c.summary,c.conclusion_json
+        `SELECT i.id,i.attempt_id,c.rank,c.summary,c.conclusion_json,c.affected_subjects_json
        FROM ai_analysis_items i LEFT JOIN ai_analysis_issue_categories c ON c.id=i.issue_category_id
        WHERE i.job_id=? AND i.status='group_ready' AND i.id>? ORDER BY i.id LIMIT ?`,
         work.jobId,
@@ -451,6 +541,9 @@ export class SqlAiIssueClassification implements AiIssueClassificationRepository
       }
       const conclusion = renderPreliminaryConclusion(
         aiPreliminaryConclusionSchema.parse(JSON.parse(String(item.conclusion_json))),
+        typeof item.affected_subjects_json === "string"
+          ? aiIssueScopeSchema.parse(JSON.parse(item.affected_subjects_json))
+          : undefined,
       );
       completed++;
       statements.push(

@@ -198,16 +198,20 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
                   summary: issueSummary,
                   conclusion: compact,
                 }
-              : strategy === "legacy"
-                ? {
-                    summary: "Full 合成初析，待验证。",
-                    possibleCauses: ["相同堆栈不代表根因已确认。"],
-                    checks: ["核对每个成员的环境和输入差异。"],
-                    evidenceReferences: [ref],
-                    limitations: [],
-                    confidence: "low",
-                  }
-                : compact;
+              : tool === "summarize_ai_issue"
+                ? { summary: evidence.categoryLabel, conclusion: compact }
+                : context.stage === "read_issue_member"
+                  ? { conclusion: compact, affectedSubjects: [] }
+                  : strategy === "legacy"
+                    ? {
+                        summary: "Full 合成初析，待验证。",
+                        possibleCauses: ["相同堆栈不代表根因已确认。"],
+                        checks: ["核对每个成员的环境和输入差异。"],
+                        evidenceReferences: [ref],
+                        limitations: [],
+                        confidence: "low",
+                      }
+                    : compact;
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({
@@ -597,11 +601,25 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         expect(view.groups?.map((group) => group.memberCount).sort((a, b) => a - b)).toEqual(
           [...groupSizes].sort((a, b) => a - b),
         );
-        expect(view.groups?.every((group) => group.processed === group.memberCount)).toBe(true);
+        expect(
+          view.groups?.map(({ memberCount, processed, status, reason }) => ({
+            processed,
+            expected: memberCount,
+            status,
+            reason,
+          })),
+        ).toEqual(
+          view.groups?.map(({ memberCount }) => ({
+            processed: memberCount,
+            expected: memberCount,
+            status: "completed",
+            reason: null,
+          })),
+        );
         // A small member contributes one input part and its cleaned, combined stdout.
         const expectedCalls =
           strategy === "stack_refinement_v3"
-            ? caseCount * 2 + 1 + 2
+            ? caseCount * 2 + 1 + 2 + groupSizes.length
             : databaseLogs
               ? groupSizes.reduce((sum, size) => sum + (size < 10 ? size * 2 : 1), 0)
               : strategy === "legacy"

@@ -6,6 +6,21 @@ and known limitations.
 
 ## Unreleased
 
+## 1.23.15 - 2026-11-27
+
+### Fixed
+
+- 批次 AI 初析逐例复核后，综合同类所有成员的观察生成共享结论。受影响对象按各成员日志核对并去重，随原因一并展示和导出，最多列出 8 个名称，超过时以“等”标明。
+
+### Compatibility
+
+- Lite 与 Full 的 `0107_ai_issue_affected_subjects.sql` 增加成员复核和类别汇总数据、游标及索引。Full 使用同一版本升级 Web 和全部 Worker。历史结果可从原执行日志重新分析。离线资产包含 amd64、arm64 后端镜像和部署包。
+
+### Verification
+
+- 140 项定向测试、6 项真实 Full 中间件集成、2 项 Playwright 回归及 Web 生产构建通过。已检查 1024×768 浅色与 1536×960 深色弹窗，使用 LibreOffice Calc 核对两种实际导出的工作簿。
+- 本次走快速发布路径，Release 保留双架构构建、镜像启动、SBOM、签名和资产校验。完整标准 CI、Release checks 和发布后验收未运行。
+
 ## 1.23.14 - 2026-11-26
 
 ### Changed

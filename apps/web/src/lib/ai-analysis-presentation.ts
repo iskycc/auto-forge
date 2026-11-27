@@ -1,5 +1,6 @@
 import {
   AI_INTERMEDIATE_CONCLUSION_SUFFIX,
+  AI_ISSUE_SCOPE_PREFIX,
   AI_RECOMMENDATION_LABELS,
   aiPublishedStatement,
 } from "@autoforge/contracts";
@@ -36,6 +37,7 @@ export function splitAiAnalysisConclusion(conclusion: string | null | undefined)
     const evidence = lines
       .slice(2)
       .map((line) => {
+        if (line.startsWith(AI_ISSUE_SCOPE_PREFIX)) return line;
         const statement = aiPublishedStatement(line.replace(EVIDENCE_PREFIX, ""));
         if (!statement) return "";
         return EVIDENCE_PREFIX.test(line) ? "依据：" + statement : statement;
@@ -61,14 +63,15 @@ export function splitAiAnalysisConclusion(conclusion: string | null | undefined)
 
 export function aiExportText(text: string): string {
   return text
-    .replace(REVIEW_NOTE, "")
     .split("\n")
-    .map((line) =>
-      line
+    .map((line) => {
+      if (line.startsWith(AI_ISSUE_SCOPE_PREFIX)) return line;
+      return line
+        .replace(REVIEW_NOTE, "")
         .trim()
         .replace(/^可能原因(?=[：:])/u, "原因")
-        .replace(REVIEW_CLAUSE, ""),
-    )
+        .replace(REVIEW_CLAUSE, "");
+    })
     .filter((line) => !REVIEW_LINE.test(line))
     .join("\n")
     .trim();

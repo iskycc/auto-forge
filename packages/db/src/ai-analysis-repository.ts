@@ -596,7 +596,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
   async claimGroup(token: string, now: string, expiresAt: string): Promise<AiGroupWork | null> {
     const candidate = statement(
       `SELECT g.id FROM ai_analysis_groups g JOIN ai_analysis_jobs j ON j.id=g.job_id
-       WHERE j.status='summarizing' AND g.status IN ('queued','running','releasing')
+       WHERE j.status='summarizing' AND g.status IN ('queued','running','releasing','synthesizing')
        AND (j.strategy<>'${AI_BATCH_CLASSIFICATION_STRATEGY}' OR j.issue_phase IN ('classify','refine'))
        AND g.available_at<=? AND (g.lease_expires_at IS NULL OR g.lease_expires_at<?)
        ORDER BY g.available_at,g.id LIMIT 1`,
@@ -606,7 +606,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
     if (!(await this.query(candidate)).length) return null;
     const result = await this.write([
       statement(
-        `UPDATE ai_analysis_groups SET lease_token=?,lease_expires_at=?,status=CASE WHEN status='releasing' THEN status ELSE 'running' END
+        `UPDATE ai_analysis_groups SET lease_token=?,lease_expires_at=?,status=CASE WHEN status IN ('releasing','synthesizing') THEN status ELSE 'running' END
       WHERE id=(${candidate.text})
       AND (lease_expires_at IS NULL OR lease_expires_at<?) RETURNING *`,
         token,
@@ -637,6 +637,7 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
       memberCount: Number(row.member_count),
       ...(typeof row.initial_summary === "string" ? { initialSummary: row.initial_summary } : {}),
       ...(row.status === "releasing" ? { releaseAfter: String(row.publication_cursor) } : {}),
+      ...(row.status === "synthesizing" ? { synthesisAfter: String(row.publication_cursor) } : {}),
       ...(typeof row.refinement_json === "string"
         ? { refinement: JSON.parse(row.refinement_json) as AiIssueRefinement }
         : {}),
@@ -818,9 +819,11 @@ export class SqlAiAnalysisRepository implements AiAnalysisRepository {
           ? work.strategy === "stack_groups_v2"
             ? "publishing"
             : "failed"
-          : work.releaseAfter === undefined
-            ? "queued"
-            : "releasing",
+          : work.synthesisAfter !== undefined
+            ? "synthesizing"
+            : work.releaseAfter !== undefined
+              ? "releasing"
+              : "queued",
         consumeAttempt ? 1 : 0,
         now,
         work.id,

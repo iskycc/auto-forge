@@ -98,6 +98,15 @@ for (const mode of ["sqlite", "postgres"] as const) {
                 summary: `暂定问题 ${stack.stack}`,
               })),
             };
+          } else if (toolName === "summarize_ai_issue") {
+            reply = {
+              summary: evidence.categoryLabel,
+              conclusion: output(
+                evidence.categoryLabel,
+                evidence.evidenceId,
+                "，由全组观察进一步确认",
+              ),
+            };
           } else {
             const [cause, caseId] = evidence.text.split(":") as [string, string];
             if (toolName === "submit_ai_issue") {
@@ -125,7 +134,11 @@ for (const mode of ["sqlite", "postgres"] as const) {
               };
             } else {
               if (context.stage === "independent_issue_member") independent.add(caseId);
-              reply = output(cause, evidence.evidenceId);
+              const conclusion = output(cause, evidence.evidenceId);
+              reply =
+                context.stage === "read_issue_member"
+                  ? { conclusion, affectedSubjects: [] }
+                  : conclusion;
             }
           }
           return {
@@ -394,7 +407,7 @@ async function openDatabase(mode: "sqlite" | "postgres") {
   const previousMigrations = resolve(directory, "previous");
   await mkdir(previousMigrations);
   for (const file of await readdir(migrationsFolder)) {
-    if (file.endsWith(".sql") && file < "0105_")
+    if (file.endsWith(".sql") && file < "0107_")
       await copyFile(resolve(migrationsFolder, file), resolve(previousMigrations, file));
   }
   if (mode === "sqlite") {

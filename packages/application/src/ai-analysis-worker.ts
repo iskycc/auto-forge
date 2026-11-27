@@ -557,6 +557,11 @@ export class AiAnalysisWorker {
         await this.authorize(work);
         if (work.releaseAfter !== undefined)
           await this.repository.issues.releaseSmallCategories(work, this.clock.now().toISOString());
+        else if (work.synthesisAfter !== undefined)
+          await this.issueClassifier(record, configuration, work, signal).synthesizeCategory(
+            work,
+            signal,
+          );
         else
           await this.issueClassifier(record, configuration, work, signal).refineMember(
             work,

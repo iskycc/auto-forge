@@ -6,6 +6,7 @@ import type {
   AiConclusionDraft,
   AiAnalysisStrategy,
   AiIssueCategory,
+  AiIssueScope,
   AiPreliminaryConclusion,
 } from "@autoforge/contracts";
 
@@ -65,14 +66,17 @@ export type AiGroupWork = {
   initialSummary?: string;
   refinement?: AiIssueRefinement;
   releaseAfter?: string;
+  synthesisAfter?: string;
 };
 export type AiIssueCandidate = {
   id: string;
   summary: string;
   conclusion: AiPreliminaryConclusion;
+  scope?: AiIssueScope;
 };
 export type AiIssueRefinement = {
   previousPart?: AiPreliminaryConclusion;
+  subjectCandidates?: string[];
   afterCategory?: string;
   preferred?: AiIssueCandidate;
 };
@@ -84,6 +88,7 @@ export type AiIssueBatchWork = Pick<
   cursor: string;
 };
 export type AiIssueStack = { id: string; memberCount: number; evidenceKey: string };
+export type AiIssueSynthesis = AiIssueCandidate & { memberCount: number; memberCursor: string };
 export interface AiIssueClassificationRepository {
   claimBatch(token: string, now: string, expiresAt: string): Promise<AiIssueBatchWork | null>;
   advanceBatch(work: AiIssueBatchWork, now: string): Promise<void>;
@@ -112,9 +117,20 @@ export interface AiIssueClassificationRepository {
     memberId: string,
     category: AiIssueCandidate,
     now: string,
+    finding?: AiPreliminaryConclusion,
   ): Promise<void>;
   skipMember(work: AiGroupWork, memberId: string, now: string): Promise<void>;
   releaseSmallCategories(work: AiGroupWork, now: string): Promise<void>;
+  nextSynthesis(work: AiGroupWork): Promise<AiIssueSynthesis | null>;
+  synthesisFindings(
+    category: AiIssueSynthesis,
+    limit: number,
+  ): Promise<Array<{ id: string; conclusion: AiPreliminaryConclusion }>>;
+  saveSynthesis(
+    work: AiGroupWork,
+    now: string,
+    progress?: { category: AiIssueSynthesis; memberCursor: string; complete: boolean },
+  ): Promise<void>;
 }
 export type AiGroupMember = {
   id: string;

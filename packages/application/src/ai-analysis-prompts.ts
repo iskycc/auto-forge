@@ -1,8 +1,10 @@
 import {
   AI_RECOMMENDATION_LABELS,
+  AI_ISSUE_SCOPE_PREFIX,
   AI_PRELIMINARY_TEXT_LIMITS,
   aiPublishedStatement,
   aiPreliminaryConclusionSchema,
+  type AiIssueScope,
   type AiModelConfiguration,
   type AiPreliminaryConclusion,
 } from "@autoforge/contracts";
@@ -26,7 +28,12 @@ export const AI_FINAL_CONCLUSION_PROMPT =
 
 export const AI_ISSUE_REFINEMENT_PROMPT =
   AI_FINAL_CONCLUSION_PROMPT +
-  "候选类别与初分名称只用于比对。核对失败发生的组件、操作、具体触发条件及错误原因，根因一致才合并。相同栈顶、异常类或建议枚举不足以判同因。不同输入、环境或行号仅在改变失败机制时拆分。同因优先沿用类别，只有新增证据能解释整组成员且更精确时才更新类别结论。requiresUpdatedConclusion 表示旧结论缺少可发布的细节，匹配此类别时用本例证据完善结论，并将 useExistingConclusion 设为 false。遇到冲突或不足以匹配时建立类别，由平台根据人数决定是否独立分析。";
+  "类别比较失败机制、触发条件和因果证据。相同错误表现不足以判同因。对象、操作或数据不同但机制相同的用例归在一起；差异改变失败机制时另建类别。summary 写可跨成员复用的问题机制。reason 与 evidence 写本例的因果判断和实际观察，保留支持或挑战已有类别判断的细节，勿把本例特有细节声称为整组事实。旧结论范围偏窄或 requiresUpdatedConclusion 为 true 时，仍可匹配同一类别，用更有区分度的证据更新候选结论并将 useExistingConclusion 设为 false。" +
+  "affectedSubjects 只列本例中实际发生该问题的对象或操作的可区分名称，原样引用当前证据或 subjectCandidates。没有证据时返回空数组。即使沿用结论也须提交本例证据及对象，少写参数、样例值或无关项。平台负责汇总。";
+
+export const AI_ISSUE_SYNTHESIS_PROMPT =
+  AI_FINAL_CONCLUSION_PROMPT +
+  "你正在汇总同类失败。输入包含多个成员各自的复核依据和已经归纳的结论。逐条比较，综合所有已提供的成员，给出能覆盖当前组的共同原因及直接证据。保留重要差异、反证和不确定性，遇见矛盾时说明证据能支持的范围。具体对象由平台汇总，勿将某个成员的具体对象或值写成所有成员共有。类别简述使用共性问题短语。";
 
 export const PRELIMINARY_TOOL: AiToolDefinition = {
   type: "function",
@@ -177,10 +184,16 @@ function conclusionFieldLabel(field: PropertyKey | undefined): string {
   }
 }
 
-export function renderPreliminaryConclusion(conclusion: AiPreliminaryConclusion) {
+export function renderPreliminaryConclusion(
+  conclusion: AiPreliminaryConclusion,
+  scope?: AiIssueScope,
+) {
   return [
     `${AI_RECOMMENDATION_LABELS[conclusion.recommendation]}（待人工确认）`,
     `原因：${conclusion.reason.replace(/\s+/gu, " ")}`,
     `依据：${conclusion.evidence.replace(/\s+/gu, " ")}`,
+    ...(scope?.subjects.length
+      ? [`${AI_ISSUE_SCOPE_PREFIX}${scope.subjects.join("、")}${scope.hasMore ? "等" : ""}`]
+      : []),
   ].join("\n");
 }
