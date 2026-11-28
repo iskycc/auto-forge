@@ -19,11 +19,18 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
-test("execution detail rates retain precision from the pass counts in both viewers", async ({
+test("execution record and detail rates are floored in both viewers", async ({
   page,
   browser,
 }, testInfo) => {
   await ensureAdministrator(page);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: uniqueName("execution-percent") } },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
   const fixture = await database();
   const anonymous = await browser.newContext();
   const batchId = randomUUID();
@@ -36,13 +43,14 @@ test("execution detail rates retain precision from the pass counts in both viewe
       runnerId,
       suiteId: randomUUID(),
       projectId: DEFAULT_PROJECT_ID,
-      caseCount: 643,
+      projectVersionId: version.body.id,
+      caseCount: 1000,
       roundCount: 1,
       recordedAt,
     });
     await fixture.execute(`
       UPDATE execution_runs SET status='failed',terminal_outcome='failed'
-      WHERE id IN (SELECT id FROM execution_runs WHERE batch_id='${batchId}' ORDER BY id LIMIT 15);
+      WHERE id IN (SELECT id FROM execution_runs WHERE batch_id='${batchId}' ORDER BY id LIMIT 11);
       UPDATE run_attempts SET status='failed',outcome='failed'
       WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id='${batchId}' AND status='failed');
     `);
@@ -52,31 +60,62 @@ test("execution detail rates retain precision from the pass counts in both viewe
       { method: "POST" },
     );
     expect(share.status).toBe(200);
-    const visitor = await anonymous.newPage();
-    for (const [target, width, height, url] of [
-      [page, 1024, 768, `/run-batches/${batchId}`],
-      [visitor, 1536, 960, share.body.shareUrl],
-    ] as const) {
-      await target.setViewportSize({ width, height });
-      await target.goto(url);
-      await expect(target.getByRole("region", { name: "批次概览" })).toContainText("97.67%", {
-        timeout: 30_000,
-      });
-      await expect(
-        target.getByRole("region", { name: "执行结果图表" }).getByText("97.67%", { exact: true }),
-      ).toBeVisible();
-      const rows = target.getByRole("region", { name: "轮次列表" });
-      await expect(rows.getByRole("cell", { name: "97.67%", exact: true })).toHaveCount(4);
-      await expectUiIntegrity(target);
-      await target.screenshot({
-        path: testInfo.outputPath(`execution-percent-${width}.png`),
+
+    const viewports = [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ] as const;
+    await page.setViewportSize(viewports[0]);
+    await page.goto("/execution-records");
+    const record = page.getByRole("row", { name: /Large completed execution/u });
+    await expect(record.getByRole("cell", { name: "98%", exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    for (const viewport of viewports) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`execution-record-percent-${viewport.width}.png`),
         animations: "disabled",
       });
+    }
+
+    const visitor = await anonymous.newPage();
+    for (const [target, name, url] of [
+      [page, "console", `/run-batches/${batchId}`],
+      [visitor, "public", share.body.shareUrl],
+    ] as const) {
+      await target.setViewportSize(viewports[0]);
+      await target.goto(url);
+      await expect(target.getByRole("region", { name: "批次概览" })).toContainText("98%", {
+        timeout: 30_000,
+      });
+      const progress = target.getByRole("img", { name: /总体通过进度/u });
+      await expect(progress.getByText("98%", { exact: true })).toBeVisible();
+      const rows = target.getByRole("region", { name: "轮次列表" });
+      await expect(rows.getByRole("cell", { name: "98%", exact: true })).toHaveCount(4);
+      await progress.getByText("累计通过", { exact: true }).hover();
+      await expect(target.getByRole("tooltip")).toContainText("（98%）");
+      await target.mouse.move(0, 0);
+      await expect(target.getByRole("tooltip")).toBeHidden();
+      await target.evaluate(() => window.scrollTo(0, 0));
+      for (const viewport of viewports) {
+        await target.setViewportSize(viewport);
+        await expectUiIntegrity(target);
+        await target.screenshot({
+          path: testInfo.outputPath(`execution-detail-percent-${name}-${viewport.width}.png`),
+          animations: "disabled",
+          fullPage: true,
+        });
+      }
     }
   } finally {
     await anonymous.close();
     await fixture.execute(
-      `DELETE FROM read_model_snapshots WHERE query_json LIKE '%${batchId}%'; DELETE FROM run_batches WHERE id='${batchId}'; DELETE FROM runners WHERE id='${runnerId}'`,
+      `DELETE FROM read_model_snapshots WHERE query_json LIKE '%${batchId}%' OR query_json LIKE '%${version.body.id}%';
+      DELETE FROM run_batches WHERE id='${batchId}';
+      DELETE FROM runners WHERE id='${runnerId}';
+      DELETE FROM project_versions WHERE id='${version.body.id}';`,
     );
     await fixture.close();
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge, Progress, Statistic, Tooltip, Typography, theme } from "antd";
+import { formatExecutionPercent } from "@/lib/run-batch-presentation";
 
 export type DonutChartSegment = { label: string; value: number; color: string };
 const RADIUS = 55;
@@ -107,7 +108,7 @@ export function DonutChart({
         {segments.map((segment) => (
           <Tooltip
             key={segment.label}
-            title={`${segment.label}：${segment.value.toLocaleString()} / ${total.toLocaleString()}（${total ? Math.round((segment.value / total) * 100) : 0}%）`}
+            title={`${segment.label}：${segment.value.toLocaleString()} / ${total.toLocaleString()}（${formatExecutionPercent(segment.value, total)}）`}
           >
             <div className="round-donut-legend-item flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-b border-border/50 py-1 last:border-0">
               <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">

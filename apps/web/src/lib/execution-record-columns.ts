@@ -1,7 +1,7 @@
 import type { RunBatch } from "@autoforge/domain";
 
 import { formatPlatformDateTime } from "./platform-date-time";
-import { formatBatchDuration } from "./run-batch-presentation";
+import { formatBatchDuration, formatExecutionPercent } from "./run-batch-presentation";
 import { columnCharacterWidthAtCoverage } from "./table-column-width";
 
 export type ExecutionRecordRow = {
@@ -93,7 +93,7 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     // 避免窄桌面视口把最常见的完整百分比渲染成 “10…”。
     minWidth: 84,
     maxWidth: 110,
-    text: (row) => `${executionRecordPassRate(row)}%`,
+    text: (row) => formatExecutionPercent(row.succeededRuns, row.totalRuns),
   },
   {
     key: "passed",
@@ -256,12 +256,6 @@ export function executionRecordStatusLabel(
     cancelled: "已终止",
   };
   return labels[status];
-}
-
-export function executionRecordPassRate(
-  row: Pick<ExecutionRecordRow, "totalRuns" | "succeededRuns">,
-): number {
-  return row.totalRuns === 0 ? 0 : Math.round((row.succeededRuns / row.totalRuns) * 100);
 }
 
 export function executionRecordDurationMs(

@@ -8,7 +8,7 @@ import { usePlatformNow } from "./platform-time";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
 import {
   formatBatchDuration,
-  formatExecutionPassRate,
+  formatExecutionPercent,
   formatLocalDateTime,
   isActiveRunBatch,
   isTerminalRunBatch,
@@ -39,7 +39,7 @@ export function ExecutionBatchOverview({
         />
         <Metric
           label="总通过率"
-          value={pending ? "—" : formatExecutionPassRate(batch.succeededRuns, batch.totalRuns)}
+          value={pending ? "—" : formatExecutionPercent(batch.succeededRuns, batch.totalRuns)}
           hint={
             pending
               ? "统计准备中"

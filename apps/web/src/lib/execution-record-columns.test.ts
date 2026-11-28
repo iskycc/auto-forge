@@ -79,6 +79,11 @@ describe("executionRecordColumnWidths", () => {
     expect(totalColumn?.text({ ...row(1), totalRuns: 0 })).toBe("0");
   });
 
+  it("uses a floored percentage for the pass-rate column", () => {
+    const column = EXECUTION_RECORD_COLUMNS.find(({ key }) => key === "passRate")!;
+    expect(column.text({ ...row(1), totalRuns: 1000, succeededRuns: 989 })).toBe("98%");
+  });
+
   it("sizes a column for at least 70 percent of rows without following long outliers", () => {
     const ordinaryRows = Array.from({ length: 8 }, (_, index) => row(index + 1));
     const rowsWithOutliers = [

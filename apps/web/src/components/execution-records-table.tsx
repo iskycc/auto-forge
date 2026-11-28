@@ -42,13 +42,12 @@ import {
   fitExecutionRecordColumns,
   executionRecordDurationMs,
   executionRecordIsActive,
-  executionRecordPassRate,
   executionRecordStatusLabel,
   formatExecutionRecordTime,
   type ExecutionRecordColumnDefinition,
   type ExecutionRecordRow,
 } from "@/lib/execution-record-columns";
-import { formatBatchDuration } from "@/lib/run-batch-presentation";
+import { formatBatchDuration, formatExecutionPercent } from "@/lib/run-batch-presentation";
 import { Button } from "@/components/ui";
 import { RunBatchPermanentShare } from "@/components/run-batch-permanent-share";
 import { ExecutionExceptionsPopover } from "@/components/execution-exceptions-popover";
@@ -449,7 +448,9 @@ export function ExecutionRecordsTable({
                 </TableCell>
                 <TableCell className="tabular-nums">{row.totalRuns}</TableCell>
                 <TableCell title={row.statisticsPending ? "统计准备中" : undefined}>
-                  {row.statisticsPending ? "—" : `${executionRecordPassRate(row)}%`}
+                  {row.statisticsPending
+                    ? "—"
+                    : formatExecutionPercent(row.succeededRuns, row.totalRuns)}
                 </TableCell>
                 <TableCell>{row.statisticsPending ? "—" : row.succeededRuns}</TableCell>
                 <TableCell>

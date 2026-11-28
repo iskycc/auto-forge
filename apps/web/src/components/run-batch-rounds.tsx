@@ -80,7 +80,7 @@ import {
   attemptFailureHint,
   formatAttemptDuration,
   formatBatchDuration,
-  formatExecutionPassRate,
+  formatExecutionPercent,
   formatLocalDateTime,
   isActiveRunBatch,
 } from "@/lib/run-batch-presentation";
@@ -507,7 +507,7 @@ export function RunBatchRounds({
                 <TableCell>—</TableCell>
                 <TableCell>{finalStats.totalRuns}</TableCell>
                 <TableCell>
-                  {formatExecutionPassRate(finalStats.passed, finalStats.totalRuns)}
+                  {formatExecutionPercent(finalStats.passed, finalStats.totalRuns)}
                 </TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>{finalStats.passed}</TableCell>
@@ -533,7 +533,7 @@ export function RunBatchRounds({
                 <TableCell>—</TableCell>
                 <TableCell>{allRoundsStats.totalRuns}</TableCell>
                 <TableCell>
-                  {formatExecutionPassRate(allRoundsStats.passed, allRoundsStats.totalRuns)}
+                  {formatExecutionPercent(allRoundsStats.passed, allRoundsStats.totalRuns)}
                 </TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>{allRoundsStats.passed}</TableCell>
@@ -606,10 +606,10 @@ export function RunBatchRounds({
                     </TableCell>
                     <TableCell>{summary.totalRuns}</TableCell>
                     <TableCell>
-                      {formatExecutionPassRate(summary.overallPassed, batch.totalRuns)}
+                      {formatExecutionPercent(summary.overallPassed, batch.totalRuns)}
                     </TableCell>
                     <TableCell>
-                      {completed === 0 ? "—" : formatExecutionPassRate(summary.passed, completed)}
+                      {completed === 0 ? "—" : formatExecutionPercent(summary.passed, completed)}
                       {completed > 0 && summary.status === "running" ? "（进行中）" : null}
                     </TableCell>
                     <TableCell>{summary.passed}</TableCell>

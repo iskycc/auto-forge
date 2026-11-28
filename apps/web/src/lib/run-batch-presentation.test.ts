@@ -7,7 +7,7 @@ import {
   formatArtifactBytes,
   formatAttemptDuration,
   formatBatchDuration,
-  formatExecutionPassRate,
+  formatExecutionPercent,
   formatLocalDateTime,
   isActiveRunBatch,
   runBatchCompletionPercent,
@@ -70,12 +70,14 @@ describe("run batch presentation", () => {
     expect(runBatchPassRate(batch({ totalRuns: 0 }))).toBe(0);
   });
 
-  it("displays precise execution rates without rounding incomplete coverage up to 100%", () => {
-    expect(formatExecutionPassRate(628, 643)).toBe("97.67%");
-    expect(formatExecutionPassRate(99_999, 100_000)).toBe(">99.99%");
-    expect(formatExecutionPassRate(1, 100_000)).toBe("<0.01%");
-    expect(formatExecutionPassRate(5, 5)).toBe("100%");
-    expect(formatExecutionPassRate(0, 0)).toBe("0%");
+  it("floors execution pass rates to whole percentages and preserves exact integers", () => {
+    expect(formatExecutionPercent(628, 643)).toBe("97%");
+    expect(formatExecutionPercent(989, 1000)).toBe("98%");
+    expect(formatExecutionPercent(99_999, 100_000)).toBe("99%");
+    expect(formatExecutionPercent(1, 100_000)).toBe("0%");
+    expect(formatExecutionPercent(29, 100)).toBe("29%");
+    expect(formatExecutionPercent(5, 5)).toBe("100%");
+    expect(formatExecutionPercent(0, 0)).toBe("0%");
   });
 
   it("computes duration between creation and terminal update", () => {

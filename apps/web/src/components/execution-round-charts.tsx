@@ -3,7 +3,7 @@
 import { Card, Empty, Tag, Typography, theme } from "antd";
 import { DonutChart, type DonutChartSegment } from "./donut-chart";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
-import { formatExecutionPassRate } from "@/lib/run-batch-presentation";
+import { formatExecutionPercent } from "@/lib/run-batch-presentation";
 
 export function ExecutionRoundCharts({
   batch,
@@ -105,7 +105,7 @@ export function ExecutionRoundCharts({
               color: token.colorBorder,
             },
           ]}
-          centerValue={formatExecutionPassRate(overallPassed, batch.totalRuns)}
+          centerValue={formatExecutionPercent(overallPassed, batch.totalRuns)}
           centerLabel="累计通过率"
           ariaLabel={`总体通过进度：累计通过 ${overallPassed} 个用例，共 ${batch.totalRuns} 个`}
         />
